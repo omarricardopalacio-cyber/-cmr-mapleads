@@ -12,8 +12,9 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut } from "lucide-react";
 import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
 
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect } from "react";
