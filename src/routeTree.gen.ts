@@ -22,6 +22,7 @@ import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_a
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
+import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -90,6 +91,11 @@ const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
   path: '/api/public/engine/commands',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
+  id: '/api/public/cron/dispatch',
+  path: '/api/public/cron/dispatch',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/sessions': typeof AuthenticatedSessionsRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
+  '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/sessions': typeof AuthenticatedSessionsRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
+  '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
   '/_authenticated/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
+  '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
@@ -147,6 +156,7 @@ export interface FileRouteTypes {
     | '/sessions'
     | '/conversations/$threadId'
     | '/conversations/'
+    | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
   fileRoutesByTo: FileRoutesByTo
@@ -160,6 +170,7 @@ export interface FileRouteTypes {
     | '/sessions'
     | '/conversations/$threadId'
     | '/conversations'
+    | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
   id:
@@ -175,6 +186,7 @@ export interface FileRouteTypes {
     | '/_authenticated/sessions'
     | '/_authenticated/conversations/$threadId'
     | '/_authenticated/conversations/'
+    | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
   fileRoutesById: FileRoutesById
@@ -184,6 +196,7 @@ export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
 }
@@ -281,6 +294,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEngineCommandsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/cron/dispatch': {
+      id: '/api/public/cron/dispatch'
+      path: '/api/public/cron/dispatch'
+      fullPath: '/api/public/cron/dispatch'
+      preLoaderRoute: typeof ApiPublicCronDispatchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -326,9 +346,20 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
