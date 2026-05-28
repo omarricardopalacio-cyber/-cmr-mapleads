@@ -32,7 +32,7 @@ export const Route = createFileRoute("/_authenticated")({
 
 const items = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-const items = [
+
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Conversaciones", url: "/conversations", icon: MessagesSquare },
   { title: "Contactos", url: "/contacts", icon: Users },
