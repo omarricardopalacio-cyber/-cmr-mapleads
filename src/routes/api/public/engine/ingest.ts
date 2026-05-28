@@ -109,7 +109,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               .select('id')
               .single()
             if (!thread) continue
-
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,
@@ -120,6 +119,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               raw: e.raw ?? null,
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
+
+            // Auto-reply on inbound
+            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
+              await maybeAutoReply(session.org_id, session.id, e.chatId, e.text)
+            }
           } else if (e.type === 'ack' && e.commandId) {
             await supabaseAdmin
               .from('engine_commands')
@@ -128,6 +132,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               .eq('session_id', session.id)
           }
         }
+
 
         return json(200, { ok: true, processed: parsed.data.events.length })
       },
