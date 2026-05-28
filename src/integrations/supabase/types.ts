@@ -14,6 +14,158 @@ export type Database = {
   }
   public: {
     Tables: {
+      auto_replies: {
+        Row: {
+          cooldown_seconds: number
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          last_triggered_at: string | null
+          match_type: string
+          match_value: string
+          name: string
+          org_id: string
+          reply_text: string
+          session_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          cooldown_seconds?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          last_triggered_at?: string | null
+          match_type?: string
+          match_value: string
+          name: string
+          org_id: string
+          reply_text: string
+          session_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cooldown_seconds?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          last_triggered_at?: string | null
+          match_type?: string
+          match_value?: string
+          name?: string
+          org_id?: string
+          reply_text?: string
+          session_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      broadcast_recipients: {
+        Row: {
+          broadcast_id: string
+          command_id: string | null
+          contact_id: string | null
+          created_at: string
+          error: string | null
+          id: string
+          org_id: string
+          sent_at: string | null
+          status: string
+          wa_id: string
+        }
+        Insert: {
+          broadcast_id: string
+          command_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          org_id: string
+          sent_at?: string | null
+          status?: string
+          wa_id: string
+        }
+        Update: {
+          broadcast_id?: string
+          command_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          org_id?: string
+          sent_at?: string | null
+          status?: string
+          wa_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_recipients_broadcast_id_fkey"
+            columns: ["broadcast_id"]
+            isOneToOne: false
+            referencedRelation: "broadcasts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcasts: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          failed_count: number
+          finished_at: string | null
+          id: string
+          message_text: string
+          name: string
+          org_id: string
+          rate_per_minute: number
+          scheduled_at: string | null
+          sent_count: number
+          session_id: string
+          started_at: string | null
+          status: string
+          total_count: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          failed_count?: number
+          finished_at?: string | null
+          id?: string
+          message_text: string
+          name: string
+          org_id: string
+          rate_per_minute?: number
+          scheduled_at?: string | null
+          sent_count?: number
+          session_id: string
+          started_at?: string | null
+          status?: string
+          total_count?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          failed_count?: number
+          finished_at?: string | null
+          id?: string
+          message_text?: string
+          name?: string
+          org_id?: string
+          rate_per_minute?: number
+          scheduled_at?: string | null
+          sent_count?: number
+          session_id?: string
+          started_at?: string | null
+          status?: string
+          total_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       contacts: {
         Row: {
           created_at: string
@@ -244,6 +396,57 @@ export type Database = {
           created_at?: string
           display_name?: string | null
           id?: string
+        }
+        Relationships: []
+      }
+      scheduled_messages: {
+        Row: {
+          command_id: string | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          error: string | null
+          id: string
+          org_id: string
+          send_at: string
+          sent_at: string | null
+          session_id: string
+          status: string
+          text: string
+          updated_at: string
+          wa_id: string
+        }
+        Insert: {
+          command_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          error?: string | null
+          id?: string
+          org_id: string
+          send_at: string
+          sent_at?: string | null
+          session_id: string
+          status?: string
+          text: string
+          updated_at?: string
+          wa_id: string
+        }
+        Update: {
+          command_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          error?: string | null
+          id?: string
+          org_id?: string
+          send_at?: string
+          sent_at?: string | null
+          session_id?: string
+          status?: string
+          text?: string
+          updated_at?: string
+          wa_id?: string
         }
         Relationships: []
       }

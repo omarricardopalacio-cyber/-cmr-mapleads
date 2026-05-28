@@ -12,8 +12,10 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect } from "react";
 import { useServerFn } from "@tanstack/react-start";
@@ -31,8 +33,11 @@ export const Route = createFileRoute("/_authenticated")({
 
 const items = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Conversaciones", url: "/conversations", icon: MessagesSquare },
   { title: "Contactos", url: "/contacts", icon: Users },
+  { title: "Automatizaciones", url: "/automations", icon: Zap },
   { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
   { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
 ] as const;

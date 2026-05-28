@@ -39,7 +39,48 @@ const PayloadSchema = z.object({
   events: z.array(EventSchema).min(1).max(50),
 })
 
+async function maybeAutoReply(orgId: string, sessionId: string, chatId: string, text: string) {
+  const { data: rules } = await supabaseAdmin
+    .from('auto_replies')
+    .select('id, match_type, match_value, reply_text, cooldown_seconds, last_triggered_at, session_id')
+    .eq('org_id', orgId)
+    .eq('is_active', true)
+  if (!rules?.length) return
+  const lower = text.toLowerCase()
+  for (const r of rules) {
+    if (r.session_id && r.session_id !== sessionId) continue
+    const v = (r.match_value || '').toLowerCase()
+    let hit = false
+    try {
+      if (r.match_type === 'equals') hit = lower === v
+      else if (r.match_type === 'starts') hit = lower.startsWith(v)
+      else if (r.match_type === 'regex') hit = new RegExp(r.match_value, 'i').test(text)
+      else hit = lower.includes(v)
+    } catch {
+      hit = false
+    }
+    if (!hit) continue
+    if (r.last_triggered_at) {
+      const diff = (Date.now() - new Date(r.last_triggered_at).getTime()) / 1000
+      if (diff < (r.cooldown_seconds ?? 0)) continue
+    }
+    await supabaseAdmin.from('engine_commands').insert({
+      org_id: orgId,
+      session_id: sessionId,
+      type: 'send_message',
+      payload: { chatId, text: r.reply_text },
+      status: 'pending',
+    })
+    await supabaseAdmin
+      .from('auto_replies')
+      .update({ last_triggered_at: new Date().toISOString() })
+      .eq('id', r.id)
+    return // one rule per message
+  }
+}
+
 export const Route = createFileRoute('/api/public/engine/ingest')({
+
   server: {
     handlers: {
       OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
@@ -109,7 +150,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               .select('id')
               .single()
             if (!thread) continue
-
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,
@@ -120,6 +160,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               raw: e.raw ?? null,
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
+
+            // Auto-reply on inbound
+            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
+              await maybeAutoReply(session.org_id, session.id, e.chatId, e.text)
+            }
           } else if (e.type === 'ack' && e.commandId) {
             await supabaseAdmin
               .from('engine_commands')
@@ -128,6 +173,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               .eq('session_id', session.id)
           }
         }
+
 
         return json(200, { ok: true, processed: parsed.data.events.length })
       },
