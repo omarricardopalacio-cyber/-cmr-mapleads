@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { listSessions, createSession } from "@/lib/sessions.functions";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,11 @@ function SessionsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const backendBase = typeof window !== "undefined" ? window.location.origin : "";
+  const backendBase = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+    return projectId ? `https://project--${projectId}-dev.lovable.app` : window.location.origin;
+  }, []);
 
   return (
     <div className="space-y-6">
