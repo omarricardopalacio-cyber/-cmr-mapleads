@@ -28,10 +28,17 @@
           const parsed = window.__engineParser?.parseMessageNode(node);
           if (parsed) {
             window.__engineBridge?.emit({
-              type: "MESSAGE_RECEIVED",
-              ts: Date.now(),
-              data: parsed,
+              type: parsed.direction === "out" ? "message-out" : "message-in",
+              chatId: parsed.chatId,
+              waMessageId: parsed.waMessageId || id,
+              direction: parsed.direction,
+              text: parsed.text,
+              media: parsed.media,
+              raw: parsed.raw,
+              contact: parsed.contact,
+              sentAt: new Date().toISOString(),
             });
+
           }
         } catch (e) {
           console.warn("[engine.observer] parse fail", e);

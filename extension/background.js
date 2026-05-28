@@ -1,105 +1,113 @@
-// Background service worker (MV3)
-// Maneja el WebSocket persistente al backend y enruta eventos entre content script y backend.
+// Background service worker (MV3) — HTTP long-poll bridge a Lovable Cloud
+// El runtime serverless no soporta WebSocket persistente; usamos POST /ingest + GET /commands.
 
-const HEARTBEAT_MS = 15000;
-let socket = null;
+const POLL_MS = 3000;
+const FLUSH_MS = 1500;
+const MAX_BATCH = 25;
+
 let backendUrl = null;
 let sessionToken = null;
-let heartbeatTimer = null;
-let reconnectAttempts = 0;
-const pendingAcks = new Map(); // commandId -> {resolve, timer}
+let pollTimer = null;
+let flushTimer = null;
+const outbox = []; // eventos pendientes hacia backend
 
 async function loadConfig() {
   const cfg = await chrome.storage.local.get(["backendUrl", "sessionToken"]);
-  backendUrl = cfg.backendUrl || null;
+  backendUrl = (cfg.backendUrl || "").replace(/\/$/, "") || null;
   sessionToken = cfg.sessionToken || null;
 }
 
-function scheduleReconnect() {
-  const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts++));
-  setTimeout(connect, delay);
+function configured() {
+  return !!backendUrl && !!sessionToken;
 }
 
-async function connect() {
-  await loadConfig();
-  if (!backendUrl || !sessionToken) {
-    console.log("[engine] sin config, esperando popup");
-    return;
-  }
+async function flushOutbox() {
+  if (!configured() || outbox.length === 0) return;
+  const batch = outbox.splice(0, MAX_BATCH);
   try {
-    const url = `${backendUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(sessionToken)}`;
-    socket = new WebSocket(url);
-    socket.onopen = () => {
-      reconnectAttempts = 0;
-      console.log("[engine] WS conectado");
-      heartbeatTimer = setInterval(() => {
-        if (socket?.readyState === 1) socket.send(JSON.stringify({ type: "HEARTBEAT", ts: Date.now() }));
-      }, HEARTBEAT_MS);
-      chrome.storage.local.set({ wsStatus: "connected" });
-    };
-    socket.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        handleBackendMessage(msg);
-      } catch (e) {
-        console.error("[engine] mensaje inválido", e);
-      }
-    };
-    socket.onclose = () => {
-      clearInterval(heartbeatTimer);
-      chrome.storage.local.set({ wsStatus: "disconnected" });
-      scheduleReconnect();
-    };
-    socket.onerror = (e) => console.error("[engine] WS error", e);
+    const res = await fetch(`${backendUrl}/api/public/engine/ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
+      body: JSON.stringify({ events: batch }),
+    });
+    if (!res.ok) {
+      console.warn("[engine] ingest fallo", res.status);
+      // reencolar al frente
+      outbox.unshift(...batch);
+    } else {
+      chrome.storage.local.set({ wsStatus: "connected", lastFlush: Date.now() });
+    }
   } catch (e) {
-    console.error("[engine] connect fail", e);
-    scheduleReconnect();
+    console.warn("[engine] ingest network err", e);
+    outbox.unshift(...batch);
+    chrome.storage.local.set({ wsStatus: "disconnected" });
   }
 }
 
-function handleBackendMessage(msg) {
-  // Comandos del backend hacia el content script (ej: SEND_MESSAGE)
-  if (msg.type === "SEND_MESSAGE") {
-    forwardToTab(msg);
-  } else if (msg.type === "PING") {
-    socket?.send(JSON.stringify({ type: "PONG", ts: Date.now() }));
+async function pollCommands() {
+  if (!configured()) return;
+  try {
+    const res = await fetch(`${backendUrl}/api/public/engine/commands`, {
+      method: "GET",
+      headers: { "X-Session-Token": sessionToken },
+    });
+    if (!res.ok) return;
+    const { commands = [] } = await res.json();
+    for (const cmd of commands) {
+      await dispatchCommand(cmd);
+    }
+  } catch (e) {
+    console.warn("[engine] poll err", e);
   }
 }
 
-async function forwardToTab(msg) {
-  const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
-  if (!tabs.length) {
-    sendToBackend({ type: "COMMAND_ACK", commandId: msg.commandId, ok: false, error: "NO_WHATSAPP_TAB" });
-    return;
+async function dispatchCommand(cmd) {
+  // cmd: { id, type, payload }
+  if (cmd.type === "send_message") {
+    const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
+    if (!tabs.length) {
+      enqueue({ type: "ack", commandId: cmd.id, ackStatus: "no_whatsapp_tab" });
+      return;
+    }
+    chrome.tabs.sendMessage(tabs[0].id, {
+      __engine: true,
+      type: "SEND_MESSAGE",
+      commandId: cmd.id,
+      payload: cmd.payload,
+    });
   }
-  chrome.tabs.sendMessage(tabs[0].id, msg);
 }
 
-function sendToBackend(payload) {
-  if (socket?.readyState === 1) {
-    socket.send(JSON.stringify(payload));
-  } else {
-    // TODO: cola persistente con chrome.storage para reintento
-    console.warn("[engine] WS no listo, descartando", payload.type);
-  }
+function enqueue(evt) {
+  outbox.push(evt);
+  if (outbox.length >= MAX_BATCH) flushOutbox();
 }
 
-// Recibir eventos desde el content script
+function startLoops() {
+  if (pollTimer) clearInterval(pollTimer);
+  if (flushTimer) clearInterval(flushTimer);
+  pollTimer = setInterval(pollCommands, POLL_MS);
+  flushTimer = setInterval(flushOutbox, FLUSH_MS);
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.__engine) {
-    sendToBackend(msg.payload);
+  if (msg?.__engine && msg.payload) {
+    enqueue(msg.payload);
     sendResponse({ ok: true });
   }
   return true;
 });
 
-chrome.runtime.onStartup.addListener(connect);
-chrome.runtime.onInstalled.addListener(connect);
-chrome.storage.onChanged.addListener((changes) => {
+chrome.storage.onChanged.addListener(async (changes) => {
   if (changes.backendUrl || changes.sessionToken) {
-    try { socket?.close(); } catch {}
-    connect();
+    await loadConfig();
+    startLoops();
   }
 });
 
-connect();
+(async () => {
+  await loadConfig();
+  startLoops();
+  // heartbeat inmediato
+  enqueue({ type: "heartbeat" });
+})();
