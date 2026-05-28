@@ -31,11 +31,7 @@ function SessionsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const backendBase = useMemo(() => {
-  const backendBase = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    return window.location.origin;
-  }, []);
+  const backendBase = "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34-dev.lovable.app";
   return (
     <div className="space-y-6">
       <div>
