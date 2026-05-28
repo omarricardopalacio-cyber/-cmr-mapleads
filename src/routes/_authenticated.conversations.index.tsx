@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { listThreads } from "@/lib/crm.functions";
 import { Card } from "@/components/ui/card";
 
-export const Route = createFileRoute("/_authenticated/conversations")({
+export const Route = createFileRoute("/_authenticated/conversations/")({
   component: ConversationsPage,
 });
 
