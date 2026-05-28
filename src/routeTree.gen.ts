@@ -10,33 +10,57 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
+import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
+  id: '/api/public/engine/ingest',
+  path: '/api/public/engine/ingest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
+  id: '/api/public/engine/commands',
+  path: '/api/public/engine/commands',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/api/public/engine/commands' | '/api/public/engine/ingest'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/api/public/engine/commands' | '/api/public/engine/ingest'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/public/engine/commands'
+    | '/api/public/engine/ingest'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
+  ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,12 +72,38 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/engine/ingest': {
+      id: '/api/public/engine/ingest'
+      path: '/api/public/engine/ingest'
+      fullPath: '/api/public/engine/ingest'
+      preLoaderRoute: typeof ApiPublicEngineIngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/engine/commands': {
+      id: '/api/public/engine/commands'
+      path: '/api/public/engine/commands'
+      fullPath: '/api/public/engine/commands'
+      preLoaderRoute: typeof ApiPublicEngineCommandsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
+  ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
