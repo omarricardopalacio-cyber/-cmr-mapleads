@@ -14,16 +14,387 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      contacts: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          org_id: string
+          phone: string | null
+          updated_at: string
+          wa_id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          org_id: string
+          phone?: string | null
+          updated_at?: string
+          wa_id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          org_id?: string
+          phone?: string | null
+          updated_at?: string
+          wa_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      engine_commands: {
+        Row: {
+          ack: Json | null
+          acked_at: string | null
+          attempts: number
+          created_at: string
+          delivered_at: string | null
+          id: string
+          org_id: string
+          payload: Json
+          session_id: string
+          status: Database["public"]["Enums"]["command_status"]
+          type: string
+        }
+        Insert: {
+          ack?: Json | null
+          acked_at?: string | null
+          attempts?: number
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          org_id: string
+          payload?: Json
+          session_id: string
+          status?: Database["public"]["Enums"]["command_status"]
+          type: string
+        }
+        Update: {
+          ack?: Json | null
+          acked_at?: string | null
+          attempts?: number
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          org_id?: string
+          payload?: Json
+          session_id?: string
+          status?: Database["public"]["Enums"]["command_status"]
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "engine_commands_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "engine_commands_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "wa_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      events: {
+        Row: {
+          created_at: string
+          id: string
+          org_id: string | null
+          payload: Json
+          session_id: string | null
+          type: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          org_id?: string | null
+          payload?: Json
+          session_id?: string | null
+          type: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          org_id?: string | null
+          payload?: Json
+          session_id?: string | null
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "events_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "wa_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          created_at: string
+          direction: Database["public"]["Enums"]["message_direction"]
+          id: string
+          media: Json | null
+          org_id: string
+          raw: Json | null
+          sent_at: string
+          text: string | null
+          thread_id: string
+          wa_message_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          direction: Database["public"]["Enums"]["message_direction"]
+          id?: string
+          media?: Json | null
+          org_id: string
+          raw?: Json | null
+          sent_at?: string
+          text?: string | null
+          thread_id: string
+          wa_message_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          direction?: Database["public"]["Enums"]["message_direction"]
+          id?: string
+          media?: Json | null
+          org_id?: string
+          raw?: Json | null
+          sent_at?: string
+          text?: string | null
+          thread_id?: string
+          wa_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organizations: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          display_name: string | null
+          id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+        }
+        Relationships: []
+      }
+      threads: {
+        Row: {
+          contact_id: string
+          created_at: string
+          id: string
+          last_message_at: string | null
+          org_id: string
+          session_id: string
+          unread_count: number
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          org_id: string
+          session_id: string
+          unread_count?: number
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          org_id?: string
+          session_id?: string
+          unread_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "threads_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "threads_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "threads_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "wa_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          org_id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          org_id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          org_id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_roles_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wa_sessions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          label: string
+          last_heartbeat_at: string | null
+          org_id: string
+          session_token: string
+          status: Database["public"]["Enums"]["wa_session_status"]
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label?: string
+          last_heartbeat_at?: string | null
+          org_id: string
+          session_token: string
+          status?: Database["public"]["Enums"]["wa_session_status"]
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label?: string
+          last_heartbeat_at?: string | null
+          org_id?: string
+          session_token?: string
+          status?: Database["public"]["Enums"]["wa_session_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wa_sessions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _org_id: string
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_member: {
+        Args: { _org_id: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "owner" | "admin" | "agent"
+      command_status: "pending" | "delivered" | "acked" | "failed"
+      message_direction: "in" | "out"
+      wa_session_status: "pending" | "connected" | "disconnected" | "error"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +521,11 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["owner", "admin", "agent"],
+      command_status: ["pending", "delivered", "acked", "failed"],
+      message_direction: ["in", "out"],
+      wa_session_status: ["pending", "connected", "disconnected", "error"],
+    },
   },
 } as const
