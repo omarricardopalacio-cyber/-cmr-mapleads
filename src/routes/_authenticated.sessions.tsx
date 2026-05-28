@@ -32,11 +32,10 @@ function SessionsPage() {
   });
 
   const backendBase = useMemo(() => {
+  const backendBase = useMemo(() => {
     if (typeof window === "undefined") return "";
-    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-    return projectId ? `https://project--${projectId}-dev.lovable.app` : window.location.origin;
+    return window.location.origin;
   }, []);
-
   return (
     <div className="space-y-6">
       <div>
