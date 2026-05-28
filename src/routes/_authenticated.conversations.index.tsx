@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listThreads } from "@/lib/crm.functions";
@@ -26,20 +26,27 @@ function ConversationsPage() {
         {data?.threads.map((t) => {
           const contact = Array.isArray(t.contacts) ? t.contacts[0] : t.contacts;
           return (
-            <Card key={t.id} className="p-4 flex items-center justify-between">
-              <div>
-                <div className="font-medium">{contact?.display_name || contact?.wa_id || t.contact_id}</div>
-                <div className="text-xs text-muted-foreground font-mono">{contact?.wa_id}</div>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {t.last_message_at ? new Date(t.last_message_at).toLocaleString() : "—"}
-                {t.unread_count > 0 && (
-                  <span className="ml-2 inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs px-2 py-0.5">
-                    {t.unread_count}
-                  </span>
-                )}
-              </div>
-            </Card>
+            <Link
+              key={t.id}
+              to="/conversations/$threadId"
+              params={{ threadId: t.id }}
+              className="block"
+            >
+              <Card className="p-4 flex items-center justify-between hover:bg-muted/40 transition-colors">
+                <div>
+                  <div className="font-medium">{contact?.display_name || contact?.wa_id || t.contact_id}</div>
+                  <div className="text-xs text-muted-foreground font-mono">{contact?.wa_id}</div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {t.last_message_at ? new Date(t.last_message_at).toLocaleString() : "—"}
+                  {t.unread_count > 0 && (
+                    <span className="ml-2 inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs px-2 py-0.5">
+                      {t.unread_count}
+                    </span>
+                  )}
+                </div>
+              </Card>
+            </Link>
           );
         })}
       </div>

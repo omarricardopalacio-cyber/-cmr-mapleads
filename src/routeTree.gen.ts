@@ -16,6 +16,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
+import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
@@ -56,6 +57,12 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedConversationsRoute =
+  AuthenticatedConversationsRouteImport.update({
+    id: '/conversations',
+    path: '/conversations',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
   id: '/contacts',
   path: '/contacts',
@@ -63,15 +70,15 @@ const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
 } as any)
 const AuthenticatedConversationsIndexRoute =
   AuthenticatedConversationsIndexRouteImport.update({
-    id: '/conversations/',
-    path: '/conversations/',
-    getParentRoute: () => AuthenticatedRoute,
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
 const AuthenticatedConversationsThreadIdRoute =
   AuthenticatedConversationsThreadIdRouteImport.update({
-    id: '/conversations/$threadId',
-    path: '/conversations/$threadId',
-    getParentRoute: () => AuthenticatedRoute,
+    id: '/$threadId',
+    path: '/$threadId',
+    getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
 const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
   id: '/api/public/engine/ingest',
@@ -89,6 +96,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/contacts': typeof AuthenticatedContactsRoute
+  '/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
+  '/_authenticated/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/contacts'
+    | '/conversations'
     | '/dashboard'
     | '/pipelines'
     | '/sessions'
@@ -159,6 +169,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/_authenticated/contacts'
+    | '/_authenticated/conversations'
     | '/_authenticated/dashboard'
     | '/_authenticated/pipelines'
     | '/_authenticated/sessions'
@@ -228,6 +239,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/conversations': {
+      id: '/_authenticated/conversations'
+      path: '/conversations'
+      fullPath: '/conversations'
+      preLoaderRoute: typeof AuthenticatedConversationsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/contacts': {
       id: '/_authenticated/contacts'
       path: '/contacts'
@@ -237,17 +255,17 @@ declare module '@tanstack/react-router' {
     }
     '/_authenticated/conversations/': {
       id: '/_authenticated/conversations/'
-      path: '/conversations'
+      path: '/'
       fullPath: '/conversations/'
       preLoaderRoute: typeof AuthenticatedConversationsIndexRouteImport
-      parentRoute: typeof AuthenticatedRoute
+      parentRoute: typeof AuthenticatedConversationsRoute
     }
     '/_authenticated/conversations/$threadId': {
       id: '/_authenticated/conversations/$threadId'
-      path: '/conversations/$threadId'
+      path: '/$threadId'
       fullPath: '/conversations/$threadId'
       preLoaderRoute: typeof AuthenticatedConversationsThreadIdRouteImport
-      parentRoute: typeof AuthenticatedRoute
+      parentRoute: typeof AuthenticatedConversationsRoute
     }
     '/api/public/engine/ingest': {
       id: '/api/public/engine/ingest'
@@ -266,23 +284,37 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface AuthenticatedRouteChildren {
-  AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
-  AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
-  AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
-  AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
+interface AuthenticatedConversationsRouteChildren {
   AuthenticatedConversationsThreadIdRoute: typeof AuthenticatedConversationsThreadIdRoute
   AuthenticatedConversationsIndexRoute: typeof AuthenticatedConversationsIndexRoute
 }
 
+const AuthenticatedConversationsRouteChildren: AuthenticatedConversationsRouteChildren =
+  {
+    AuthenticatedConversationsThreadIdRoute:
+      AuthenticatedConversationsThreadIdRoute,
+    AuthenticatedConversationsIndexRoute: AuthenticatedConversationsIndexRoute,
+  }
+
+const AuthenticatedConversationsRouteWithChildren =
+  AuthenticatedConversationsRoute._addFileChildren(
+    AuthenticatedConversationsRouteChildren,
+  )
+
+interface AuthenticatedRouteChildren {
+  AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
+  AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRouteWithChildren
+  AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
+  AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
+}
+
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
+  AuthenticatedConversationsRoute: AuthenticatedConversationsRouteWithChildren,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
-  AuthenticatedConversationsThreadIdRoute:
-    AuthenticatedConversationsThreadIdRoute,
-  AuthenticatedConversationsIndexRoute: AuthenticatedConversationsIndexRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
