@@ -18,6 +18,8 @@ import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authentica
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
 import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
+import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
+import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 
@@ -66,6 +68,18 @@ const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
   path: '/contacts',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedConversationsIndexRoute =
+  AuthenticatedConversationsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedConversationsRoute,
+  } as any)
+const AuthenticatedConversationsThreadIdRoute =
+  AuthenticatedConversationsThreadIdRouteImport.update({
+    id: '/$threadId',
+    path: '/$threadId',
+    getParentRoute: () => AuthenticatedConversationsRoute,
+  } as any)
 const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
   id: '/api/public/engine/ingest',
   path: '/api/public/engine/ingest',
@@ -82,10 +96,12 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/contacts': typeof AuthenticatedContactsRoute
-  '/conversations': typeof AuthenticatedConversationsRoute
+  '/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
+  '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
+  '/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
@@ -94,10 +110,11 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/contacts': typeof AuthenticatedContactsRoute
-  '/conversations': typeof AuthenticatedConversationsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
+  '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
+  '/conversations': typeof AuthenticatedConversationsIndexRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
@@ -108,10 +125,12 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
-  '/_authenticated/conversations': typeof AuthenticatedConversationsRoute
+  '/_authenticated/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
+  '/_authenticated/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
+  '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
 }
@@ -126,6 +145,8 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/pipelines'
     | '/sessions'
+    | '/conversations/$threadId'
+    | '/conversations/'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
   fileRoutesByTo: FileRoutesByTo
@@ -134,10 +155,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/contacts'
-    | '/conversations'
     | '/dashboard'
     | '/pipelines'
     | '/sessions'
+    | '/conversations/$threadId'
+    | '/conversations'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
   id:
@@ -151,6 +173,8 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/pipelines'
     | '/_authenticated/sessions'
+    | '/_authenticated/conversations/$threadId'
+    | '/_authenticated/conversations/'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
   fileRoutesById: FileRoutesById
@@ -229,6 +253,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedContactsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/conversations/': {
+      id: '/_authenticated/conversations/'
+      path: '/'
+      fullPath: '/conversations/'
+      preLoaderRoute: typeof AuthenticatedConversationsIndexRouteImport
+      parentRoute: typeof AuthenticatedConversationsRoute
+    }
+    '/_authenticated/conversations/$threadId': {
+      id: '/_authenticated/conversations/$threadId'
+      path: '/$threadId'
+      fullPath: '/conversations/$threadId'
+      preLoaderRoute: typeof AuthenticatedConversationsThreadIdRouteImport
+      parentRoute: typeof AuthenticatedConversationsRoute
+    }
     '/api/public/engine/ingest': {
       id: '/api/public/engine/ingest'
       path: '/api/public/engine/ingest'
@@ -246,9 +284,26 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedConversationsRouteChildren {
+  AuthenticatedConversationsThreadIdRoute: typeof AuthenticatedConversationsThreadIdRoute
+  AuthenticatedConversationsIndexRoute: typeof AuthenticatedConversationsIndexRoute
+}
+
+const AuthenticatedConversationsRouteChildren: AuthenticatedConversationsRouteChildren =
+  {
+    AuthenticatedConversationsThreadIdRoute:
+      AuthenticatedConversationsThreadIdRoute,
+    AuthenticatedConversationsIndexRoute: AuthenticatedConversationsIndexRoute,
+  }
+
+const AuthenticatedConversationsRouteWithChildren =
+  AuthenticatedConversationsRoute._addFileChildren(
+    AuthenticatedConversationsRouteChildren,
+  )
+
 interface AuthenticatedRouteChildren {
   AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
-  AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRoute
+  AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRouteWithChildren
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
@@ -256,7 +311,7 @@ interface AuthenticatedRouteChildren {
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
-  AuthenticatedConversationsRoute: AuthenticatedConversationsRoute,
+  AuthenticatedConversationsRoute: AuthenticatedConversationsRouteWithChildren,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
