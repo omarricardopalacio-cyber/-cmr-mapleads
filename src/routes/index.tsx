@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -39,7 +40,11 @@ function Index() {
           </div>
           <span className="text-xs text-slate-500">Fase 1 · WhatsApp Engine</span>
         </div>
-      </header>
+          <div className="flex items-center gap-3">
+            <Link to="/login" className="text-sm text-slate-300 hover:text-white">Entrar</Link>
+            <Link to="/signup" className="rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-950 hover:bg-emerald-400">Crear cuenta</Link>
+          </div>
+
 
       <main className="mx-auto max-w-5xl px-6 py-16">
         <h1 className="text-4xl font-bold tracking-tight">WhatsApp Engine listo para instalar</h1>
