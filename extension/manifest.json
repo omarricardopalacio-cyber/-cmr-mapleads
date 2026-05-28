@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "CRM WhatsApp Engine",
+  "version": "0.1.0",
+  "description": "Bridge entre WhatsApp Web y el CRM. Observa, parsea y envía mensajes.",
+  "permissions": ["storage", "scripting", "alarms", "tabs"],
+  "host_permissions": ["https://web.whatsapp.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_icon": "icon.png" },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content/observer.js", "content/parser.js", "content/sender.js", "content/bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": { "48": "icon.png", "128": "icon.png" }
+}
