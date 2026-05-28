@@ -45,21 +45,30 @@ async function flushOutbox() {
 }
 
 async function pollCommands() {
-  if (!configured()) return;
+  if (!configured()) {
+    chrome.storage.local.set({ wsStatus: "disconnected", lastError: "not_configured" });
+    return;
+  }
   try {
     const res = await fetch(`${backendUrl}/api/public/engine/commands`, {
       method: "GET",
       headers: { "X-Session-Token": sessionToken },
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      chrome.storage.local.set({ wsStatus: "disconnected", lastError: `commands ${res.status}` });
+      return;
+    }
+    chrome.storage.local.set({ wsStatus: "connected", lastPoll: Date.now(), lastError: null });
     const { commands = [] } = await res.json();
     for (const cmd of commands) {
       await dispatchCommand(cmd);
     }
   } catch (e) {
     console.warn("[engine] poll err", e);
+    chrome.storage.local.set({ wsStatus: "disconnected", lastError: String(e?.message || e) });
   }
 }
+
 
 async function dispatchCommand(cmd) {
   // cmd: { id, type, payload }
