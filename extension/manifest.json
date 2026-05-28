@@ -4,7 +4,12 @@
   "version": "0.1.0",
   "description": "Bridge entre WhatsApp Web y el CRM. Observa, parsea y envía mensajes.",
   "permissions": ["storage", "scripting", "alarms", "tabs"],
-  "host_permissions": ["https://web.whatsapp.com/*"],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://project--*-dev.lovable.app/*",
+    "https://project--*.lovable.app/*",
+    "https://id-preview--*.lovable.app/*"
+  ],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_icon": "icon.png" },
   "content_scripts": [
