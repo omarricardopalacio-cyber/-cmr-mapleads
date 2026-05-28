@@ -31,7 +31,7 @@ export const Route = createFileRoute('/api/public/engine/commands')({
 
         await supabaseAdmin
           .from('wa_sessions')
-          .update({ status: 'online', last_heartbeat_at: new Date().toISOString() })
+          .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
           .eq('id', session.id)
 
         const { data: pending } = await supabaseAdmin

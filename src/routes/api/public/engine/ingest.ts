@@ -65,7 +65,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         await supabaseAdmin
           .from('wa_sessions')
-          .update({ status: 'online', last_heartbeat_at: new Date().toISOString() })
+          .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
           .eq('id', session.id)
 
         const eventRows = parsed.data.events.map((e) => ({
