@@ -7,18 +7,20 @@
   window.__engineBridge = { emit };
 
   // Recibir comandos del backend (vía background)
+  // Recibir comandos del backend (vía background)
   chrome.runtime.onMessage.addListener(async (msg, _sender, sendResponse) => {
-    if (msg?.type === "SEND_MESSAGE") {
+    if (msg?.__engine && msg?.type === "SEND_MESSAGE") {
       try {
-        const result = await window.__engineSender.sendMessage(msg.data);
-        emit({ type: "COMMAND_ACK", commandId: msg.commandId, ok: true, result });
+        const result = await window.__engineSender.sendMessage(msg.payload);
+        emit({ type: "ack", commandId: msg.commandId, ackStatus: "ok", raw: result });
       } catch (e) {
-        emit({ type: "COMMAND_ACK", commandId: msg.commandId, ok: false, error: String(e?.message || e) });
+        emit({ type: "ack", commandId: msg.commandId, ackStatus: "error", raw: { error: String(e?.message || e) } });
       }
       sendResponse({ ok: true });
     }
     return true;
   });
+
 
   console.log("[engine.bridge] listo");
 })();
