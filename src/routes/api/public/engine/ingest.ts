@@ -70,9 +70,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         const eventRows = parsed.data.events.map((e) => ({
           org_id: session.org_id,
+        const eventRows = parsed.data.events.map((e) => ({
+          org_id: session.org_id,
           session_id: session.id,
           type: e.type,
-          payload: e as unknown as Record<string, unknown>,
+          payload: e as unknown as never,
         }))
         await supabaseAdmin.from('events').insert(eventRows)
 
