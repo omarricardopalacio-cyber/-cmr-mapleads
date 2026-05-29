@@ -99,13 +99,31 @@
       return (input.innerText || input.textContent || "").includes(text);
     } catch {
       return false;
-    }
-  }
-
   function clickSend() {
     const btn = sel().findOne("sendBtn");
     if (!btn) return false;
-    const target = btn.closest("button, [role='button'], span[data-icon='send']") || btn;
+    // Buscar el contenedor clickeable real (button, role=button, o el wrapper más cercano)
+    const target =
+      btn.closest('button') ||
+      btn.closest('[role="button"]') ||
+      btn.closest('div[aria-label]') ||
+      btn.parentElement ||
+      btn;
+
+    const rect = target.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 };
+
+    try { target.dispatchEvent(new PointerEvent("pointerdown", opts)); } catch {}
+    try { target.dispatchEvent(new MouseEvent("mousedown", opts)); } catch {}
+    try { target.dispatchEvent(new PointerEvent("pointerup", opts)); } catch {}
+    try { target.dispatchEvent(new MouseEvent("mouseup", opts)); } catch {}
+    try { target.dispatchEvent(new MouseEvent("click", opts)); } catch {}
+    try { target.click(); } catch {}
+    return true;
+  }
+
     target.click();
     return true;
   }
