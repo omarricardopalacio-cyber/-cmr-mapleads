@@ -74,4 +74,43 @@ export const sendMessage = createServerFn({ method: "POST" })
       .single();
     if (error) throw new Error(error.message);
     return { commandId: cmd.id };
+    if (error) throw new Error(error.message);
+    return { commandId: cmd.id };
   });
+
+export const sendDirectMessage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        sessionId: z.string().uuid(),
+        chatId: z.string().min(3).max(120),
+        text: z.string().min(1).max(4000),
+      })
+      .parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data: session } = await supabaseAdmin
+      .from("wa_sessions")
+      .select("id")
+      .eq("id", data.sessionId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (!session) throw new Error("Session not found");
+    const chatId = data.chatId.includes("@") ? data.chatId : `${data.chatId}@c.us`;
+    const { data: cmd, error } = await supabaseAdmin
+      .from("engine_commands")
+      .insert({
+        org_id: orgId,
+        session_id: session.id,
+        type: "send_message",
+        payload: { chatId, text: data.text },
+        status: "pending",
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return { commandId: cmd.id };
+  });
+
