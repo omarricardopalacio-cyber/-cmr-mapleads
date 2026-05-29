@@ -1,5 +1,204 @@
-import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useParams } from "@tanstack/react-router";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { useState } from "react";
+import { listThreads } from "@/lib/crm.functions";
+import { sendDirectMessage } from "@/lib/messaging.functions";
+import { listSessions } from "@/lib/sessions.functions";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Plus, Search } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/conversations")({
-  component: () => <Outlet />,
+  component: ConversationsLayout,
 });
+
+function ConversationsLayout() {
+  const fn = useServerFn(listThreads);
+  const { data, isLoading } = useQuery({
+    queryKey: ["threads"],
+    queryFn: () => fn({}),
+    refetchInterval: 5000,
+  });
+  const params = useParams({ strict: false }) as { threadId?: string };
+  const activeId = params.threadId;
+  const [q, setQ] = useState("");
+
+  const threads = (data?.threads ?? []).filter((t) => {
+    if (!q.trim()) return true;
+    const c = Array.isArray(t.contacts) ? t.contacts[0] : t.contacts;
+    const hay = `${c?.display_name ?? ""} ${c?.wa_id ?? ""}`.toLowerCase();
+    return hay.includes(q.toLowerCase());
+  });
+
+  return (
+    <div className="flex h-[calc(100vh-5rem)] -m-4 md:-m-6 border-t">
+      {/* Sidebar lista de chats */}
+      <aside className="w-full md:w-80 lg:w-96 border-r flex flex-col bg-card">
+        <div className="p-3 border-b flex items-center gap-2">
+          <h1 className="font-semibold flex-1">Chats</h1>
+          <NewChatDialog />
+        </div>
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar..."
+              className="pl-8 h-9"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading && <p className="p-4 text-sm text-muted-foreground">Cargando...</p>}
+          {!isLoading && threads.length === 0 && (
+            <p className="p-4 text-sm text-muted-foreground text-center">
+              Sin conversaciones. Pulsa + para iniciar una.
+            </p>
+          )}
+          {threads.map((t) => {
+            const c = Array.isArray(t.contacts) ? t.contacts[0] : t.contacts;
+            const active = activeId === t.id;
+            return (
+              <Link
+                key={t.id}
+                to="/conversations/$threadId"
+                params={{ threadId: t.id }}
+                className={`block px-3 py-3 border-b hover:bg-muted/50 transition-colors ${
+                  active ? "bg-muted" : ""
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium shrink-0">
+                    {(c?.display_name || c?.wa_id || "?").slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="font-medium truncate">
+                        {c?.display_name || c?.wa_id || "Contacto"}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground shrink-0">
+                        {t.last_message_at
+                          ? new Date(t.last_message_at).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : ""}
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono truncate">
+                      {c?.wa_id}
+                    </div>
+                  </div>
+                  {t.unread_count > 0 && (
+                    <span className="rounded-full bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 self-center">
+                      {t.unread_count}
+                    </span>
+                  )}
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </aside>
+
+      {/* Panel de chat */}
+      <main className="flex-1 hidden md:flex flex-col bg-muted/10">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
+
+function NewChatDialog() {
+  const sessionsFn = useServerFn(listSessions);
+  const sendFn = useServerFn(sendDirectMessage);
+  const { data } = useQuery({ queryKey: ["sessions"], queryFn: () => sessionsFn({}) });
+  const [open, setOpen] = useState(false);
+  const [sessionId, setSessionId] = useState("");
+  const [chatId, setChatId] = useState("");
+  const [text, setText] = useState("");
+
+  const sessions = data?.sessions ?? [];
+  const connected = sessions.filter((s) => s.status === "connected");
+
+  const mut = useMutation({
+    mutationFn: (vars: { sessionId: string; chatId: string; text: string }) =>
+      sendFn({ data: vars }),
+    onSuccess: () => {
+      toast.success("Mensaje encolado. La extensión lo enviará.");
+      setText("");
+      setChatId("");
+      setOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const sid = sessionId || connected[0]?.id || sessions[0]?.id;
+    if (!sid) return toast.error("No hay sesiones activas.");
+    if (!chatId.trim()) return toast.error("Falta el número");
+    if (!text.trim()) return toast.error("Falta el mensaje");
+    mut.mutate({ sessionId: sid, chatId: chatId.trim(), text: text.trim() });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="icon" variant="ghost">
+          <Plus className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Nuevo mensaje</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <select
+            className="w-full bg-background border rounded-md px-3 py-2 text-sm"
+            value={sessionId}
+            onChange={(e) => setSessionId(e.target.value)}
+          >
+            <option value="">
+              {sessions.length === 0
+                ? "Sin sesiones"
+                : `Auto (${connected[0]?.label || sessions[0]?.label})`}
+            </option>
+            {sessions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label} — {s.status}
+              </option>
+            ))}
+          </select>
+          <Input
+            placeholder="Número con código país (ej: 521234567890)"
+            value={chatId}
+            onChange={(e) => setChatId(e.target.value)}
+          />
+          <Textarea
+            placeholder="Mensaje..."
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+          />
+          <div className="flex justify-end">
+            <Button type="submit" disabled={mut.isPending}>
+              {mut.isPending ? "Enviando..." : "Enviar"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
