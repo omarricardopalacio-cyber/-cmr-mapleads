@@ -16,25 +16,32 @@
       '#main div[role="row"] div[data-id]',
     ],
     chatHeader: ['header [data-id]', "#main header"],
+    chatHeader: ['header [data-id]', '#main header [data-id]', "#main header"],
     composer: [
       '[data-testid="conversation-compose-box-input"]',
-      'footer div[contenteditable="true"][data-tab="10"]',
+      'div[contenteditable="true"][data-tab="10"]',
+      'div[contenteditable="true"][data-tab="6"]',
       'footer div[contenteditable="true"]',
+      'div[contenteditable="true"][role="textbox"]',
     ],
     sendBtn: [
       '[data-testid="send"]',
       '[data-testid="compose-btn-send"]',
       'button[data-tab="11"]',
       'button[aria-label="Enviar"]',
+      'button[aria-label="Send"]',
       'span[data-icon="send"]',
+      'span[data-icon="wds-ic-send-filled"]',
     ],
     textInNode: [
-      "span.selectable-text",
-      "span._ao3e",
-      "div.copyable-text span",
+      'span.selectable-text',
+      'span._ao3e',
+      'div.copyable-text span.selectable-text',
+      'div.copyable-text span',
     ],
-    copyableMeta: ["[data-pre-plain-text]"],
+    copyableMeta: ["[data-pre-plain-text]", "div.copyable-text"],
   };
+
 
   /** Primer elemento que matchee cualquiera de los selectores. */
   function findOne(group, root = document) {
