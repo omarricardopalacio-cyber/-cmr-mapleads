@@ -99,10 +99,12 @@
       return (input.innerText || input.textContent || "").includes(text);
     } catch {
       return false;
+    }
+  }
+
   function clickSend() {
     const btn = sel().findOne("sendBtn");
     if (!btn) return false;
-    // Buscar el contenedor clickeable real (button, role=button, o el wrapper más cercano)
     const target =
       btn.closest('button') ||
       btn.closest('[role="button"]') ||
@@ -124,9 +126,6 @@
     return true;
   }
 
-    target.click();
-    return true;
-  }
 
   function pressEnter(input) {
     const opts = { key: "Enter", code: "Enter", which: 13, keyCode: 13, bubbles: true, cancelable: true };
