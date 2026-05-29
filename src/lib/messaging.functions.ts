@@ -72,11 +72,10 @@ export const sendMessage = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    if (error) throw new Error(error.message);
-    return { commandId: cmd.id };
-    if (error) throw new Error(error.message);
+    if (error || !cmd) throw new Error(error?.message || "insert failed");
     return { commandId: cmd.id };
   });
+
 
 export const sendDirectMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
