@@ -79,6 +79,75 @@
     return `${digits}@c.us`;
   }
 
+  function extractChatId(value) {
+    if (!value) return null;
+    if (typeof value === "string") return value;
+    if (typeof value !== "object") return null;
+
+    return (
+      value._serialized ||
+      value.id?._serialized ||
+      value.id ||
+      value.user ||
+      value.wid?._serialized ||
+      null
+    );
+  }
+
+  function chatDigits(value) {
+    const raw = extractChatId(value);
+    if (!raw) return "";
+    return String(raw).replace(/@.*$/, "").replace(/\D/g, "");
+  }
+
+  function sameChat(a, b) {
+    const aDigits = chatDigits(a);
+    const bDigits = chatDigits(b);
+    return !!aDigits && !!bDigits && aDigits === bDigits;
+  }
+
+  function getActiveChatModel() {
+    try {
+      return window.Store?.Chat?.getActive?.() || window.Store?.Chat?.getModelsArray?.().find?.((chat) => chat.active) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getActiveChatId() {
+    const activeModel = getActiveChatModel();
+    const fromStore = extractChatId(activeModel);
+    if (fromStore) return fromStore;
+
+    try {
+      const header = document.querySelector('header [data-id], #main header [data-id]');
+      return header?.getAttribute("data-id") || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function waitForTargetChat(chatId, options = {}) {
+    const { attempts = 40, delay = 250 } = options;
+    const normalized = normalizeChatId(chatId);
+
+    for (let i = 0; i < attempts; i++) {
+      ensureStore();
+      const activeChatId = getActiveChatId();
+      const composer = locateComposer();
+      if ((!normalized && composer) || (composer && sameChat(activeChatId, normalized))) {
+        return { ok: true, activeChatId: activeChatId || normalized };
+      }
+      if (delay > 0) await sleep(delay);
+    }
+
+    return {
+      ok: false,
+      error: "target_chat_not_ready",
+      activeChatId: getActiveChatId(),
+    };
+  }
+
   async function resolveChat(chatId) {
     const Store = window.Store;
     if (!Store?.Chat) return null;
@@ -107,10 +176,10 @@
         if (result) return result;
       }
     } catch {}
-    // 4) Fallback al chat activo del UI
+    // 4) Fallback al chat activo solo si coincide con el destino
     try {
-      const active = Store.Chat.getActive?.() || Store.Chat.getModelsArray?.().find?.((c) => c.active);
-      if (active) return active;
+      const active = getActiveChatModel();
+      if (active && (!normalized || sameChat(active, normalized))) return active;
     } catch {}
     return null;
   }
@@ -141,12 +210,7 @@
   window.engineDiagnose = async () => ({
     storeAvailable: ensureStore(),
     hasSendTextMsgToChat: typeof window.Store?.SendTextMsgToChat === "function",
-    activeChat: (() => {
-      try {
-        const a = window.Store?.Chat?.getActive?.();
-        return a?.id?._serialized || a?.id || null;
-      } catch { return null; }
-    })(),
+    activeChat: getActiveChatId(),
     composerFound: !!locateComposer(),
     sendButtonFound: !!locateSendButton(),
     url: location.href,
@@ -271,13 +335,24 @@
     const phone = String(chatId || "").replace(/@c\.us$/i, "").replace(/\D/g, "");
     if (!phone) return { ok: false, error: "invalid_chat_id" };
     const target = `https://web.whatsapp.com/send?phone=${phone}`;
-    if (location.href !== target) location.href = target;
-
-    for (let i = 0; i < 30; i++) {
-      await sleep(300);
-      if (locateComposer()) return { ok: true };
+    const currentDigits = chatDigits(getActiveChatId());
+    if (currentDigits === phone && locateComposer()) {
+      return { ok: true, skipped: true, activeChatId: getActiveChatId() };
     }
-    return { ok: false, error: "composer_not_found_after_url" };
+
+    const currentUrl = location.href;
+    if (!currentUrl.includes(`/send?phone=${phone}`)) location.href = target;
+
+    const ready = await waitForTargetChat(chatId, { attempts: 48, delay: 250 });
+    if (!ready.ok) {
+      return {
+        ok: false,
+        error: ready.error || "composer_not_found_after_url",
+        activeChatId: ready.activeChatId || null,
+      };
+    }
+
+    return { ok: true, activeChatId: ready.activeChatId || getActiveChatId() };
   }
 
   window.addEventListener("message", async (event) => {
@@ -302,6 +377,8 @@
       }
     } else if (data.action === "open_chat_url") {
       result = await openViaUrl(data.chatId);
+    } else if (data.action === "wait_for_target_chat") {
+      result = await waitForTargetChat(data.chatId, data.options || {});
     }
 
     window.postMessage({ type: RESPONSE, id: data.id, result }, "*");
