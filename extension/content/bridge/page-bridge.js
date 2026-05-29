@@ -79,6 +79,75 @@
     return `${digits}@c.us`;
   }
 
+  function extractChatId(value) {
+    if (!value) return null;
+    if (typeof value === "string") return value;
+    if (typeof value !== "object") return null;
+
+    return (
+      value._serialized ||
+      value.id?._serialized ||
+      value.id ||
+      value.user ||
+      value.wid?._serialized ||
+      null
+    );
+  }
+
+  function chatDigits(value) {
+    const raw = extractChatId(value);
+    if (!raw) return "";
+    return String(raw).replace(/@.*$/, "").replace(/\D/g, "");
+  }
+
+  function sameChat(a, b) {
+    const aDigits = chatDigits(a);
+    const bDigits = chatDigits(b);
+    return !!aDigits && !!bDigits && aDigits === bDigits;
+  }
+
+  function getActiveChatModel() {
+    try {
+      return window.Store?.Chat?.getActive?.() || window.Store?.Chat?.getModelsArray?.().find?.((chat) => chat.active) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getActiveChatId() {
+    const activeModel = getActiveChatModel();
+    const fromStore = extractChatId(activeModel);
+    if (fromStore) return fromStore;
+
+    try {
+      const header = document.querySelector('header [data-id], #main header [data-id]');
+      return header?.getAttribute("data-id") || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function waitForTargetChat(chatId, options = {}) {
+    const { attempts = 40, delay = 250 } = options;
+    const normalized = normalizeChatId(chatId);
+
+    for (let i = 0; i < attempts; i++) {
+      ensureStore();
+      const activeChatId = getActiveChatId();
+      const composer = locateComposer();
+      if ((!normalized && composer) || (composer && sameChat(activeChatId, normalized))) {
+        return { ok: true, activeChatId: activeChatId || normalized };
+      }
+      if (delay > 0) await sleep(delay);
+    }
+
+    return {
+      ok: false,
+      error: "target_chat_not_ready",
+      activeChatId: getActiveChatId(),
+    };
+  }
+
   async function resolveChat(chatId) {
     const Store = window.Store;
     if (!Store?.Chat) return null;
@@ -107,10 +176,10 @@
         if (result) return result;
       }
     } catch {}
-    // 4) Fallback al chat activo del UI
+    // 4) Fallback al chat activo solo si coincide con el destino
     try {
-      const active = Store.Chat.getActive?.() || Store.Chat.getModelsArray?.().find?.((c) => c.active);
-      if (active) return active;
+      const active = getActiveChatModel();
+      if (active && (!normalized || sameChat(active, normalized))) return active;
     } catch {}
     return null;
   }
