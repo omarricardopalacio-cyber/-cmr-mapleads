@@ -38,7 +38,14 @@
     if (!chatId) return true;
     // Si el header ya muestra ese chat, no hacemos nada.
     const header = sel().findOne("chatHeader");
-    if (header?.getAttribute("data-id") === chatId) return true;
+    const currentId = header?.getAttribute("data-id");
+    if (currentId === chatId) return true;
+
+    const waitCurrent = await callPage("wait_for_target_chat", {
+      chatId,
+      options: { attempts: 2, delay: 0 },
+    });
+    if (waitCurrent?.ok) return true;
 
     // Buscar en la lista lateral.
     const candidates = [
@@ -61,13 +68,11 @@
     }
     const viaUrl = await callPage("open_chat_url", { chatId });
     if (!viaUrl?.ok) return false;
-
-    for (let i = 0; i < 20; i++) {
-      await sleep(200);
-      if (sel().findOne("composer")) return true;
-    }
-
-    return false;
+    const ready = await callPage("wait_for_target_chat", {
+      chatId,
+      options: { attempts: 20, delay: 200 },
+    });
+    return !!ready?.ok;
   }
 
   function focusComposer() {
@@ -187,7 +192,8 @@
       return { sent: true, via: "store", at: Date.now() };
     }
 
-    await openChat(chatId);
+    const opened = await openChat(chatId);
+    if (!opened) throw new Error("TARGET_CHAT_NOT_READY");
     await sleep(300);
 
     const injected = await callPage("inject_and_send", { text });
