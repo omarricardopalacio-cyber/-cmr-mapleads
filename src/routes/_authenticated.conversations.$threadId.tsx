@@ -63,55 +63,75 @@ function ThreadPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-7rem)]">
-      <div className="flex items-center gap-2 mb-3">
-        <Button asChild variant="ghost" size="sm">
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-3 px-4 py-3 border-b bg-card">
+        <Button asChild variant="ghost" size="icon" className="md:hidden">
           <Link to="/conversations">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
-        <div>
-          <div className="font-medium">
+        <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium">
+          {(data?.thread.contact.displayName || data?.thread.contact.waId || "?")
+            .slice(0, 1)
+            .toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-medium truncate">
             {data?.thread.contact.displayName || data?.thread.contact.waId || "Conversación"}
           </div>
-          <div className="text-xs text-muted-foreground font-mono">{data?.thread.contact.waId}</div>
+          <div className="text-xs text-muted-foreground font-mono truncate">
+            {data?.thread.contact.waId}
+          </div>
         </div>
       </div>
 
-      <Card className="flex-1 overflow-hidden flex flex-col">
-        <div ref={scrollerRef} className="flex-1 overflow-y-auto p-4 space-y-2 bg-muted/20">
-          {isLoading && <p className="text-muted-foreground text-sm">Cargando...</p>}
-          {!isLoading && data?.messages.length === 0 && (
-            <p className="text-muted-foreground text-sm text-center">Sin mensajes aún.</p>
-          )}
-          {data?.messages.map((m) => (
-            <div
-              key={m.id}
-              className={`max-w-[70%] rounded-lg px-3 py-2 text-sm ${
-                m.direction === "out"
-                  ? "ml-auto bg-primary text-primary-foreground"
-                  : "mr-auto bg-card border"
-              }`}
-            >
-              <div className="whitespace-pre-wrap break-words">{m.text || <i className="opacity-60">[media]</i>}</div>
-              <div className="text-[10px] opacity-70 mt-1">
-                {new Date(m.sent_at).toLocaleTimeString()}
-              </div>
+      <div
+        ref={scrollerRef}
+        className="flex-1 overflow-y-auto p-4 space-y-2"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.08) 1px, transparent 0)",
+          backgroundSize: "20px 20px",
+        }}
+      >
+        {isLoading && <p className="text-muted-foreground text-sm">Cargando...</p>}
+        {!isLoading && data?.messages.length === 0 && (
+          <p className="text-muted-foreground text-sm text-center">Sin mensajes aún.</p>
+        )}
+        {data?.messages.map((m) => (
+          <div
+            key={m.id}
+            className={`max-w-[70%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+              m.direction === "out"
+                ? "ml-auto bg-primary text-primary-foreground"
+                : "mr-auto bg-card border"
+            }`}
+          >
+            <div className="whitespace-pre-wrap break-words">
+              {m.text || <i className="opacity-60">[media]</i>}
             </div>
-          ))}
-        </div>
-        <form onSubmit={handleSend} className="border-t p-3 flex gap-2">
-          <Input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Escribe un mensaje..."
-            disabled={sending}
-          />
-          <Button type="submit" disabled={sending || !text.trim()}>
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
-      </Card>
+            <div className="text-[10px] opacity-70 mt-1 text-right">
+              {new Date(m.sent_at).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <form onSubmit={handleSend} className="border-t p-3 flex gap-2 bg-card">
+        <Input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Escribe un mensaje..."
+          disabled={sending}
+          autoFocus
+        />
+        <Button type="submit" disabled={sending || !text.trim()}>
+          <Send className="h-4 w-4" />
+        </Button>
+      </form>
     </div>
   );
 }
