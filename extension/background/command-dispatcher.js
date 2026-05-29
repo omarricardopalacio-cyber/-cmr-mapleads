@@ -13,12 +13,30 @@
       return;
     }
     if (cmd.type === COMMANDS.SEND_MESSAGE) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        __engine: true,
-        type: "SEND_MESSAGE",
-        commandId: cmd.id,
-        payload: cmd.payload,
-      });
+      try {
+        const response = await chrome.tabs.sendMessage(tabs[0].id, {
+          __engine: true,
+          type: "SEND_MESSAGE",
+          commandId: cmd.id,
+          payload: cmd.payload,
+        });
+
+        if (!response?.ok) {
+          self.__engineBridge.enqueue({
+            type: "ack",
+            commandId: cmd.id,
+            ackStatus: "content_unreachable",
+            raw: { response: response ?? null },
+          });
+        }
+      } catch (error) {
+        self.__engineBridge.enqueue({
+          type: "ack",
+          commandId: cmd.id,
+          ackStatus: "content_unreachable",
+          raw: { error: String(error?.message || error) },
+        });
+      }
     } else {
       self.__engineBridge.enqueue({
         type: "ack",

@@ -4,6 +4,27 @@
   const sel = () => window.__engineSelectors;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  async function trySendViaStore(text, chatId) {
+    try {
+      const Store = window.Store;
+      if (!Store || !chatId) return false;
+
+      const chat = Store.Chat?.get?.(chatId) || Store.Chat?.find?.(chatId);
+      if (!chat) return false;
+
+      if (typeof chat.sendMessage === "function") {
+        await chat.sendMessage(text);
+        return true;
+      }
+
+      if (typeof Store.SendTextMsgToChat === "function") {
+        await Store.SendTextMsgToChat(chat, text);
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
   async function openChat(chatId) {
     if (!chatId) return true;
     // Si el header ya muestra ese chat, no hacemos nada.
@@ -145,6 +166,11 @@
 
   async function sendMessage({ chatId, text }) {
     if (!text) throw new Error("EMPTY_TEXT");
+
+    if (await trySendViaStore(text, chatId)) {
+      return { sent: true, via: "store", at: Date.now() };
+    }
+
     await openChat(chatId);
     await sleep(300);
 
@@ -162,7 +188,7 @@
       pressEnter(input);
       await sleep(300);
     }
-    return { sent: ok, at: Date.now() };
+    return { sent: ok, via: "dom", at: Date.now() };
   }
 
   window.__engineSender = { sendMessage, openChat };

@@ -4,6 +4,9 @@
   const { makeEvent } = self.__engineContracts;
 
   function register() {
+    if (self.__engineAlarmListenerRegistered) return;
+    self.__engineAlarmListenerRegistered = true;
+
     chrome.alarms.onAlarm.addListener((alarm) => {
       switch (alarm.name) {
         case ALARMS.POLL:
