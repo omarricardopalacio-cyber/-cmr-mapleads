@@ -70,36 +70,95 @@
     }
   }
 
+  function normalizeChatId(chatId) {
+    if (!chatId) return null;
+    const raw = String(chatId).trim();
+    if (raw.includes("@")) return raw;
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) return null;
+    return `${digits}@c.us`;
+  }
+
+  async function resolveChat(chatId) {
+    const Store = window.Store;
+    if (!Store?.Chat) return null;
+    const normalized = normalizeChatId(chatId);
+
+    // 1) Intentar varias formas serializadas
+    const candidates = [normalized, chatId, { _serialized: normalized }];
+    for (const c of candidates) {
+      try {
+        const chat = Store.Chat.get?.(c);
+        if (chat) return chat;
+      } catch {}
+    }
+    // 2) find async
+    try {
+      if (typeof Store.Chat.find === "function") {
+        const chat = await Store.Chat.find(normalized || chatId);
+        if (chat) return chat;
+      }
+    } catch {}
+    // 3) Crear chat
+    try {
+      if (Store.FindOrCreateChat?.findOrCreateLatestChat) {
+        const result = await Store.FindOrCreateChat.findOrCreateLatestChat(normalized || chatId);
+        if (result?.chat) return result.chat;
+        if (result) return result;
+      }
+    } catch {}
+    // 4) Fallback al chat activo del UI
+    try {
+      const active = Store.Chat.getActive?.() || Store.Chat.getModelsArray?.().find?.((c) => c.active);
+      if (active) return active;
+    } catch {}
+    return null;
+  }
+
   async function trySendViaStore(chatId, text) {
-    if (!chatId || !text) return { ok: false, error: "missing_params" };
+    if (!text) return { ok: false, error: "missing_text" };
     if (!ensureStore()) return { ok: false, error: "store_unavailable" };
 
     try {
-      const Store = window.Store;
-      let chat = Store.Chat?.get?.(chatId);
-      if (!chat && typeof Store.Chat?.find === "function") {
-        chat = await Store.Chat.find(chatId);
-      }
-      if (!chat && Store.FindOrCreateChat?.findOrCreateLatestChat) {
-        chat = await Store.FindOrCreateChat.findOrCreateLatestChat(chatId);
-      }
+      const chat = await resolveChat(chatId);
       if (!chat) return { ok: false, error: "chat_not_found" };
 
       if (typeof chat.sendMessage === "function") {
         await chat.sendMessage(text);
         return { ok: true, via: "store" };
       }
-
-      if (typeof Store.SendTextMsgToChat === "function") {
-        await Store.SendTextMsgToChat(chat, text);
+      if (typeof window.Store.SendTextMsgToChat === "function") {
+        await window.Store.SendTextMsgToChat(chat, text);
         return { ok: true, via: "store" };
       }
-
       return { ok: false, error: "send_api_missing" };
     } catch (error) {
       return { ok: false, error: String(error?.message || error) };
     }
   }
+
+  // Helpers de diagnóstico expuestos en MAIN world
+  window.engineDiagnose = async () => ({
+    storeAvailable: ensureStore(),
+    hasSendTextMsgToChat: typeof window.Store?.SendTextMsgToChat === "function",
+    activeChat: (() => {
+      try {
+        const a = window.Store?.Chat?.getActive?.();
+        return a?.id?._serialized || a?.id || null;
+      } catch { return null; }
+    })(),
+    composerFound: !!locateComposer(),
+    sendButtonFound: !!locateSendButton(),
+    url: location.href,
+  });
+  window.engineTestSend = async (text, chatId) => {
+    const viaStore = await trySendViaStore(chatId, text || "test engine");
+    if (viaStore.ok) return viaStore;
+    const inj = await injectComposerText(text || "test engine");
+    if (!inj.ok) return inj;
+    await sleep(120);
+    return triggerSend();
+  };
 
   function dispatchInputEvents(input, text) {
     try {
