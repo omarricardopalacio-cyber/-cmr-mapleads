@@ -3,26 +3,35 @@
 (function () {
   const sel = () => window.__engineSelectors;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const PAGE_REQUEST = "ENGINE_PAGE_REQUEST";
+  const PAGE_RESPONSE = "ENGINE_PAGE_RESPONSE";
+
+  function callPage(action, payload = {}) {
+    return new Promise((resolve) => {
+      const id = `engine_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+      function onMessage(event) {
+        if (event.source !== window) return;
+        const data = event.data;
+        if (!data || data.type !== PAGE_RESPONSE || data.id !== id) return;
+        window.removeEventListener("message", onMessage);
+        resolve(data.result || { ok: false, error: "empty_response" });
+      }
+
+      window.addEventListener("message", onMessage);
+      window.postMessage({ type: PAGE_REQUEST, id, action, ...payload }, "*");
+      setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        resolve({ ok: false, error: `timeout:${action}` });
+      }, 8000);
+    });
+  }
 
   async function trySendViaStore(text, chatId) {
-    try {
-      const Store = window.Store;
-      if (!Store || !chatId) return false;
-
-      const chat = Store.Chat?.get?.(chatId) || Store.Chat?.find?.(chatId);
-      if (!chat) return false;
-
-      if (typeof chat.sendMessage === "function") {
-        await chat.sendMessage(text);
-        return true;
-      }
-
-      if (typeof Store.SendTextMsgToChat === "function") {
-        await Store.SendTextMsgToChat(chat, text);
-        return true;
-      }
-    } catch {}
-    return false;
+    const boot = await callPage("bootstrap_store");
+    if (!boot?.ok) return false;
+    const result = await callPage("send_via_store", { chatId, text });
+    return !!result?.ok;
   }
 
   async function openChat(chatId) {
@@ -50,7 +59,14 @@
         return true;
       }
     }
-    // No encontrado — seguimos igual; tal vez el chat ya está abierto sin data-id en header.
+    const viaUrl = await callPage("open_chat_url", { chatId });
+    if (!viaUrl?.ok) return false;
+
+    for (let i = 0; i < 20; i++) {
+      await sleep(200);
+      if (sel().findOne("composer")) return true;
+    }
+
     return false;
   }
 
@@ -173,6 +189,16 @@
 
     await openChat(chatId);
     await sleep(300);
+
+    const injected = await callPage("inject_and_send", { text });
+    if (injected?.ok) {
+      return {
+        sent: injected.cleared !== false,
+        via: "dom-main",
+        mode: injected.mode,
+        at: Date.now(),
+      };
+    }
 
     const input = focusComposer();
     if (!input) throw new Error("COMPOSER_NOT_FOUND");
