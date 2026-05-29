@@ -210,12 +210,7 @@
   window.engineDiagnose = async () => ({
     storeAvailable: ensureStore(),
     hasSendTextMsgToChat: typeof window.Store?.SendTextMsgToChat === "function",
-    activeChat: (() => {
-      try {
-        const a = window.Store?.Chat?.getActive?.();
-        return a?.id?._serialized || a?.id || null;
-      } catch { return null; }
-    })(),
+    activeChat: getActiveChatId(),
     composerFound: !!locateComposer(),
     sendButtonFound: !!locateSendButton(),
     url: location.href,
@@ -340,13 +335,24 @@
     const phone = String(chatId || "").replace(/@c\.us$/i, "").replace(/\D/g, "");
     if (!phone) return { ok: false, error: "invalid_chat_id" };
     const target = `https://web.whatsapp.com/send?phone=${phone}`;
-    if (location.href !== target) location.href = target;
-
-    for (let i = 0; i < 30; i++) {
-      await sleep(300);
-      if (locateComposer()) return { ok: true };
+    const currentDigits = chatDigits(getActiveChatId());
+    if (currentDigits === phone && locateComposer()) {
+      return { ok: true, skipped: true, activeChatId: getActiveChatId() };
     }
-    return { ok: false, error: "composer_not_found_after_url" };
+
+    const currentUrl = location.href;
+    if (!currentUrl.includes(`/send?phone=${phone}`)) location.href = target;
+
+    const ready = await waitForTargetChat(chatId, { attempts: 48, delay: 250 });
+    if (!ready.ok) {
+      return {
+        ok: false,
+        error: ready.error || "composer_not_found_after_url",
+        activeChatId: ready.activeChatId || null,
+      };
+    }
+
+    return { ok: true, activeChatId: ready.activeChatId || getActiveChatId() };
   }
 
   window.addEventListener("message", async (event) => {
@@ -371,6 +377,8 @@
       }
     } else if (data.action === "open_chat_url") {
       result = await openViaUrl(data.chatId);
+    } else if (data.action === "wait_for_target_chat") {
+      result = await waitForTargetChat(data.chatId, data.options || {});
     }
 
     window.postMessage({ type: RESPONSE, id: data.id, result }, "*");
