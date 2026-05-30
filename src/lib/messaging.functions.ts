@@ -3,25 +3,13 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { convertUrlToBase64 } from "@/lib/media";
-
-async function getUserOrg(userId: string) {
-  const { data } = await supabaseAdmin
-    .from("user_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  if (!data) throw new Error("No organization");
-  return data.org_id;
-}
+import { ensureUserOrg } from "@/lib/org-helpers";
 
 export const listMessages = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ threadId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
-    const orgId = await getUserOrg(context.userId);
-    if (!orgId) throw new Error("Organization not found");
-
+    const orgId = await ensureUserOrg(context.userId);
     const { data: thread, error: threadErr } = await supabaseAdmin
       .from("threads")
       .select("id, contact_id, session_id, ai_enabled, contacts(display_name, wa_id, phone)")
@@ -72,7 +60,7 @@ export const sendMessage = createServerFn({ method: "POST" })
     z.object({ threadId: z.string().uuid(), text: z.string().min(1).max(4000), media_url: z.string().url().nullable().optional(), mime_type: z.string().max(100).nullable().optional() }).parse(d)
   )
   .handler(async ({ context, data }) => {
-    const orgId = await getUserOrg(context.userId);
+    const orgId = await ensureUserOrg(context.userId);
     const { data: thread } = await supabaseAdmin
       .from("threads")
       .select("id, session_id, contacts(wa_id, phone)")
@@ -126,7 +114,7 @@ export const sendDirectMessage = createServerFn({ method: "POST" })
       .parse(d)
   )
   .handler(async ({ context, data }) => {
-    const orgId = await getUserOrg(context.userId);
+    const orgId = await ensureUserOrg(context.userId);
     const { data: session } = await supabaseAdmin
       .from("wa_sessions")
       .select("id")
@@ -155,7 +143,7 @@ export const toggleAiEnabled = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ threadId: z.string().uuid(), aiEnabled: z.boolean() }).parse(d))
   .handler(async ({ context, data }) => {
-    const orgId = await getUserOrg(context.userId);
+    const orgId = await ensureUserOrg(context.userId);
     await supabaseAdmin.from("threads").update({ ai_enabled: data.aiEnabled } as any).eq("id", data.threadId).eq("org_id", orgId);
     return { ok: true };
   });
@@ -164,7 +152,7 @@ export const clearThreadMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ threadId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
-    const orgId = await getUserOrg(context.userId);
+    const orgId = await ensureUserOrg(context.userId);
     const { data: thread } = await supabaseAdmin
       .from("threads")
       .select("id, contact_id")
@@ -210,7 +198,7 @@ export const clearThreadMessages = createServerFn({ method: "POST" })
 export const clearAllChats = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const orgId = await getUserOrg(context.userId);
+    const orgId = await ensureUserOrg(context.userId);
 
     const { error: messagesError } = await supabaseAdmin
       .from("messages")
@@ -243,8 +231,7 @@ export const uploadMedia = createServerFn({ method: "POST" })
     }).parse(d)
   )
   .handler(async ({ context, data }) => {
-    const orgId = await getUserOrg(context.userId);
-    if (!orgId) throw new Error("Organization not found");
+    const orgId = await ensureUserOrg(context.userId);
     const path = `${orgId}/${Date.now()}_${data.fileName}`;
     try {
       const binaryString = atob(data.base64);
@@ -269,8 +256,7 @@ export const assignThreadToAgent = createServerFn({ method: "POST" })
     z.object({ threadId: z.string().uuid(), agentUserId: z.string().uuid().nullable().optional() }).parse(d)
   )
   .handler(async ({ context, data }) => {
-    const orgId = await getUserOrg(context.userId);
-    if (!orgId) throw new Error("Organization not found");
+    const orgId = await ensureUserOrg(context.userId);
     const { error } = await supabaseAdmin
       .from("threads")
       .update({ assigned_to_user_id: data.agentUserId ?? null })

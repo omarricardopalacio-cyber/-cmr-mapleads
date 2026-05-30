@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS pipeline_stages (
 
 ALTER TABLE pipeline_stages ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Users can manage pipeline_stages for their org"
+DROP POLICY IF EXISTS "Users can manage pipeline_stages for their org" ON pipeline_stages;
+CREATE POLICY "Users can manage pipeline_stages for their org"
 ON pipeline_stages FOR ALL
 USING (EXISTS (
     SELECT 1 FROM user_roles ur WHERE ur.org_id = pipeline_stages.org_id AND ur.user_id = auth.uid()
