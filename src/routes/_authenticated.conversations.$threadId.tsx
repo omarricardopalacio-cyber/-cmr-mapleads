@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
-import { listMessages, sendMessage } from "@/lib/messaging.functions";
+import { clearThreadMessages, listMessages, sendMessage } from "@/lib/messaging.functions";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { ArrowLeft, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation } from "@tanstack/react-query";
-import { clearThreadMessages } from "@/lib/messaging.functions";
+import { useNavigate } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authenticated/conversations/$threadId")({
   component: ThreadPage,
@@ -18,6 +18,7 @@ export const Route = createFileRoute("/_authenticated/conversations/$threadId")(
 
 function ThreadPage() {
   const { threadId } = Route.useParams();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const list = useServerFn(listMessages);
   const send = useServerFn(sendMessage);
@@ -67,10 +68,11 @@ function ThreadPage() {
 
   const clearMut = useMutation({
     mutationFn: () => clear({ data: { threadId } }),
-    onSuccess: () => {
-      toast.success("Chat limpiado");
+    onSuccess: async () => {
+      toast.success("Chat borrado");
       qc.invalidateQueries({ queryKey: ["thread", threadId] });
       qc.invalidateQueries({ queryKey: ["threads"] });
+      await navigate({ to: "/conversations" });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -101,7 +103,7 @@ function ThreadPage() {
           size="icon"
           title="Borrar todos los mensajes"
           onClick={() => {
-            if (confirm("¿Seguro que quieres borrar todos los mensajes de este chat?")) {
+            if (confirm("¿Seguro que quieres borrar este chat completo?")) {
               clearMut.mutate();
             }
           }}
