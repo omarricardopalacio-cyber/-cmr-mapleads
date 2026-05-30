@@ -7,6 +7,17 @@ import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { ArrowLeft, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation } from "@tanstack/react-query";
@@ -98,19 +109,32 @@ function ThreadPage() {
             {data?.thread.contact.waId}
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          title="Borrar todos los mensajes"
-          onClick={() => {
-            if (confirm("¿Seguro que quieres borrar este chat completo?")) {
-              clearMut.mutate();
-            }
-          }}
-          disabled={clearMut.isPending}
-        >
-          <Trash2 className="h-4 w-4 text-destructive" />
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              title="Borrar chat"
+              disabled={clearMut.isPending}
+            >
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Borrar chat</AlertDialogTitle>
+              <AlertDialogDescription>
+                Se eliminará la conversación completa y ya no aparecerá en la lista.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction onClick={() => clearMut.mutate()}>
+                Sí, borrar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       <div
