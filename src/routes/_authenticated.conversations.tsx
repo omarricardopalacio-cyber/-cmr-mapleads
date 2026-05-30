@@ -118,6 +118,8 @@ function ConversationsLayout() {
           {threads.map((t) => {
             const c = Array.isArray(t.contacts) ? t.contacts[0] : t.contacts;
             const active = activeId === t.id;
+            const contactLabel = c?.display_name || c?.phone || (c?.wa_id ? c.wa_id.replace(/@lid$/, "") : "Contacto");
+            const contactMeta = c?.phone || c?.wa_id || "—";
             return (
               <Link
                 key={t.id}
@@ -129,12 +131,12 @@ function ConversationsLayout() {
               >
                 <div className="flex items-start gap-3">
                   <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium shrink-0">
-                    {(c?.display_name || c?.wa_id || "?").slice(0, 1).toUpperCase()}
+                    {(contactLabel || "?").slice(0, 1).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline justify-between gap-2">
                       <div className="font-medium truncate">
-                        {c?.display_name || c?.wa_id || "Contacto"}
+                        {contactLabel}
                       </div>
                       <div className="text-[10px] text-muted-foreground shrink-0">
                         {t.last_message_at
@@ -146,7 +148,7 @@ function ConversationsLayout() {
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground font-mono truncate">
-                      {c?.wa_id}
+                      {contactMeta}
                     </div>
                   </div>
                   {t.unread_count > 0 && (
