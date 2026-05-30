@@ -43,7 +43,7 @@ function ConversationsLayout() {
   });
 
   const clearAllMut = useMutation({
-    mutationFn: () => clearAll({ data: undefined as never }),
+    mutationFn: () => clearAll(),
     onSuccess: () => {
       toast.success("Todos los chats fueron borrados");
       qc.invalidateQueries({ queryKey: ["threads"] });
