@@ -16,6 +16,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
+import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.flows'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
 import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
@@ -61,6 +62,11 @@ const AuthenticatedIntegrationsRoute =
     path: '/integrations',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedFlowsRoute = AuthenticatedFlowsRouteImport.update({
+  id: '/flows',
+  path: '/flows',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/contacts': typeof AuthenticatedContactsRoute
   '/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByTo {
   '/automations': typeof AuthenticatedAutomationsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
@@ -154,6 +162,7 @@ export interface FileRoutesById {
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
   '/_authenticated/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/flows': typeof AuthenticatedFlowsRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
@@ -173,6 +182,7 @@ export interface FileRouteTypes {
     | '/contacts'
     | '/conversations'
     | '/dashboard'
+    | '/flows'
     | '/integrations'
     | '/pipelines'
     | '/sessions'
@@ -189,6 +199,7 @@ export interface FileRouteTypes {
     | '/automations'
     | '/contacts'
     | '/dashboard'
+    | '/flows'
     | '/integrations'
     | '/pipelines'
     | '/sessions'
@@ -207,6 +218,7 @@ export interface FileRouteTypes {
     | '/_authenticated/contacts'
     | '/_authenticated/conversations'
     | '/_authenticated/dashboard'
+    | '/_authenticated/flows'
     | '/_authenticated/integrations'
     | '/_authenticated/pipelines'
     | '/_authenticated/sessions'
@@ -276,6 +288,13 @@ declare module '@tanstack/react-router' {
       path: '/integrations'
       fullPath: '/integrations'
       preLoaderRoute: typeof AuthenticatedIntegrationsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/flows': {
+      id: '/_authenticated/flows'
+      path: '/flows'
+      fullPath: '/flows'
+      preLoaderRoute: typeof AuthenticatedFlowsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/dashboard': {
@@ -366,6 +385,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
   AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRouteWithChildren
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedFlowsRoute: typeof AuthenticatedFlowsRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
@@ -376,6 +396,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
   AuthenticatedConversationsRoute: AuthenticatedConversationsRouteWithChildren,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedFlowsRoute: AuthenticatedFlowsRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,

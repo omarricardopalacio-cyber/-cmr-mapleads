@@ -353,6 +353,39 @@ async function resolvePhoneForLidMessage(args: {
   return { contactId: existing?.id ?? null, phone: null }
 }
 
+async function enrollContactInFlow(contactId: string, orgId: string, sessionId: string) {
+  const { data: flows } = await supabaseAdmin
+    .from('flows')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('trigger_type', 'new_contact')
+    .eq('is_active', true);
+  for (const flow of flows ?? []) {
+    const { data: firstStep } = await supabaseAdmin
+      .from('flow_steps')
+      .select('id')
+      .eq('flow_id', flow.id)
+      .is('parent_step_id', null)
+      .order('step_order', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!firstStep) continue;
+    await supabaseAdmin
+      .from('flow_runs')
+      .upsert({
+        org_id: orgId,
+        flow_id: flow.id,
+        contact_id: contactId,
+        current_step_id: firstStep.id,
+        status: 'active',
+        next_execution_at: new Date().toISOString(),
+        last_interaction_at: new Date().toISOString(),
+      }, { onConflict: 'flow_id,contact_id' })
+      .select()
+      .single();
+  }
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -558,6 +591,49 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               if (!aiDisabled) {
                 await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
               }
+
+              // Keyword flow enrollment
+              const { data: keywordFlows } = await supabaseAdmin
+                .from('flows')
+                .select('id')
+                .eq('org_id', session.org_id)
+                .eq('trigger_type', 'keyword')
+                .eq('is_active', true);
+              for (const flow of keywordFlows ?? []) {
+                const { data: firstStep } = await supabaseAdmin
+                  .from('flow_steps')
+                  .select('id')
+                  .eq('flow_id', flow.id)
+                  .is('parent_step_id', null)
+                  .order('step_order', { ascending: true })
+                  .limit(1)
+                  .maybeSingle();
+                if (!firstStep) continue;
+                const lowerText = e.text.toLowerCase();
+                const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
+                if (triggerVal && lowerText.includes(triggerVal)) {
+                  await supabaseAdmin
+                    .from('flow_runs')
+                    .upsert({
+                      org_id: session.org_id,
+                      flow_id: flow.id,
+                      contact_id: contactId,
+                      current_step_id: firstStep.id,
+                      status: 'active',
+                      next_execution_at: new Date().toISOString(),
+                      last_interaction_at: new Date().toISOString(),
+                    }, { onConflict: 'flow_id,contact_id' })
+                    .select()
+                    .single();
+                }
+              }
+
+              // Update last_interaction_at for active/wait_node flow runs
+              await supabaseAdmin
+                .from('flow_runs')
+                .update({ last_interaction_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+                .eq('contact_id', contactId)
+                .in('status', ['active', 'wait_node']);
             }
 
           } else if (e.type === 'ack' && e.commandId) {

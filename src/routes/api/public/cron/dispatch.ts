@@ -5,6 +5,8 @@ import { convertUrlToBase64 } from "@/lib/media";
 const json = (s: number, b: unknown) =>
   new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
 
+const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
+
 /**
  * Dispatcher: corre cada minuto.
  * - Despacha scheduled_messages pendientes con send_at <= now()
@@ -161,5 +163,152 @@ async function handler({ request }: { request: Request }) {
       .eq("id", b.id);
   }
 
+  // 3) Flow steps
+  await processFlowSteps(now);
+
   return json(200, { ok: true, ...result });
+}
+
+async function processFlowSteps(now: string) {
+  const { data: runs } = await (supabaseAdmin as unknown as { from: (t: string) => { select: (cols: string) => { eq: (c: string, v: string) => { lte: (c: string, v: string) => { limit: (n: number) => Promise<{ data: any[] | null }> } } } } })
+    .from("flow_runs")
+    .select("id, org_id, flow_id, contact_id, current_step_id, status, last_interaction_at, next_execution_at, flow_steps(*)")
+    .eq("status", "active")
+    .lte("next_execution_at", now)
+    .limit(100);
+
+  for (const run of runs ?? []) {
+    try {
+      const step = (run as any).flow_steps;
+      if (!step) {
+        await dyn().from("flow_runs").update({ status: "completed" }).eq("id", run.id);
+        continue;
+      }
+
+      const { data: flow } = await dyn().from("flows").select("id, org_id").eq("id", run.flow_id).single();
+      if (!flow) {
+        await dyn().from("flow_runs").update({ status: "completed" }).eq("id", run.id);
+        continue;
+      }
+
+      const sd = step.step_data ?? {};
+      const nextNow = new Date().toISOString();
+
+      if (step.step_type === "send_message") {
+        const { data: contact } = await supabaseAdmin.from("contacts").select("wa_id").eq("id", run.contact_id).single();
+        const waId = contact?.wa_id;
+        if (waId) {
+          await supabaseAdmin.from("engine_commands").insert({
+            org_id: flow.org_id,
+            session_id: sd.session_id,
+            type: "send_message",
+            payload: { chatId: waId, text: sd.text },
+            status: "pending",
+          });
+        }
+        await advanceFlowStep(run.id, step.id, flow.id);
+      } else if (step.step_type === "send_media") {
+        const { data: contact } = await supabaseAdmin.from("contacts").select("wa_id").eq("id", run.contact_id).single();
+        const waId = contact?.wa_id;
+        if (waId && sd.media_url) {
+          const media = await convertUrlToBase64(sd.media_url);
+          await supabaseAdmin.from("engine_commands").insert({
+            org_id: flow.org_id,
+            session_id: sd.session_id,
+            type: "send_media",
+            payload: { chatId: waId, base64: media.base64, mimeType: sd.mime_type || media.mimeType },
+            status: "pending",
+          });
+        }
+        await advanceFlowStep(run.id, step.id, flow.id);
+      } else if (step.step_type === "wait") {
+        const amount = sd.amount ?? 1;
+        const unit = sd.unit ?? "hours";
+        const ms = unit === "days" ? amount * 24 * 60 * 60 * 1000 : amount * 60 * 60 * 1000;
+        const nextAt = new Date(Date.now() + ms).toISOString();
+        await supabaseAdmin
+          .from("flow_runs")
+          .update({ status: "wait_node", next_execution_at: nextAt, updated_at: nextNow })
+          .eq("id", run.id);
+      } else if (step.step_type === "add_tag") {
+        if (sd.tag_id) {
+          await (supabaseAdmin as unknown as { from: (t: string) => { upsert: (d: unknown, opts?: unknown) => Promise<unknown> } })
+            .from("contact_tags")
+            .upsert({ contact_id: run.contact_id, tag_id: sd.tag_id, org_id: flow.org_id }, { onConflict: "contact_id,tag_id" });
+        }
+        await advanceFlowStep(run.id, step.id, flow.id);
+      } else if (step.step_type === "remove_tag") {
+        if (sd.tag_id) {
+          await (supabaseAdmin as unknown as { from: (t: string) => { delete: () => { eq: (c: string, v: string) => { eq: (c: string, v: string) => Promise<unknown> } } } })
+            .from("contact_tags")
+            .delete()
+            .eq("contact_id", run.contact_id)
+            .eq("tag_id", sd.tag_id);
+        }
+        await advanceFlowStep(run.id, step.id, flow.id);
+      } else if (step.step_type === "toggle_ai") {
+        if (sd.ai_enabled !== undefined) {
+          const { data: thread } = await supabaseAdmin
+            .from("threads")
+            .select("id")
+            .eq("contact_id", run.contact_id)
+            .eq("session_id", sd.session_id)
+            .maybeSingle();
+          if (thread) {
+            await supabaseAdmin.from("threads").update({ ai_enabled: sd.ai_enabled }).eq("id", thread.id);
+          }
+        }
+        await advanceFlowStep(run.id, step.id, flow.id);
+      } else if (step.step_type === "condition_reply") {
+        const waitStarted = run.next_execution_at ?? run.created_at;
+        const replied = run.last_interaction_at && new Date(run.last_interaction_at) > new Date(waitStarted);
+        const branch = replied ? "yes" : "no";
+        await advanceFlowStep(run.id, step.id, flow.id, branch);
+      } else {
+        await advanceFlowStep(run.id, step.id, flow.id);
+      }
+    } catch (err: any) {
+      console.error("Flow run error", run.id, err.message);
+    }
+  }
+}
+
+async function advanceFlowStep(runId: string, currentStepId: string, flowId: string, forcedBranch?: string) {
+  const { data: nextStep } = await supabaseAdmin
+    .from("flow_steps")
+    .select("id")
+    .eq("flow_id", flowId)
+    .eq("parent_step_id", currentStepId)
+    .eq("branch", forcedBranch ?? "yes")
+    .order("step_order", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (nextStep) {
+    await dyn()
+      .from("flow_runs")
+      .update({ current_step_id: nextStep.id, status: "active", next_execution_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("id", runId);
+  } else {
+    const { data: seqNext } = await dyn()
+      .from("flow_steps")
+      .select("id, step_order")
+      .eq("flow_id", flowId)
+      .gt("step_order", (await dyn().from("flow_steps").select("step_order").eq("id", currentStepId).single()).data?.step_order ?? 0)
+      .is("parent_step_id", null)
+      .order("step_order", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (seqNext) {
+      await dyn()
+        .from("flow_runs")
+        .update({ current_step_id: seqNext.id, status: "active", next_execution_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", runId);
+    } else {
+      await dyn()
+        .from("flow_runs")
+        .update({ status: "completed", current_step_id: null, updated_at: new Date().toISOString() })
+        .eq("id", runId);
+    }
+  }
 }

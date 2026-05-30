@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -43,6 +43,7 @@ const items = [
   { title: "Conversaciones", url: "/conversations", icon: MessagesSquare },
   { title: "Contactos", url: "/contacts", icon: Users },
   { title: "Automatizaciones", url: "/automations", icon: Zap },
+  { title: "Flujos", url: "/flows", icon: GitBranch },
   { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
   { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
   { title: "Integraciones IA", url: "/integrations", icon: Sparkles },

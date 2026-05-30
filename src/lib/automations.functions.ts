@@ -275,3 +275,149 @@ export const cancelBroadcast = createServerFn({ method: "POST" })
       .eq("org_id", orgId);
     return { ok: true };
   });
+
+// ───── FLOWS ─────
+export const listFlows = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data } = await supabaseAdmin
+      .from("flows")
+      .select("*, flow_steps(*), flow_runs(count)")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+    return { items: data ?? [] };
+  });
+
+export const upsertFlow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        id: z.string().uuid().optional(),
+        name: z.string().min(1).max(100),
+        trigger_type: z.enum(["keyword", "tag_added", "new_contact"]),
+        trigger_value: z.string().nullable().optional(),
+        is_active: z.boolean().default(false),
+      })
+      .parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const payload = {
+      org_id: orgId,
+      name: data.name,
+      trigger_type: data.trigger_type,
+      trigger_value: data.trigger_value ?? null,
+      is_active: data.is_active,
+    };
+    if (data.id) {
+      const { data: row, error } = await supabaseAdmin
+        .from("flows")
+        .update(payload)
+        .eq("id", data.id)
+        .eq("org_id", orgId)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return { flow: row };
+    }
+    const { data: row, error } = await supabaseAdmin
+      .from("flows")
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return { flow: row };
+  });
+
+export const deleteFlow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await (supabaseAdmin as unknown as { from: (t: string) => any }).from("flows").delete().eq("id", data.id).eq("org_id", orgId);
+    return { ok: true };
+  });
+
+export const setFlowActive = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid(), is_active: z.boolean() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await (supabaseAdmin as unknown as { from: (t: string) => any }).from("flows").update({ is_active: data.is_active }).eq("id", data.id).eq("org_id", orgId);
+    return { ok: true };
+  });
+
+export const listFlowSteps = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ flowId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data: rows } = await supabaseAdmin
+      .from("flow_steps")
+      .select("*")
+      .eq("flow_id", data.flowId)
+      .order("step_order", { ascending: true });
+    return { items: rows ?? [] };
+  });
+
+export const upsertFlowStep = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        id: z.string().uuid().optional(),
+        flow_id: z.string().uuid(),
+        step_order: z.number().int(),
+        step_type: z.enum(["send_message", "send_media", "wait", "add_tag", "remove_tag", "toggle_ai", "condition_reply"]),
+        step_data: z.record(z.any()),
+        parent_step_id: z.string().uuid().nullable().optional(),
+        branch: z.enum(["yes", "no"]).nullable().optional(),
+      })
+      .parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data: flow } = await supabaseAdmin
+      .from("flows")
+      .select("id")
+      .eq("id", data.flow_id)
+      .eq("org_id", orgId)
+      .single();
+    if (!flow) throw new Error("Flow not found");
+    const payload = {
+      flow_id: data.flow_id,
+      step_order: data.step_order,
+      step_type: data.step_type,
+      step_data: data.step_data,
+      parent_step_id: data.parent_step_id ?? null,
+      branch: data.branch ?? null,
+    };
+    if (data.id) {
+      const { data: row, error } = await supabaseAdmin
+        .from("flow_steps")
+        .update(payload)
+        .eq("id", data.id)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return { step: row };
+    }
+    const { data: row, error } = await supabaseAdmin
+      .from("flow_steps")
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return { step: row };
+  });
+
+export const deleteFlowStep = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await supabaseAdmin.rpc("delete_flow_step_safe", { p_step_id: data.id, p_org_id: orgId });
+    return { ok: true };
+  });
