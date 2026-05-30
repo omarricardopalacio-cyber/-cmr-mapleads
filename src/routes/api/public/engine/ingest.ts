@@ -324,21 +324,52 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         for (const e of normalized) {
           if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
-            const waId = e.contact?.waId ?? String(e.chatId).split('@')[0]
-            const { data: contact } = await supabaseAdmin
-              .from('contacts')
-              .upsert(
-                {
-                  org_id: session.org_id,
-                  wa_id: waId,
-                  display_name: e.contact?.displayName ?? null,
-                  phone: e.contact?.phone ?? null,
-                },
-                { onConflict: 'org_id,wa_id' },
-              )
-              .select('id')
-              .single()
-            if (!contact) continue
+            const waId = e.contact?.waId ?? normalizeWaKey(e.chatId)
+            if (!waId) continue
+
+            let contactId: string | null = null
+            const phone = e.contact?.phone ?? null
+
+            if (phone) {
+              const { data: byPhone } = await supabaseAdmin
+                .from('contacts')
+                .select('id, wa_id')
+                .eq('org_id', session.org_id)
+                .eq('phone', phone)
+                .maybeSingle()
+              if (byPhone) {
+                contactId = byPhone.id
+                if (byPhone.wa_id !== waId || !e.contact?.displayName) {
+                  await supabaseAdmin
+                    .from('contacts')
+                    .update({
+                      wa_id: waId,
+                      display_name: e.contact?.displayName ?? phone,
+                      phone,
+                    })
+                    .eq('id', byPhone.id)
+                }
+              }
+            }
+
+            if (!contactId) {
+              const { data: byWa } = await supabaseAdmin
+                .from('contacts')
+                .upsert(
+                  {
+                    org_id: session.org_id,
+                    wa_id: waId,
+                    display_name: e.contact?.displayName ?? phone ?? waId.replace(/@lid$/, ''),
+                    phone,
+                  },
+                  { onConflict: 'org_id,wa_id' },
+                )
+                .select('id')
+                .single()
+              contactId = byWa?.id ?? null
+            }
+
+            if (!contactId) continue
 
             const { data: thread } = await supabaseAdmin
               .from('threads')
@@ -346,7 +377,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 {
                   org_id: session.org_id,
                   session_id: session.id,
-                  contact_id: contact.id,
+                  contact_id: contactId,
                   last_message_at: e.sentAt ?? new Date().toISOString(),
                 },
                 { onConflict: 'session_id,contact_id' },
