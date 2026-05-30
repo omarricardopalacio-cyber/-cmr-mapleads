@@ -13,7 +13,11 @@ import {
   listBroadcasts,
   createBroadcast,
   cancelBroadcast,
+  listQuickReplies,
+  upsertQuickReply,
+  deleteQuickReply,
 } from "@/lib/automations.functions";
+import { listTags } from "@/lib/tags.functions";
 import { listSessions } from "@/lib/sessions.functions";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
@@ -24,7 +28,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, X } from "lucide-react";
+import { Trash2, X, Zap, MessageSquare } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/automations")({
   component: AutomationsPage,
@@ -37,10 +41,12 @@ function AutomationsPage() {
       <Tabs defaultValue="auto">
         <TabsList>
           <TabsTrigger value="auto">Auto-respuestas</TabsTrigger>
+          <TabsTrigger value="quick">Respuestas rápidas</TabsTrigger>
           <TabsTrigger value="scheduled">Programados</TabsTrigger>
           <TabsTrigger value="broadcast">Envío masivo</TabsTrigger>
         </TabsList>
         <TabsContent value="auto"><AutoRepliesTab /></TabsContent>
+        <TabsContent value="quick"><QuickRepliesTab /></TabsContent>
         <TabsContent value="scheduled"><ScheduledTab /></TabsContent>
         <TabsContent value="broadcast"><BroadcastTab /></TabsContent>
       </Tabs>
@@ -54,17 +60,28 @@ function AutoRepliesTab() {
   const list = useServerFn(listAutoReplies);
   const upsert = useServerFn(upsertAutoReply);
   const del = useServerFn(deleteAutoReply);
+  const tagsFn = useServerFn(listTags);
   const { data } = useQuery({ queryKey: ["autoReplies"], queryFn: () => list({}) });
+  const { data: tagsData } = useQuery({ queryKey: ["tags"], queryFn: () => tagsFn({}) });
+  const tags = tagsData?.tags ?? [];
   const [form, setForm] = useState({
     name: "", match_type: "contains" as const, match_value: "", reply_text: "", cooldown_seconds: 60, is_active: true,
+    trigger_type: "keyword" as const, media_url: "", mime_type: "", action_add_tags: [] as string[], action_remove_tags: [] as string[], action_ai_behavior: "no_change" as const,
   });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const payload = {
+      ...form,
+      media_url: form.media_url || null,
+      mime_type: form.mime_type || null,
+      action_add_tags: form.action_add_tags.length ? form.action_add_tags : null,
+      action_remove_tags: form.action_remove_tags.length ? form.action_remove_tags : null,
+    };
     try {
-      await upsert({ data: form });
+      await upsert({ data: payload as any });
       toast.success("Regla guardada");
-      setForm({ name: "", match_type: "contains", match_value: "", reply_text: "", cooldown_seconds: 60, is_active: true });
+      setForm({ name: "", match_type: "contains", match_value: "", reply_text: "", cooldown_seconds: 60, is_active: true, trigger_type: "keyword", media_url: "", mime_type: "", action_add_tags: [], action_remove_tags: [], action_ai_behavior: "no_change" });
       qc.invalidateQueries({ queryKey: ["autoReplies"] });
     } catch (e: any) { toast.error(e.message); }
   };
@@ -75,24 +92,77 @@ function AutoRepliesTab() {
         <h3 className="font-medium">Nueva regla</h3>
         <form onSubmit={submit} className="space-y-3">
           <Input placeholder="Nombre" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          <div className="grid grid-cols-2 gap-2">
-            <Select value={form.match_type} onValueChange={(v: any) => setForm({ ...form, match_type: v })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="contains">Contiene</SelectItem>
-                <SelectItem value="equals">Igual a</SelectItem>
-                <SelectItem value="starts">Empieza con</SelectItem>
-                <SelectItem value="regex">Regex</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input placeholder="Patrón" value={form.match_value} onChange={(e) => setForm({ ...form, match_value: e.target.value })} required />
-          </div>
+          <Select value={form.trigger_type} onValueChange={(v: any) => setForm({ ...form, trigger_type: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="keyword">Palabra clave</SelectItem>
+              <SelectItem value="first_message_overall">Primer mensaje (global)</SelectItem>
+              <SelectItem value="first_message_month">Primer mensaje del mes</SelectItem>
+            </SelectContent>
+          </Select>
+          {form.trigger_type === "keyword" && (
+            <div className="grid grid-cols-2 gap-2">
+              <Select value={form.match_type} onValueChange={(v: any) => setForm({ ...form, match_type: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="contains">Contiene</SelectItem>
+                  <SelectItem value="equals">Igual a</SelectItem>
+                  <SelectItem value="starts">Empieza con</SelectItem>
+                  <SelectItem value="regex">Regex</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input placeholder="Patrón" value={form.match_value} onChange={(e) => setForm({ ...form, match_value: e.target.value })} required />
+            </div>
+          )}
           <Textarea placeholder="Respuesta automática" value={form.reply_text} onChange={(e) => setForm({ ...form, reply_text: e.target.value })} required />
+          <div className="grid grid-cols-2 gap-2">
+            <Input placeholder="URL media (opcional)" value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
+            <Input placeholder="MIME type (opcional)" value={form.mime_type} onChange={(e) => setForm({ ...form, mime_type: e.target.value })} />
+          </div>
           <div className="flex items-center gap-3">
             <Label className="text-xs">Cooldown (seg)</Label>
             <Input type="number" className="w-24" value={form.cooldown_seconds} onChange={(e) => setForm({ ...form, cooldown_seconds: +e.target.value })} />
             <Label className="text-xs ml-auto">Activa</Label>
             <Switch checked={form.is_active} onCheckedChange={(v) => setForm({ ...form, is_active: v })} />
+          </div>
+          <div className="space-y-2 border rounded p-2">
+            <Label className="text-xs font-medium">Acciones adicionales</Label>
+            <Select value={form.action_ai_behavior} onValueChange={(v: any) => setForm({ ...form, action_ai_behavior: v })}>
+              <SelectTrigger className="text-xs"><SelectValue placeholder="Comportamiento IA" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="no_change">No cambiar IA</SelectItem>
+                <SelectItem value="disable_ai">Desactivar IA tras respuesta</SelectItem>
+                <SelectItem value="enable_ai">Activar IA tras respuesta</SelectItem>
+              </SelectContent>
+            </Select>
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <span className="text-xs text-muted-foreground w-full">Agregar etiquetas:</span>
+                {tags.map((t: any) => (
+                  <label key={t.id} className="flex items-center gap-1 text-xs">
+                    <input type="checkbox" checked={form.action_add_tags.includes(t.id)} onChange={(e) => {
+                      const arr = e.target.checked ? [...form.action_add_tags, t.id] : form.action_add_tags.filter((id) => id !== t.id);
+                      setForm({ ...form, action_add_tags: arr });
+                    }} />
+                    {t.name}
+                  </label>
+                ))}
+              </div>
+            )}
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <span className="text-xs text-muted-foreground w-full">Quitar etiquetas:</span>
+                {tags.map((t: any) => (
+                  <label key={t.id} className="flex items-center gap-1 text-xs">
+                    <input type="checkbox" checked={form.action_remove_tags.includes(t.id)} onChange={(e) => {
+                      const arr = e.target.checked ? [...form.action_remove_tags, t.id] : form.action_remove_tags.filter((id) => id !== t.id);
+                      setForm({ ...form, action_remove_tags: arr });
+                    }} />
+                    {t.name}
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           <Button type="submit" className="w-full">Guardar regla</Button>
         </form>
@@ -105,11 +175,69 @@ function AutoRepliesTab() {
               <div className="flex items-center gap-2">
                 <span className="font-medium">{r.name}</span>
                 <Badge variant={r.is_active ? "default" : "secondary"}>{r.is_active ? "activa" : "off"}</Badge>
+                <Badge variant="outline">{r.trigger_type}</Badge>
               </div>
               <div className="text-xs text-muted-foreground">{r.match_type}: "{r.match_value}"</div>
               <div className="text-sm mt-1 truncate">→ {r.reply_text}</div>
+              {r.media_url && <div className="text-xs text-blue-600 truncate">media: {r.media_url}</div>}
             </div>
             <Button size="icon" variant="ghost" onClick={async () => { await del({ data: { id: r.id } }); qc.invalidateQueries({ queryKey: ["autoReplies"] }); }}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ───── Quick Replies ─────
+function QuickRepliesTab() {
+  const qc = useQueryClient();
+  const list = useServerFn(listQuickReplies);
+  const upsert = useServerFn(upsertQuickReply);
+  const del = useServerFn(deleteQuickReply);
+  const { data } = useQuery({ queryKey: ["quickReplies"], queryFn: () => list({}) });
+  const [form, setForm] = useState({ shortcut: "", text_content: "", media_url: "", mime_type: "" });
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await upsert({ data: { ...form, media_url: form.media_url || null, mime_type: form.mime_type || null } as any });
+      toast.success("Guardado");
+      setForm({ shortcut: "", text_content: "", media_url: "", mime_type: "" });
+      qc.invalidateQueries({ queryKey: ["quickReplies"] });
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  return (
+    <div className="grid md:grid-cols-2 gap-4 mt-4">
+      <Card className="p-4 space-y-3">
+        <h3 className="font-medium">Nueva respuesta rápida</h3>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">/</span>
+            <Input placeholder="shortcut" value={form.shortcut} onChange={(e) => setForm({ ...form, shortcut: e.target.value })} required className="flex-1" />
+          </div>
+          <Textarea placeholder="Contenido del mensaje" value={form.text_content} onChange={(e) => setForm({ ...form, text_content: e.target.value })} required />
+          <Input placeholder="URL media (opcional)" value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
+          <Input placeholder="MIME type (opcional)" value={form.mime_type} onChange={(e) => setForm({ ...form, mime_type: e.target.value })} />
+          <Button type="submit" className="w-full">Guardar</Button>
+        </form>
+      </Card>
+      <div className="space-y-2">
+        {data?.items.length === 0 && <Card className="p-6 text-center text-muted-foreground">Sin respuestas rápidas</Card>}
+        {data?.items.map((r: any) => (
+          <Card key={r.id} className="p-3 flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <Zap className="h-3 w-3 text-yellow-500" />
+                <span className="font-mono text-sm">/{r.shortcut}</span>
+              </div>
+              <div className="text-sm mt-1 truncate">{r.text_content}</div>
+              {r.media_url && <div className="text-xs text-blue-600 truncate">media: {r.media_url}</div>}
+            </div>
+            <Button size="icon" variant="ghost" onClick={async () => { await del({ data: { id: r.id } }); qc.invalidateQueries({ queryKey: ["quickReplies"] }); }}>
               <Trash2 className="h-4 w-4" />
             </Button>
           </Card>

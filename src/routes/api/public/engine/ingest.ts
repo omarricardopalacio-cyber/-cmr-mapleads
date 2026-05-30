@@ -186,44 +186,128 @@ const PayloadSchema = z.object({
   events: z.array(EventSchema).min(1).max(50),
 })
 
-async function maybeAutoReply(orgId: string, sessionId: string, chatId: string, text: string) {
+type AutoReplyRule = {
+  id: string;
+  match_type: string;
+  match_value: string;
+  reply_text: string;
+  cooldown_seconds: number | null;
+  last_triggered_at: string | null;
+  session_id: string | null;
+  trigger_type: string | null;
+  media_url: string | null;
+  mime_type: string | null;
+  action_add_tags: string[] | null;
+  action_remove_tags: string[] | null;
+  action_ai_behavior: string | null;
+};
+
+async function maybeAutoReply(
+  orgId: string,
+  sessionId: string,
+  chatId: string,
+  text: string,
+  threadId: string,
+  contactId: string,
+): Promise<{ aiDisabled: boolean }> {
   const { data: rules } = await supabaseAdmin
     .from('auto_replies')
-    .select('id, match_type, match_value, reply_text, cooldown_seconds, last_triggered_at, session_id')
+    .select(
+      'id, match_type, match_value, reply_text, cooldown_seconds, last_triggered_at, session_id, trigger_type, media_url, mime_type, action_add_tags, action_remove_tags, action_ai_behavior',
+    )
     .eq('org_id', orgId)
-    .eq('is_active', true)
-  if (!rules?.length) return
-  const lower = text.toLowerCase()
-  for (const r of rules) {
-    if (r.session_id && r.session_id !== sessionId) continue
-    const v = (r.match_value || '').toLowerCase()
-    let hit = false
-    try {
-      if (r.match_type === 'equals') hit = lower === v
-      else if (r.match_type === 'starts') hit = lower.startsWith(v)
-      else if (r.match_type === 'regex') hit = new RegExp(r.match_value, 'i').test(text)
-      else hit = lower.includes(v)
-    } catch {
-      hit = false
+    .eq('is_active', true);
+  if (!rules?.length) return { aiDisabled: false };
+
+  const lower = text.toLowerCase();
+  for (const raw of rules as unknown[] as AutoReplyRule[]) {
+    if (raw.session_id && raw.session_id !== sessionId) continue;
+
+    const triggerType = raw.trigger_type || 'keyword';
+    let hit = false;
+
+    if (triggerType === 'first_message_overall') {
+      const { count } = await supabaseAdmin
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('thread_id', threadId);
+      hit = (count ?? 0) <= 1; // <= 1 because current message is already inserted
+    } else if (triggerType === 'first_message_month') {
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      const { count } = await supabaseAdmin
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('thread_id', threadId)
+        .eq('direction', 'in')
+        .gte('sent_at', startOfMonth.toISOString());
+      hit = (count ?? 0) <= 1;
+    } else {
+      const v = (raw.match_value || '').toLowerCase();
+      try {
+        if (raw.match_type === 'equals') hit = lower === v;
+        else if (raw.match_type === 'starts') hit = lower.startsWith(v);
+        else if (raw.match_type === 'regex') hit = new RegExp(raw.match_value, 'i').test(text);
+        else hit = lower.includes(v);
+      } catch {
+        hit = false;
+      }
     }
-    if (!hit) continue
-    if (r.last_triggered_at) {
-      const diff = (Date.now() - new Date(r.last_triggered_at).getTime()) / 1000
-      if (diff < (r.cooldown_seconds ?? 0)) continue
+
+    if (!hit) continue;
+    if (raw.last_triggered_at) {
+      const diff = (Date.now() - new Date(raw.last_triggered_at).getTime()) / 1000;
+      if (diff < (raw.cooldown_seconds ?? 0)) continue;
     }
-    await supabaseAdmin.from('engine_commands').insert({
-      org_id: orgId,
-      session_id: sessionId,
-      type: 'send_message',
-      payload: { chatId, text: r.reply_text },
-      status: 'pending',
-    })
+
+    // Send text or media
+    if (raw.media_url) {
+      await supabaseAdmin.from('engine_commands').insert({
+        org_id: orgId,
+        session_id: sessionId,
+        type: 'send_media',
+        payload: { chatId, mediaUrl: raw.media_url, mimeType: raw.mime_type, caption: raw.reply_text },
+        status: 'pending',
+      });
+    } else {
+      await supabaseAdmin.from('engine_commands').insert({
+        org_id: orgId,
+        session_id: sessionId,
+        type: 'send_message',
+        payload: { chatId, text: raw.reply_text },
+        status: 'pending',
+      });
+    }
+
+    // Tags actions
+    if (raw.action_add_tags?.length) {
+      const inserts = raw.action_add_tags.map((tagId) => ({
+        contact_id: contactId,
+        tag_id: tagId,
+      }));
+      await (supabaseAdmin as unknown as { from: (t: string) => { upsert: (d: unknown[], opts?: unknown) => Promise<unknown> } }).from('contact_tags').upsert(inserts, { onConflict: 'contact_id,tag_id' });
+    }
+    if (raw.action_remove_tags?.length) {
+      await (supabaseAdmin as unknown as { from: (t: string) => { delete: () => { eq: (c: string, v: string) => { in: (c: string, v: string[]) => Promise<unknown> } } } }).from('contact_tags').delete().eq('contact_id', contactId).in('tag_id', raw.action_remove_tags);
+    }
+
+    // AI behavior action
+    let aiDisabled = false;
+    if (raw.action_ai_behavior === 'disable_ai') {
+      await supabaseAdmin.from('threads').update({ ai_enabled: false } as unknown as Record<string, never>).eq('id', threadId);
+      aiDisabled = true;
+    } else if (raw.action_ai_behavior === 'enable_ai') {
+      await supabaseAdmin.from('threads').update({ ai_enabled: true } as unknown as Record<string, never>).eq('id', threadId);
+    }
+
     await supabaseAdmin
       .from('auto_replies')
       .update({ last_triggered_at: new Date().toISOString() })
-      .eq('id', r.id)
-    return // one rule per message
+      .eq('id', raw.id);
+    return { aiDisabled };
   }
+  return { aiDisabled: false };
 }
 
 async function resolvePhoneForLidMessage(args: {
@@ -277,6 +361,18 @@ async function maybeAiReply(
   threadId: string,
   text: string,
 ) {
+  const { data: thread } = await supabaseAdmin
+    .from('threads')
+    .select('ai_enabled')
+    .eq('id', threadId)
+    .maybeSingle();
+
+  // If AI is disabled, re-enable it for next message and skip this one
+  if ((thread as unknown as { ai_enabled?: boolean })?.ai_enabled === false) {
+    await supabaseAdmin.from('threads').update({ ai_enabled: true } as unknown as Record<string, unknown>).eq('id', threadId);
+    return;
+  }
+
   const { data: cfg } = await supabaseAdmin
     .from('ai_configs')
     .select('*')
@@ -304,13 +400,13 @@ async function maybeAiReply(
   const history = (hist ?? [])
     .reverse()
     .slice(0, -1)
-    .map((m: any) => ({
-      role: (m.direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
-      content: String(m.text),
+    .map((m: unknown) => ({
+      role: ((m as { direction: string }).direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
+      content: String((m as { text: unknown }).text),
     }))
 
   try {
-    const reply = await generateReply(cfg as any, text, history)
+    const reply = await generateReply(cfg as { provider: 'lovable' | 'vertex'; model: string; system_prompt: string; knowledge_base: string; vertex_project?: string | null; vertex_location?: string | null; vertex_model?: string | null }, text, history)
     if (!reply?.trim()) return
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,
@@ -458,8 +554,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 : /^\d+$/.test(waId)
                   ? `${waId}@c.us`
                   : e.chatId
-              await maybeAutoReply(session.org_id, session.id, sendChatId, e.text)
-              await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
+              const { aiDisabled } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
+              if (!aiDisabled) {
+                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
+              }
             }
 
           } else if (e.type === 'ack' && e.commandId) {

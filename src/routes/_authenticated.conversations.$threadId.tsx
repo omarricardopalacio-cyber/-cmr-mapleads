@@ -2,7 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
-import { clearThreadMessages, listMessages, sendMessage } from "@/lib/messaging.functions";
+import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled } from "@/lib/messaging.functions";
+import { listQuickReplies } from "@/lib/automations.functions";
 import {
   listTags,
   listContactTags,
@@ -36,6 +37,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -59,6 +61,7 @@ import {
   StickyNote,
   Clock,
   CheckCircle2,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
@@ -74,9 +77,20 @@ function ThreadPage() {
   const list = useServerFn(listMessages);
   const send = useServerFn(sendMessage);
   const clear = useServerFn(clearThreadMessages);
+  const toggleAi = useServerFn(toggleAiEnabled);
+  const listQr = useServerFn(listQuickReplies);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
+
+  const { data: qrData } = useQuery({ queryKey: ["quickReplies"], queryFn: () => listQr({}) });
+  const aiEnabled = data?.thread.aiEnabled ?? true;
+  const toggleAiMut = useMutation({
+    mutationFn: (v: boolean) => toggleAi({ data: { threadId, aiEnabled: v } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["thread", threadId] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ["thread", threadId],
@@ -112,8 +126,21 @@ function ThreadPage() {
     if (!text.trim() || sending) return;
     setSending(true);
     try {
-      await send({ data: { threadId, text: text.trim() } });
+      let payloadText = text.trim();
+      let mediaUrl: string | null = null;
+      let mimeType: string | null = null;
+      if (payloadText.startsWith("/")) {
+        const shortcut = payloadText.split(" ")[0].slice(1);
+        const qr = qrData?.items.find((r: any) => r.shortcut === shortcut);
+        if (qr) {
+          payloadText = qr.text_content || payloadText;
+          mediaUrl = qr.media_url || null;
+          mimeType = qr.mime_type || null;
+        }
+      }
+      await send({ data: { threadId, text: payloadText, media_url: mediaUrl, mime_type: mimeType } });
       setText("");
+      setShowQr(false);
       toast.success("Mensaje encolado");
     } catch (err: unknown) {
       toast.error((err as Error)?.message ?? "Error al enviar");
@@ -154,6 +181,10 @@ function ThreadPage() {
             <div className="text-xs text-muted-foreground font-mono truncate">
               {data?.thread.contact.waId}
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground hidden sm:inline">IA</span>
+            <Switch checked={aiEnabled} onCheckedChange={(v) => toggleAiMut.mutate(v)} disabled={toggleAiMut.isPending} />
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>
@@ -208,10 +239,35 @@ function ThreadPage() {
           ))}
         </div>
 
-        <form onSubmit={handleSend} className="border-t p-3 flex gap-2 bg-card">
+        <form onSubmit={handleSend} className="border-t p-3 flex gap-2 bg-card relative">
+          <Popover open={showQr && !!text.startsWith("/") && (qrData?.items.length ?? 0) > 0} onOpenChange={setShowQr}>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" title="Respuestas rápidas" onClick={() => setShowQr(true)}>
+                <Zap className="h-4 w-4 text-yellow-500" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-0" align="start">
+              <div className="p-2 border-b text-xs text-muted-foreground">Respuestas rápidas</div>
+              <ScrollArea className="max-h-48">
+                <div className="p-1">
+                  {qrData?.items.map((r: any) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted flex items-center gap-2"
+                      onClick={() => { setText(`/${r.shortcut} `); setShowQr(false); }}
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">/{r.shortcut}</span>
+                      <span className="truncate">{r.text_content}</span>
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </PopoverContent>
+          </Popover>
           <Input
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => { setText(e.target.value); setShowQr(e.target.value.startsWith("/")); }}
             placeholder="Escribe un mensaje..."
             disabled={sending}
             autoFocus

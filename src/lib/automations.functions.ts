@@ -40,6 +40,12 @@ export const upsertAutoReply = createServerFn({ method: "POST" })
         is_active: z.boolean().default(true),
         cooldown_seconds: z.number().int().min(0).max(86400).default(60),
         session_id: z.string().uuid().nullable().optional(),
+        trigger_type: z.enum(["keyword", "first_message_overall", "first_message_month"]).default("keyword"),
+        media_url: z.string().url().nullable().optional(),
+        mime_type: z.string().max(100).nullable().optional(),
+        action_add_tags: z.array(z.string().uuid()).nullable().optional(),
+        action_remove_tags: z.array(z.string().uuid()).nullable().optional(),
+        action_ai_behavior: z.enum(["no_change", "disable_ai", "enable_ai"]).default("no_change"),
       })
       .parse(d)
   )
@@ -61,6 +67,53 @@ export const deleteAutoReply = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
     await supabaseAdmin.from("auto_replies").delete().eq("id", data.id).eq("org_id", orgId);
+    return { ok: true };
+  });
+
+// ───── QUICK REPLIES ─────
+const dyn = (table: string) => (supabaseAdmin as unknown as { from: (t: string) => { select: (cols: string) => { eq: (c: string, v: string | boolean) => { order: (col: string, opts?: unknown) => Promise<{ data: unknown[] | null }>; }; }; upsert: (row: unknown) => { select: () => { single: () => Promise<{ data: unknown | null; error: Error | null }>; }; }; delete: () => { eq: (c: string, v: string) => { eq: (c: string, v: string) => Promise<unknown>; }; }; } }).from(table);
+
+export const listQuickReplies = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data } = await dyn("quick_replies")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("shortcut", { ascending: true });
+    return { items: (data ?? []) as any[] };
+  });
+
+export const upsertQuickReply = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        id: z.string().uuid().optional(),
+        shortcut: z.string().min(1).max(50),
+        text_content: z.string().min(1).max(4000),
+        media_url: z.string().url().nullable().optional(),
+        mime_type: z.string().max(100).nullable().optional(),
+      })
+      .parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const row = { ...data, org_id: orgId };
+    const { data: result, error } = await dyn("quick_replies")
+      .upsert(row)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return { item: result as any };
+  });
+
+export const deleteQuickReply = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await dyn("quick_replies").delete().eq("id", data.id).eq("org_id", orgId);
     return { ok: true };
   });
 

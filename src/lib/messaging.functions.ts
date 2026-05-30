@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { convertUrlToBase64 } from "@/lib/media";
 
 async function getUserOrg(userId: string) {
   const { data } = await supabaseAdmin
@@ -21,7 +22,7 @@ export const listMessages = createServerFn({ method: "GET" })
     const orgId = await getUserOrg(context.userId);
     const { data: thread } = await supabaseAdmin
       .from("threads")
-      .select("id, contact_id, session_id, contacts(display_name, wa_id, phone)")
+      .select("id, contact_id, session_id, ai_enabled, contacts(display_name, wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
@@ -38,6 +39,7 @@ export const listMessages = createServerFn({ method: "GET" })
         id: thread.id,
         sessionId: thread.session_id,
         contactId: thread.contact_id,
+        aiEnabled: (thread as any).ai_enabled ?? true,
         contact: {
           displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id ?? null,
           waId: contact?.wa_id ?? null,
@@ -50,7 +52,7 @@ export const listMessages = createServerFn({ method: "GET" })
 export const sendMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) =>
-    z.object({ threadId: z.string().uuid(), text: z.string().min(1).max(4000) }).parse(d)
+    z.object({ threadId: z.string().uuid(), text: z.string().min(1).max(4000), media_url: z.string().url().nullable().optional(), mime_type: z.string().max(100).nullable().optional() }).parse(d)
   )
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
@@ -66,14 +68,26 @@ export const sendMessage = createServerFn({ method: "POST" })
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
+    let payload: Record<string, unknown> = { chatId, text: data.text };
+    let type = "send_message";
+
+    if (data.media_url) {
+      try {
+        const { base64, mimeType } = await convertUrlToBase64(data.media_url);
+        type = "send_media";
+        payload = { chatId, base64, mimeType: data.mime_type || mimeType };
+      } catch {
+        throw new Error("Failed to convert media URL to base64");
+      }
+    }
 
     const { data: cmd, error } = await supabaseAdmin
       .from("engine_commands")
       .insert({
         org_id: orgId,
         session_id: thread.session_id,
-        type: "send_message",
-        payload: { chatId, text: data.text },
+        type,
+        payload,
         status: "pending",
       })
       .select("id")
@@ -118,6 +132,15 @@ export const sendDirectMessage = createServerFn({ method: "POST" })
     if (error || !cmd) throw new Error(error?.message || "insert failed");
     return { commandId: cmd.id };
 
+  });
+
+export const toggleAiEnabled = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ threadId: z.string().uuid(), aiEnabled: z.boolean() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await supabaseAdmin.from("threads").update({ ai_enabled: data.aiEnabled } as any).eq("id", data.threadId).eq("org_id", orgId);
+    return { ok: true };
   });
 
 export const clearThreadMessages = createServerFn({ method: "POST" })
