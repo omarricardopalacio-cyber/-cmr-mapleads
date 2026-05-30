@@ -15,25 +15,115 @@ const json = (status: number, body: unknown) =>
     headers: { 'Content-Type': 'application/json', ...CORS },
   })
 
-const EventSchema = z.object({
-  type: z.enum(['message-in', 'message-out', 'heartbeat', 'status', 'ack']),
-  chatId: z.string().min(1).max(128).optional(),
-  waMessageId: z.string().min(1).max(128).optional(),
-  direction: z.enum(['in', 'out']).optional(),
-  text: z.string().max(20000).optional(),
-  media: z.record(z.string(), z.any()).optional(),
-  raw: z.record(z.string(), z.any()).optional(),
-  contact: z
-    .object({
-      waId: z.string().min(1).max(64),
-      displayName: z.string().max(255).optional(),
-      phone: z.string().max(32).optional(),
-    })
-    .optional(),
-  sentAt: z.string().datetime().optional(),
-  commandId: z.string().uuid().optional(),
-  ackStatus: z.string().max(32).optional(),
-})
+const EventSchema = z
+  .object({
+    type: z.string().min(1).max(64),
+    chatId: z.string().min(1).max(128).optional(),
+    waMessageId: z.string().min(1).max(128).optional(),
+    direction: z.enum(['in', 'out']).optional(),
+    text: z.string().max(20000).optional(),
+    media: z.record(z.string(), z.any()).optional(),
+    raw: z.record(z.string(), z.any()).optional(),
+    contact: z
+      .object({
+        waId: z.string().min(1).max(64),
+        displayName: z.string().max(255).optional(),
+        phone: z.string().max(32).optional(),
+      })
+      .optional(),
+    sentAt: z.union([z.string(), z.number()]).optional(),
+    commandId: z.string().uuid().optional(),
+    ackStatus: z.string().max(32).optional(),
+    payload: z.record(z.string(), z.any()).optional(),
+  })
+  .passthrough()
+
+type NormalizedEvent = {
+  type: 'message-in' | 'message-out' | 'heartbeat' | 'status' | 'ack'
+  chatId?: string
+  waMessageId?: string
+  direction?: 'in' | 'out'
+  text?: string
+  media?: Record<string, unknown>
+  raw?: Record<string, unknown>
+  contact?: { waId: string; displayName?: string; phone?: string }
+  sentAt?: string
+  commandId?: string
+  ackStatus?: string
+}
+
+const TYPE_MAP: Record<string, NormalizedEvent['type']> = {
+  'message-in': 'message-in',
+  'message-out': 'message-out',
+  heartbeat: 'heartbeat',
+  status: 'status',
+  ack: 'ack',
+  NEW_MESSAGE: 'message-in',
+  MESSAGE_SENT: 'message-out',
+  MESSAGE_ACK: 'ack',
+  MESSAGE_FAILED: 'ack',
+  SESSION_READY: 'heartbeat',
+  SESSION_LOST: 'heartbeat',
+  HEARTBEAT: 'heartbeat',
+}
+
+function toIso(ts: unknown): string | undefined {
+  if (ts == null) return undefined
+  if (typeof ts === 'string') {
+    const d = new Date(ts)
+    return isNaN(d.getTime()) ? undefined : d.toISOString()
+  }
+  if (typeof ts === 'number') {
+    const ms = ts < 1e12 ? ts * 1000 : ts
+    const d = new Date(ms)
+    return isNaN(d.getTime()) ? undefined : d.toISOString()
+  }
+  return undefined
+}
+
+function normalizeEvent(e: z.infer<typeof EventSchema>): NormalizedEvent {
+  const rawType = String(e.type || '')
+  const type: NormalizedEvent['type'] = TYPE_MAP[rawType] ?? 'status'
+  const p: Record<string, any> = (e.payload as any) || {}
+
+  const chatId = e.chatId ?? p.chatId ?? p.from ?? p.to
+  const waMessageId = e.waMessageId ?? p.waMessageId ?? p.messageId ?? p.message_id ?? p.id
+  let direction: 'in' | 'out' | undefined = e.direction ?? p.direction
+  if (!direction) {
+    if (typeof p.fromMe === 'boolean') direction = p.fromMe ? 'out' : 'in'
+    else if (type === 'message-in') direction = 'in'
+    else if (type === 'message-out') direction = 'out'
+  }
+  const text = e.text ?? p.text ?? p.body ?? p.content
+  const sentAt = toIso(e.sentAt) ?? toIso(p.sentAt) ?? toIso(p.timestamp) ?? toIso(p.t)
+
+  let contact = e.contact
+  if (!contact) {
+    const waSource: string | undefined =
+      (direction === 'out' ? p.to : p.from) ?? p.from ?? p.to ?? (chatId as string | undefined)
+    if (waSource) {
+      const waId = String(waSource).split('@')[0]
+      if (waId) contact = { waId, displayName: p.notifyName ?? p.pushname, phone: p.phone }
+    }
+  }
+
+  const commandId = e.commandId ?? p.commandId
+  const ackStatus = e.ackStatus ?? p.status ?? p.ackStatus
+
+  return {
+    type,
+    chatId: chatId ? String(chatId) : undefined,
+    waMessageId: waMessageId ? String(waMessageId) : undefined,
+    direction,
+    text: text != null ? String(text) : undefined,
+    media: (e.media as any) ?? p.media,
+    raw: (e.raw as any) ?? (e.payload as any),
+    contact,
+    sentAt,
+    commandId,
+    ackStatus: ackStatus != null ? String(ackStatus) : undefined,
+  }
+}
 
 const PayloadSchema = z.object({
   events: z.array(EventSchema).min(1).max(50),
@@ -109,18 +199,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
           .eq('id', session.id)
 
-        const eventRows = parsed.data.events.map((e) => ({
+        const normalized = parsed.data.events.map(normalizeEvent)
+
+        const eventRows = normalized.map((e, i) => ({
           org_id: session.org_id,
           session_id: session.id,
           type: e.type,
-          payload: e as unknown as never,
+          payload: parsed.data.events[i] as unknown as never,
         }))
         await supabaseAdmin.from('events').insert(eventRows)
 
-
-        for (const e of parsed.data.events) {
+        for (const e of normalized) {
           if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
-            const waId = e.contact?.waId ?? e.chatId
+            const waId = e.contact?.waId ?? String(e.chatId).split('@')[0]
             const { data: contact } = await supabaseAdmin
               .from('contacts')
               .upsert(
@@ -156,12 +247,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               wa_message_id: e.waMessageId ?? null,
               direction: e.direction ?? (e.type === 'message-in' ? 'in' : 'out'),
               text: e.text ?? null,
-              media: e.media ?? null,
-              raw: e.raw ?? null,
+              media: (e.media as any) ?? null,
+              raw: (e.raw as any) ?? null,
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
-            // Auto-reply on inbound
             if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
               await maybeAutoReply(session.org_id, session.id, e.chatId, e.text)
             }
@@ -173,6 +263,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               .eq('session_id', session.id)
           }
         }
+
 
 
         return json(200, { ok: true, processed: parsed.data.events.length })
