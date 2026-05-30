@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -40,6 +40,7 @@ const items = [
   { title: "Automatizaciones", url: "/automations", icon: Zap },
   { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
   { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
+  { title: "Integraciones IA", url: "/integrations", icon: Sparkles },
 ] as const;
 
 function AppSidebar() {
