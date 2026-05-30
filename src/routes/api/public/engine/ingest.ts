@@ -102,6 +102,11 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
   const phoneWa = digits(p.phoneNumber ?? p.phone)
   const chatWa = digits(chatId)
 
+  // LID = anonymous WhatsApp identifier (e.g. "21917838930175@lid"), NOT a real phone.
+  // When the from/chat is a @lid, we must prefer the real phoneNumber field.
+  const fromIsLid = typeof p.from === 'string' && p.from.includes('@lid')
+  const chatIsLid = typeof chatId === 'string' && chatId.includes('@lid')
+
   let direction: 'in' | 'out' | undefined = e.direction ?? p.direction
   if (!direction && typeof p.fromMe === 'boolean') direction = p.fromMe ? 'out' : 'in'
 
@@ -115,10 +120,12 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
     else if (type === 'message-out') direction = 'out'
   }
 
-  // Counterpart = the wa_id that is NOT us
+  // Counterpart = the real phone of the other party (never a @lid)
   let counterpart: string | undefined
-  if (meWaId) {
-    counterpart = [fromWa, toWa, phoneWa, chatWa].find((w) => w && w !== meWaId)
+  if ((fromIsLid || chatIsLid) && phoneWa) {
+    counterpart = phoneWa
+  } else if (meWaId) {
+    counterpart = [phoneWa, fromWa, toWa, chatWa].find((w) => w && w !== meWaId)
   }
   if (!counterpart) {
     counterpart =
