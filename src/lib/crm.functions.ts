@@ -67,7 +67,13 @@ export const listThreads = createServerFn({ method: "GET" })
       }
 
       console.log(`[DEBUG listThreads] éxito: ${(threads ?? []).length} chats para org ${orgId}`);
-      return { threads: (threads ?? []) as unknown as Array<Record<string, unknown>> };
+      // Normalizar contacts a array consistente (Supabase puede devolver objeto u array)
+      const normalized = (threads ?? []).map((t: any) => {
+        const raw = t.contacts;
+        const contact = Array.isArray(raw) ? raw[0] : raw;
+        return { ...t, contacts: contact ? [contact] : [] };
+      });
+      return { threads: normalized as unknown as Array<Record<string, unknown>> };
     } catch (e) {
       console.error(`[SERVER ERROR] en listThreads:`, (e as Error).message);
       throw e;
