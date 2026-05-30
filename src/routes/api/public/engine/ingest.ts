@@ -321,9 +321,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             })
 
             if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
-              await maybeAutoReply(session.org_id, session.id, e.chatId, e.text)
-              await maybeAiReply(session.org_id, session.id, e.chatId, contact.id, thread.id, e.text)
+              // Use phone@c.us when we have a real phone (avoids @lid issues)
+              const sendChatId = e.contact?.phone
+                ? `${e.contact.phone}@c.us`
+                : /^\d+$/.test(waId)
+                  ? `${waId}@c.us`
+                  : e.chatId
+              await maybeAutoReply(session.org_id, session.id, sendChatId, e.text)
+              await maybeAiReply(session.org_id, session.id, sendChatId, contact.id, thread.id, e.text)
             }
+
           } else if (e.type === 'ack' && e.commandId) {
             await supabaseAdmin
               .from('engine_commands')
