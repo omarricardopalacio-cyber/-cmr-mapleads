@@ -561,11 +561,32 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             }
 
           } else if (e.type === 'ack' && e.commandId) {
+            const ackStatus = e.ackStatus ?? 'ok';
+            const isFailed = ackStatus === 'failed' || ackStatus === 'error';
             await supabaseAdmin
               .from('engine_commands')
-              .update({ status: 'acked', ack: e.ackStatus ?? 'ok', acked_at: new Date().toISOString() })
+              .update({ status: isFailed ? 'failed' : 'acked', ack: ackStatus, acked_at: new Date().toISOString() })
               .eq('id', e.commandId)
-              .eq('session_id', session.id)
+              .eq('session_id', session.id);
+
+            // Sync broadcast_recipients if this command belongs to a broadcast
+            const { data: br } = await supabaseAdmin
+              .from('broadcast_recipients')
+              .select('id, broadcast_id')
+              .eq('command_id', e.commandId)
+              .maybeSingle();
+            if (br) {
+              const newStatus = isFailed ? 'failed' : 'sent';
+              await supabaseAdmin
+                .from('broadcast_recipients')
+                .update({ status: newStatus, sent_at: isFailed ? null : new Date().toISOString() })
+                .eq('id', br.id);
+              if (isFailed) {
+                await supabaseAdmin.rpc('increment_broadcast_failed', { p_broadcast_id: br.broadcast_id });
+              } else {
+                await supabaseAdmin.rpc('increment_broadcast_sent', { p_broadcast_id: br.broadcast_id });
+              }
+            }
           }
         }
 

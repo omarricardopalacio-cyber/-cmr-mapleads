@@ -191,13 +191,31 @@ export const createBroadcast = createServerFn({ method: "POST" })
         name: z.string().min(1).max(100),
         message_text: z.string().min(1).max(4000),
         rate_per_minute: z.number().int().min(1).max(60).default(15),
-        wa_ids: z.array(z.string().min(1).max(64)).min(1).max(5000),
+        tag_id: z.string().uuid().nullable().optional(),
+        wa_ids: z.array(z.string().min(1).max(64)).min(1).max(5000).nullable().optional(),
+        media_url: z.string().url().nullable().optional(),
+        mime_type: z.string().max(100).nullable().optional(),
         scheduled_at: z.string().datetime().nullable().optional(),
       })
       .parse(d)
   )
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
+    let wa_ids: string[] = data.wa_ids ?? [];
+
+    if (data.tag_id) {
+      const { data: contacts } = await supabaseAdmin
+        .from("contact_tags")
+        .select("contacts(wa_id)")
+        .eq("tag_id", data.tag_id)
+        .eq("org_id", orgId);
+      const found = (contacts ?? [])
+        .map((r: any) => r.contacts?.wa_id)
+        .filter(Boolean) as string[];
+      wa_ids = [...new Set(found)];
+      if (!wa_ids.length) throw new Error("La etiqueta no tiene contactos con wa_id");
+    }
+
     const status = data.scheduled_at ? "scheduled" : "running";
     const { data: b, error } = await supabaseAdmin
       .from("broadcasts")
@@ -207,8 +225,11 @@ export const createBroadcast = createServerFn({ method: "POST" })
         name: data.name,
         message_text: data.message_text,
         rate_per_minute: data.rate_per_minute,
-        total_count: data.wa_ids.length,
+        total_count: wa_ids.length,
         status,
+        tag_id: data.tag_id ?? null,
+        media_url: data.media_url ?? null,
+        mime_type: data.mime_type ?? null,
         scheduled_at: data.scheduled_at ?? null,
         started_at: status === "running" ? new Date().toISOString() : null,
         created_by: context.userId,
@@ -217,7 +238,7 @@ export const createBroadcast = createServerFn({ method: "POST" })
       .single();
     if (error || !b) throw new Error(error?.message ?? "create broadcast failed");
 
-    const rows = data.wa_ids.map((wa_id) => ({
+    const rows = wa_ids.map((wa_id) => ({
       broadcast_id: b.id,
       org_id: orgId,
       wa_id,
@@ -225,6 +246,21 @@ export const createBroadcast = createServerFn({ method: "POST" })
     const { error: rErr } = await supabaseAdmin.from("broadcast_recipients").insert(rows);
     if (rErr) throw new Error(rErr.message);
     return { broadcast: b };
+  });
+
+export const getBroadcastRecipients = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ broadcastId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data: rows } = await supabaseAdmin
+      .from("broadcast_recipients")
+      .select("id, wa_id, status, error, sent_at")
+      .eq("broadcast_id", data.broadcastId)
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: true })
+      .limit(500);
+    return { items: rows ?? [] };
   });
 
 export const cancelBroadcast = createServerFn({ method: "POST" })
