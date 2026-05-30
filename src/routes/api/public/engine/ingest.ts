@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
+import { generateReply } from '@/lib/ai.server'
 import { z } from 'zod'
 
 const CORS = {
