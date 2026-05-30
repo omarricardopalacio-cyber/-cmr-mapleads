@@ -371,7 +371,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (!waId) continue
 
             let contactId: string | null = null
-            const phone = e.contact?.phone ?? null
+            let phone = e.contact?.phone ?? null
+
+            if (!phone && isLidKey(waId)) {
+              const resolved = await resolvePhoneForLidMessage({
+                orgId: session.org_id,
+                sessionId: session.id,
+                waId,
+                text: e.text,
+                sentAt: e.sentAt,
+              })
+              contactId = resolved.contactId
+              phone = resolved.phone
+            }
 
             if (phone) {
               const { data: byPhone } = await supabaseAdmin
