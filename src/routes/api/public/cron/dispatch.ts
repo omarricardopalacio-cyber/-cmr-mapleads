@@ -226,7 +226,7 @@ async function processFlowSteps(now: string) {
         const unit = sd.unit ?? "hours";
         const ms = unit === "days" ? amount * 24 * 60 * 60 * 1000 : amount * 60 * 60 * 1000;
         const nextAt = new Date(Date.now() + ms).toISOString();
-        await supabaseAdmin
+        await dyn()
           .from("flow_runs")
           .update({ status: "wait_node", next_execution_at: nextAt, updated_at: nextNow })
           .eq("id", run.id);
@@ -274,7 +274,7 @@ async function processFlowSteps(now: string) {
 }
 
 async function advanceFlowStep(runId: string, currentStepId: string, flowId: string, forcedBranch?: string) {
-  const { data: nextStep } = await supabaseAdmin
+  const { data: nextStep } = await dyn()
     .from("flow_steps")
     .select("id")
     .eq("flow_id", flowId)

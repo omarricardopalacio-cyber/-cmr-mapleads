@@ -3,6 +3,8 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
+const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
+
 async function getUserOrg(userId: string) {
   const { data } = await supabaseAdmin
     .from("user_roles")
@@ -281,7 +283,7 @@ export const listFlows = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data } = await supabaseAdmin
+    const { data } = await dyn()
       .from("flows")
       .select("*, flow_steps(*), flow_runs(count)")
       .eq("org_id", orgId)
@@ -312,7 +314,7 @@ export const upsertFlow = createServerFn({ method: "POST" })
       is_active: data.is_active,
     };
     if (data.id) {
-      const { data: row, error } = await supabaseAdmin
+      const { data: row, error } = await dyn()
         .from("flows")
         .update(payload)
         .eq("id", data.id)
@@ -322,7 +324,7 @@ export const upsertFlow = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return { flow: row };
     }
-    const { data: row, error } = await supabaseAdmin
+    const { data: row, error } = await dyn()
       .from("flows")
       .insert(payload)
       .select()
@@ -354,7 +356,7 @@ export const listFlowSteps = createServerFn({ method: "GET" })
   .inputValidator((d) => z.object({ flowId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data: rows } = await supabaseAdmin
+    const { data: rows } = await dyn()
       .from("flow_steps")
       .select("*")
       .eq("flow_id", data.flowId)
@@ -379,7 +381,7 @@ export const upsertFlowStep = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data: flow } = await supabaseAdmin
+    const { data: flow } = await dyn()
       .from("flows")
       .select("id")
       .eq("id", data.flow_id)
@@ -395,7 +397,7 @@ export const upsertFlowStep = createServerFn({ method: "POST" })
       branch: data.branch ?? null,
     };
     if (data.id) {
-      const { data: row, error } = await supabaseAdmin
+      const { data: row, error } = await dyn()
         .from("flow_steps")
         .update(payload)
         .eq("id", data.id)
@@ -404,7 +406,7 @@ export const upsertFlowStep = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return { step: row };
     }
-    const { data: row, error } = await supabaseAdmin
+    const { data: row, error } = await dyn()
       .from("flow_steps")
       .insert(payload)
       .select()
