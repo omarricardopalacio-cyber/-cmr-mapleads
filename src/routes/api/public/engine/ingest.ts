@@ -226,6 +226,49 @@ async function maybeAutoReply(orgId: string, sessionId: string, chatId: string, 
   }
 }
 
+async function resolvePhoneForLidMessage(args: {
+  orgId: string
+  sessionId: string
+  waId: string
+  text?: string
+  sentAt?: string
+}) {
+  const { orgId, sessionId, waId, text, sentAt } = args
+
+  const { data: existing } = await supabaseAdmin
+    .from('contacts')
+    .select('id, phone')
+    .eq('org_id', orgId)
+    .eq('wa_id', waId)
+    .maybeSingle()
+  if (existing?.phone) return { contactId: existing.id, phone: existing.phone }
+
+  if (!text?.trim()) return { contactId: existing?.id ?? null, phone: null }
+
+  const { data: commands } = await supabaseAdmin
+    .from('engine_commands')
+    .select('payload, created_at')
+    .eq('org_id', orgId)
+    .eq('session_id', sessionId)
+    .eq('type', 'send_message')
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  const targetTs = sentAt ? new Date(sentAt).getTime() : Date.now()
+  for (const cmd of commands ?? []) {
+    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+    if (String(payload.text ?? '').trim() !== text.trim()) continue
+    const chatId = String(payload.chatId ?? '')
+    const phone = digits(chatId)
+    if (!phone) continue
+    const createdTs = new Date(cmd.created_at).getTime()
+    if (Math.abs(targetTs - createdTs) > 1000 * 60 * 30) continue
+    return { contactId: existing?.id ?? null, phone }
+  }
+
+  return { contactId: existing?.id ?? null, phone: null }
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
