@@ -40,6 +40,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -85,7 +86,7 @@ function ThreadPage() {
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   const { data: qrData } = useQuery({ queryKey: ["quickReplies"], queryFn: () => listQr({}) });
-  const aiEnabled = data?.thread.aiEnabled ?? true;
+  const aiEnabled = data?.thread?.aiEnabled ?? true;
   const toggleAiMut = useMutation({
     mutationFn: (v: boolean) => toggleAi({ data: { threadId, aiEnabled: v } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["thread", threadId] }),
@@ -105,7 +106,7 @@ function ThreadPage() {
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
-  }, [data?.messages.length]);
+  }, [(data?.messages ?? []).length]);
 
   useEffect(() => {
     const ch = supabase
@@ -131,7 +132,7 @@ function ThreadPage() {
       let mimeType: string | null = null;
       if (payloadText.startsWith("/")) {
         const shortcut = payloadText.split(" ")[0].slice(1);
-        const qr = qrData?.items.find((r: any) => r.shortcut === shortcut);
+        const qr = (qrData?.items ?? []).find((r: { shortcut?: string }) => r.shortcut === shortcut);
         if (qr) {
           payloadText = qr.text_content || payloadText;
           mediaUrl = qr.media_url || null;
@@ -170,16 +171,16 @@ function ThreadPage() {
             </Link>
           </Button>
           <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium">
-            {(data?.thread.contact.displayName || data?.thread.contact.waId || "?")
+            {(data?.thread?.contact?.displayName || data?.thread?.contact?.waId || "?")
               .slice(0, 1)
               .toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-medium truncate">
-              {data?.thread.contact.displayName || data?.thread.contact.waId || "Conversación"}
+              {data?.thread?.contact?.displayName || data?.thread?.contact?.waId || "Conversación"}
             </div>
             <div className="text-xs text-muted-foreground font-mono truncate">
-              {data?.thread.contact.waId}
+              {data?.thread?.contact?.waId ?? ""}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -241,16 +242,23 @@ function ThreadPage() {
 
         <form onSubmit={handleSend} className="border-t p-3 flex gap-2 bg-card relative">
           <Popover open={showQr && !!text.startsWith("/") && (qrData?.items.length ?? 0) > 0} onOpenChange={setShowQr}>
-            <PopoverTrigger asChild>
-              <Button type="button" variant="ghost" size="icon" title="Respuestas rápidas" onClick={() => setShowQr(true)}>
-                <Zap className="h-4 w-4 text-yellow-500" />
-              </Button>
-            </PopoverTrigger>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => setShowQr(true)}>
+                    <Zap className="h-4 w-4 text-purple-500" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Escribe / o haz clic aquí para usar respuestas rápidas</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <PopoverContent className="w-64 p-0" align="start">
               <div className="p-2 border-b text-xs text-muted-foreground">Respuestas rápidas</div>
               <ScrollArea className="max-h-48">
                 <div className="p-1">
-                  {qrData?.items.map((r: any) => (
+                  {(qrData?.items ?? []).map((r: { id: string; shortcut: string; text_content?: string | null }) => (
                     <button
                       key={r.id}
                       type="button"
@@ -278,7 +286,7 @@ function ThreadPage() {
         </form>
       </div>
 
-      {data?.thread.contactId && (
+      {data?.thread?.contactId && (
         <aside className="w-80 border-l bg-card hidden lg:flex flex-col">
           <ContactContextPanel contactId={data.thread.contactId} />
         </aside>
@@ -394,13 +402,17 @@ function ContactContextPanel({ contactId }: { contactId: string }) {
   const [reminderAt, setReminderAt] = useState("");
   const [reminderOpen, setReminderOpen] = useState(false);
 
-  const allTags = tagsData?.tags ?? [];
-  const assignedTags = contactTagsData?.tags ?? [];
-  const assignedTagIds = new Set(assignedTags.map((t: { id: string }) => t.id));
-  const availableTags = allTags.filter((t: { id: string }) => !assignedTagIds.has(t.id));
+  interface TagItem { id: string; name: string; color: string; }
+  interface NoteItem { id: string; content: string; created_at: string; user_id: string | null; }
+  interface ReminderItem { id: string; note: string; reminder_at: string; is_completed: boolean; created_at: string; }
 
-  const notes = notesData?.notes ?? [];
-  const reminders = remindersData?.reminders ?? [];
+  const allTags = (tagsData?.tags ?? []) as TagItem[];
+  const assignedTags = (contactTagsData?.tags ?? []) as TagItem[];
+  const assignedTagIds = new Set(assignedTags.map((t) => t.id));
+  const availableTags = allTags.filter((t) => !assignedTagIds.has(t.id));
+
+  const notes = (notesData?.notes ?? []) as NoteItem[];
+  const reminders = (remindersData?.reminders ?? []) as ReminderItem[];
 
   return (
     <Tabs defaultValue="tags" className="flex flex-col h-full">

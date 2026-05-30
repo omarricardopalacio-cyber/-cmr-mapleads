@@ -120,6 +120,10 @@ function ConversationsLayout() {
             const active = activeId === t.id;
             const contactLabel = c?.display_name || c?.phone || (c?.wa_id ? c.wa_id.replace(/@lid$/, "") : "Contacto");
             const contactMeta = c?.phone || c?.wa_id || "—";
+            const rawTags = Array.isArray(c?.contact_tags) ? c.contact_tags : [];
+            const contactTags = rawTags
+              .filter((x: { tags?: { id: string; name: string; color: string } }) => x?.tags)
+              .map((x: { tags: { id: string; name: string; color: string } }) => x.tags);
             return (
               <Link
                 key={t.id}
@@ -150,6 +154,19 @@ function ConversationsLayout() {
                     <div className="text-xs text-muted-foreground font-mono truncate">
                       {contactMeta}
                     </div>
+                    {contactTags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {contactTags.map((tag: { id: string; name: string; color: string }) => (
+                          <span
+                            key={tag.id}
+                            className="inline-block text-[10px] px-1.5 py-0.5 rounded-full border"
+                            style={{ borderColor: tag.color, color: tag.color, backgroundColor: `${tag.color}20` }}
+                          >
+                            {tag.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {t.unread_count > 0 && (
                     <span className="rounded-full bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 self-center">

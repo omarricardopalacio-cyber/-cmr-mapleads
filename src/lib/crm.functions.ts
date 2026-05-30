@@ -52,9 +52,9 @@ export const listThreads = createServerFn({ method: "GET" })
     if (!orgId) return { threads: [] };
     const { data } = await supabaseAdmin
       .from("threads")
-      .select("id, contact_id, last_message_at, unread_count, contacts(display_name, wa_id, phone)")
+      .select("id, contact_id, last_message_at, unread_count, contacts(display_name, wa_id, phone, contact_tags(tags(id, name, color)))")
       .eq("org_id", orgId)
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(100);
-    return { threads: data ?? [] };
+    return { threads: (data ?? []) as unknown as Array<Record<string, unknown>> };
   });

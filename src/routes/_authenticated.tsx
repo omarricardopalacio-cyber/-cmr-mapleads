@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -36,39 +36,58 @@ export const Route = createFileRoute("/_authenticated")({
   component: AuthedLayout,
 });
 
-const items = [
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Conversaciones", url: "/conversations", icon: MessagesSquare },
-  { title: "Contactos", url: "/contacts", icon: Users },
-  { title: "Automatizaciones", url: "/automations", icon: Zap },
-  { title: "Flujos", url: "/flows", icon: GitBranch },
-  { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
-  { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
-  { title: "Integraciones IA", url: "/integrations", icon: Sparkles },
-] as const;
-
 function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  const main = [
+    { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+    { title: "Chats en Vivo", url: "/conversations", icon: MessagesSquare },
+    { title: "Contactos y Clientes", url: "/contacts", icon: Users },
+  ];
+
+  const automate = [
+    { title: "Respuestas Rápidas", url: "/automations", icon: Zap },
+    { title: "Campañas Masivas", url: "/automations", icon: Megaphone, query: { tab: "broadcast" } },
+    { title: "Flujos Automatizados", url: "/flows", icon: GitBranch },
+  ];
+
+  const system = [
+    { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
+    { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
+    { title: "Integraciones IA", url: "/integrations", icon: Sparkles },
+  ];
+
+  const renderItems = (items: typeof main) =>
+    items.map((item) => (
+      <SidebarMenuItem key={item.title}>
+        <SidebarMenuButton asChild isActive={pathname.startsWith(item.url)}>
+          <Link to={item.url} search={item.query} className="flex items-center gap-2">
+            <item.icon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{item.title}</span>
+          </Link>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    ));
+
   return (
     <Sidebar collapsible="icon">
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>WhatsApp CRM</SidebarGroupLabel>
+          <SidebarGroupLabel>Principal</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={pathname.startsWith(item.url)}>
-                    <Link to={item.url} className="flex items-center gap-2">
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+            <SidebarMenu>{renderItems(main)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Automatización</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(automate)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Sistema</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(system)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
