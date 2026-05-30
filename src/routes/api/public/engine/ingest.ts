@@ -88,6 +88,25 @@ function digits(v: unknown): string | undefined {
   return s || undefined
 }
 
+function normalizeWaKey(v: unknown): string | undefined {
+  if (v == null) return undefined
+  const raw = String(v).trim()
+  if (!raw) return undefined
+  const base = raw.split('@')[0].replace(/\D/g, '')
+  if (!base) return undefined
+  return raw.includes('@lid') ? `${base}@lid` : base
+}
+
+function isLidKey(v?: string | null): boolean {
+  return Boolean(v && v.endsWith('@lid'))
+}
+
+function pickDisplayName(name: unknown, waId?: string, phone?: string): string | undefined {
+  const clean = typeof name === 'string' ? name.trim() : ''
+  if (clean && clean.toLowerCase() !== 'unknown') return clean
+  return phone ?? waId?.replace(/@lid$/, '')
+}
+
 function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null): NormalizedEvent {
   const rawType = String(e.type || '')
   const type: NormalizedEvent['type'] = TYPE_MAP[rawType] ?? 'status'
@@ -96,41 +115,25 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
   const chatId = e.chatId ?? p.chatId ?? p.from ?? p.to
   const waMessageId = e.waMessageId ?? p.waMessageId ?? p.messageId ?? p.message_id ?? p.id
 
-  // Candidate wa_ids we received in this event
-  const fromWa = digits(p.from)
-  const toWa = digits(p.to)
-  const phoneWa = digits(p.phoneNumber ?? p.phone)
-  const chatWa = digits(chatId)
-
-  // LID = anonymous WhatsApp identifier (e.g. "21917838930175@lid"), NOT a real phone.
-  // When the from/chat is a @lid, we must prefer the real phoneNumber field.
-  const fromIsLid = typeof p.from === 'string' && p.from.includes('@lid')
-  const chatIsLid = typeof chatId === 'string' && chatId.includes('@lid')
+   const fromWa = normalizeWaKey(p.from)
+   const toWa = normalizeWaKey(p.to)
+   const chatWa = normalizeWaKey(chatId)
 
   let direction: 'in' | 'out' | undefined = e.direction ?? p.direction
   if (!direction && typeof p.fromMe === 'boolean') direction = p.fromMe ? 'out' : 'in'
 
-  // If we know our own number, derive direction from from/to
   if (meWaId) {
-    if (fromWa && fromWa === meWaId) direction = 'out'
-    else if (toWa && toWa === meWaId) direction = 'in'
+     if (digits(fromWa) === meWaId) direction = 'out'
+     else if (digits(toWa) === meWaId) direction = 'in'
   }
   if (!direction) {
     if (type === 'message-in') direction = 'in'
     else if (type === 'message-out') direction = 'out'
   }
 
-  // Counterpart = the real phone of the other party (never a @lid)
-  let counterpart: string | undefined
-  if ((fromIsLid || chatIsLid) && phoneWa) {
-    counterpart = phoneWa
-  } else if (meWaId) {
-    counterpart = [phoneWa, fromWa, toWa, chatWa].find((w) => w && w !== meWaId)
-  }
-  if (!counterpart) {
-    counterpart =
-      phoneWa ?? (direction === 'out' ? toWa : fromWa) ?? fromWa ?? toWa ?? chatWa
-  }
+   const counterpart =
+     (direction === 'out' ? toWa ?? chatWa ?? fromWa : fromWa ?? chatWa ?? toWa) ?? chatWa
+   const counterpartPhone = counterpart && !isLidKey(counterpart) ? digits(counterpart) : undefined
 
   const text = e.text ?? p.text ?? p.body ?? p.content
   const sentAt = toIso(e.sentAt) ?? toIso(p.sentAt) ?? toIso(p.timestamp) ?? toIso(p.t)
@@ -139,12 +142,25 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
   if (!contact && counterpart) {
     contact = {
       waId: counterpart,
-      displayName: p.notifyName ?? p.pushname ?? p.author?.name,
-      phone: counterpart,
+       displayName: pickDisplayName(p.notifyName ?? p.pushname ?? p.author?.name, counterpart, counterpartPhone),
+       phone: counterpartPhone,
     }
-  } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
-    // The extension sent our own number as the contact; replace with counterpart
-    contact = { waId: counterpart, displayName: contact.displayName, phone: counterpart }
+   } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
+     contact = {
+       waId: counterpart,
+       displayName: pickDisplayName(contact.displayName, counterpart, counterpartPhone),
+       phone: counterpartPhone,
+     }
+   } else if (contact) {
+     const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
+     const normalizedPhone = contact.phone ? digits(contact.phone) : counterpartPhone
+     if (normalizedWaId) {
+       contact = {
+         waId: normalizedWaId,
+         displayName: pickDisplayName(contact.displayName, normalizedWaId, normalizedPhone),
+         phone: !isLidKey(normalizedWaId) ? normalizedPhone ?? digits(normalizedWaId) : normalizedPhone,
+       }
+     }
   }
 
   const commandId = e.commandId ?? p.commandId
