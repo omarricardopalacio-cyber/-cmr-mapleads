@@ -404,7 +404,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   ? `${waId}@c.us`
                   : e.chatId
               await maybeAutoReply(session.org_id, session.id, sendChatId, e.text)
-              await maybeAiReply(session.org_id, session.id, sendChatId, contact.id, thread.id, e.text)
+              await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
             }
 
           } else if (e.type === 'ack' && e.commandId) {
