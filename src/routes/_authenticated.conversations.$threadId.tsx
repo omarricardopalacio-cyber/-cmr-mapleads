@@ -2,7 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
-import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia } from "@/lib/messaging.functions";
+import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent } from "@/lib/messaging.functions";
+import { listOrgMembers } from "@/lib/crm.functions";
 import { listQuickReplies } from "@/lib/automations.functions";
 import {
   listTags,
@@ -67,6 +68,7 @@ import {
   Image,
   FileText,
   Loader2,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
@@ -85,6 +87,8 @@ function ThreadPage() {
   const toggleAi = useServerFn(toggleAiEnabled);
   const listQr = useServerFn(listQuickReplies);
   const upload = useServerFn(uploadMedia);
+  const listMembers = useServerFn(listOrgMembers);
+  const assignAgent = useServerFn(assignThreadToAgent);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showQr, setShowQr] = useState(false);
@@ -94,18 +98,35 @@ function ThreadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: qrData } = useQuery({ queryKey: ["quickReplies"], queryFn: () => listQr({}) });
-  const aiEnabled = data?.thread?.aiEnabled ?? true;
-  const toggleAiMut = useMutation({
-    mutationFn: (v: boolean) => toggleAi({ data: { threadId, aiEnabled: v } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["thread", threadId] }),
-    onError: (e: Error) => toast.error(e.message),
-  });
 
   const { data, isLoading } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => list({ data: { threadId } }),
     refetchInterval: 5000,
     retry: false,
+  });
+
+  const aiEnabled = (data as unknown as Record<string, unknown>)?.thread?.aiEnabled ?? true;
+
+  const toggleAiMut = useMutation({
+    mutationFn: (v: boolean) => toggleAi({ data: { threadId, aiEnabled: v } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["thread", threadId] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const { data: membersData } = useQuery({
+    queryKey: ["orgMembers"],
+    queryFn: () => listMembers({}),
+  });
+
+  const assignMut = useMutation({
+    mutationFn: (agentUserId: string | null) => assignAgent({ data: { threadId, agentUserId } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["thread", threadId] });
+      qc.invalidateQueries({ queryKey: ["threads"] });
+      toast.success("Agente asignado");
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   useEffect(() => {
@@ -226,6 +247,43 @@ function ThreadPage() {
             <span className="text-xs text-muted-foreground hidden sm:inline">IA</span>
             <Switch checked={aiEnabled} onCheckedChange={(v) => toggleAiMut.mutate(v)} disabled={toggleAiMut.isPending} />
           </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-xs gap-1" disabled={assignMut.isPending}>
+                <User className="h-3 w-3" />
+                <span className="hidden sm:inline">
+                  {(() => {
+                    const assignedId = (data as unknown as Record<string, unknown>)?.thread?.assigned_to_user_id as string | undefined;
+                    if (!assignedId) return "Sin asignar";
+                    const m = (membersData?.members ?? []).find((x: { id: string }) => x.id === assignedId);
+                    return m?.displayName ?? "Asignado";
+                  })()}
+                </span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-0" align="end">
+              <div className="p-2 border-b text-xs text-muted-foreground">Asignar chat a</div>
+              <div className="p-1 space-y-0.5">
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted flex items-center gap-2"
+                  onClick={() => assignMut.mutate(null)}
+                >
+                  <span className="text-muted-foreground">Sin asignar</span>
+                </button>
+                {(membersData?.members ?? []).map((m: { id: string; displayName: string }) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted flex items-center gap-2"
+                    onClick={() => assignMut.mutate(m.id)}
+                  >
+                    <span>{m.displayName}</span>
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="ghost" size="icon" title="Borrar chat" disabled={clearMut.isPending}>

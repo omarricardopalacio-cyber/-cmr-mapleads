@@ -263,4 +263,19 @@ export const uploadMedia = createServerFn({ method: "POST" })
     }
   });
 
-
+export const assignThreadToAgent = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({ threadId: z.string().uuid(), agentUserId: z.string().uuid().nullable().optional() }).parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    if (!orgId) throw new Error("Organization not found");
+    const { error } = await supabaseAdmin
+      .from("threads")
+      .update({ assigned_to_user_id: data.agentUserId ?? null })
+      .eq("id", data.threadId)
+      .eq("org_id", orgId);
+    if (error) throw new Error(error.message);
+    return { success: true };
+  });

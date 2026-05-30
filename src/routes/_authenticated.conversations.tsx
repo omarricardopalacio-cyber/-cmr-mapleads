@@ -8,6 +8,7 @@ import { listSessions } from "@/lib/sessions.functions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +27,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2, Inbox, User, Users } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/conversations")({
@@ -37,14 +38,16 @@ function ConversationsLayout() {
   const fn = useServerFn(listThreads);
   const clearAll = useServerFn(clearAllChats);
   const qc = useQueryClient();
+  const [q, setQ] = useState("");
+  const [filterTab, setFilterTab] = useState<"all" | "mine" | "unassigned">("all");
+
   const { data, isLoading } = useQuery({
-    queryKey: ["threads"],
-    queryFn: () => fn({}),
+    queryKey: ["threads", filterTab],
+    queryFn: () => fn({ data: { filter: filterTab } }),
     refetchInterval: 5000,
   });
   const params = useParams({ strict: false }) as { threadId?: string };
   const activeId = params.threadId;
-  const [q, setQ] = useState("");
 
   const threads = (data?.threads ?? []).filter((t) => {
     if (!q.trim()) return true;
@@ -97,7 +100,14 @@ function ConversationsLayout() {
           </AlertDialog>
           <NewChatDialog />
         </div>
-        <div className="p-2 border-b">
+        <div className="p-2 border-b space-y-2">
+          <Tabs value={filterTab} onValueChange={(v) => setFilterTab(v as "all" | "mine" | "unassigned")} className="w-full">
+            <TabsList className="grid w-full grid-cols-3 h-8">
+              <TabsTrigger value="all" className="text-[10px] gap-1 px-1"><Users className="h-3 w-3" /> Todos</TabsTrigger>
+              <TabsTrigger value="mine" className="text-[10px] gap-1 px-1"><User className="h-3 w-3" /> Míos</TabsTrigger>
+              <TabsTrigger value="unassigned" className="text-[10px] gap-1 px-1"><Inbox className="h-3 w-3" /> Sin asignar</TabsTrigger>
+            </TabsList>
+          </Tabs>
           <div className="relative">
             <Search className="h-4 w-4 absolute left-2 top-2.5 text-muted-foreground" />
             <Input
