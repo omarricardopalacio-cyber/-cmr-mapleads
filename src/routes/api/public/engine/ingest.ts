@@ -170,6 +170,61 @@ async function maybeAutoReply(orgId: string, sessionId: string, chatId: string, 
   }
 }
 
+async function maybeAiReply(
+  orgId: string,
+  sessionId: string,
+  chatId: string,
+  contactId: string,
+  threadId: string,
+  text: string,
+) {
+  const { data: cfg } = await supabaseAdmin
+    .from('ai_configs')
+    .select('*')
+    .eq('org_id', orgId)
+    .maybeSingle()
+  if (!cfg || !cfg.enabled) return
+
+  if (cfg.respond_to === 'new') {
+    const { count } = await supabaseAdmin
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('thread_id', threadId)
+      .eq('direction', 'out')
+    if ((count ?? 0) > 0) return
+  }
+
+  // Get short history (last 10)
+  const { data: hist } = await supabaseAdmin
+    .from('messages')
+    .select('direction, text')
+    .eq('thread_id', threadId)
+    .not('text', 'is', null)
+    .order('sent_at', { ascending: false })
+    .limit(10)
+  const history = (hist ?? [])
+    .reverse()
+    .slice(0, -1)
+    .map((m: any) => ({
+      role: (m.direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
+      content: String(m.text),
+    }))
+
+  try {
+    const reply = await generateReply(cfg as any, text, history)
+    if (!reply?.trim()) return
+    await supabaseAdmin.from('engine_commands').insert({
+      org_id: orgId,
+      session_id: sessionId,
+      type: 'send_message',
+      payload: { chatId, text: reply.trim() },
+      status: 'pending',
+    })
+  } catch (err) {
+    console.error('[ai-reply] error', err)
+  }
+}
+
 export const Route = createFileRoute('/api/public/engine/ingest')({
 
   server: {
