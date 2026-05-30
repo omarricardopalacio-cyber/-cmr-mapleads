@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
-import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent } from "@/lib/messaging.functions";
+import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent, syncThreadMessages } from "@/lib/messaging.functions";
 import { listOrgMembers } from "@/lib/crm.functions";
 import { listQuickReplies } from "@/lib/automations.functions";
 import {
@@ -98,6 +98,12 @@ function ThreadPage() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // NIVEL 1: Consulta redundante directa desde el navegador
+  const [clientMessages, setClientMessages] = useState<any[]>([]);
+  const [clientLoading, setClientLoading] = useState(false);
+  const [clientError, setClientError] = useState<Error | null>(null);
+  const [userOrgId, setUserOrgId] = useState<string | null>(null);
+
   const { data: qrData } = useQuery({ queryKey: ["quickReplies"], queryFn: () => listQr({}) });
 
   const { data, isLoading, error } = useQuery({
@@ -107,8 +113,51 @@ function ThreadPage() {
     retry: false,
   });
 
+  // NIVEL 1: Consulta directa al navegador como salvavidas
+  useEffect(() => {
+    let cancelled = false;
+    setClientLoading(true);
+    setClientError(null);
+    setClientMessages([]);
+
+    async function fetchDirect() {
+      try {
+        // Obtener org_id del usuario autenticado
+        const { data: sessionData } = await supabase.auth.getSession();
+        const currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string | undefined;
+        if (currentOrgId && !cancelled) setUserOrgId(currentOrgId);
+
+        const { data: directMsgs, error: directErr } = await supabase
+          .from("messages")
+          .select("id, direction, text, sent_at, media")
+          .eq("thread_id", threadId)
+          .order("sent_at", { ascending: true });
+
+        if (!cancelled) {
+          if (directErr) {
+            setClientError(directErr as unknown as Error);
+            console.error("[CLIENT DIRECT SQL] Error:", directErr);
+          } else if (directMsgs) {
+            setClientMessages(directMsgs);
+            console.log("[CLIENT DIRECT SQL] Mensajes cargados desde navegador:", directMsgs.length);
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setClientError(e as Error);
+          console.error("[CLIENT DIRECT SQL] Excepción:", e);
+        }
+      } finally {
+        if (!cancelled) setClientLoading(false);
+      }
+    }
+
+    fetchDirect();
+    return () => { cancelled = true; };
+  }, [threadId]);
+
   // eslint-disable-next-line no-console
-  console.log("[DEBUG] Thread ID:", threadId, "Loading:", isLoading, "Error:", error, "Data messages:", (data?.messages ?? []).length);
+  console.log("[DEBUG] Thread ID:", threadId, "Loading:", isLoading, "Error:", error, "Server messages:", (data?.messages ?? []).length, "Client messages:", clientMessages.length);
 
   const aiEnabled = (data as unknown as Record<string, unknown>)?.thread?.aiEnabled ?? true;
 
@@ -133,13 +182,24 @@ function ThreadPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const syncMut = useMutation({
+    mutationFn: () => syncThreadMessages({ data: { threadId } }),
+    onSuccess: (res) => {
+      toast.success(`Reparación completada. ${(res as unknown as Record<string, unknown>)?.synced ?? 0} mensajes sincronizados.`);
+      qc.invalidateQueries({ queryKey: ["thread", threadId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   useEffect(() => {
     if (!isLoading && data === null) navigate({ to: "/conversations" });
   }, [data, isLoading, navigate]);
 
+  const mergedMessages = (data?.messages ?? []).length > 0 ? (data?.messages ?? []) : clientMessages;
+
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
-  }, [(data?.messages ?? []).length]);
+  }, [mergedMessages.length]);
 
   useEffect(() => {
     const ch = supabase
@@ -316,11 +376,71 @@ function ThreadPage() {
             backgroundSize: "20px 20px",
           }}
         >
-          {isLoading && <p className="text-muted-foreground text-sm">Cargando...</p>}
-          {!isLoading && (data?.messages?.length ?? 0) === 0 && (
-            <p className="text-muted-foreground text-sm text-center">Sin mensajes aún.</p>
+          {(isLoading || clientLoading) && (
+            <p className="text-muted-foreground text-sm">Cargando mensajes...</p>
           )}
-          {(data?.messages ?? []).map((m) => {
+
+          {/* NIVEL 2: Panel de Diagnóstico cuando no hay mensajes */}
+          {!isLoading && !clientLoading && mergedMessages.length === 0 && (
+            <div className="bg-slate-950 border-2 border-red-500 p-6 rounded-xl max-w-2xl mx-auto my-8 space-y-4 text-white shadow-lg">
+              <div className="flex items-center gap-2 text-red-400 font-bold text-lg">
+                <span className="text-2xl">🔴</span>
+                <span>Panel de Diagnóstico Técnico</span>
+              </div>
+              <div className="space-y-2 text-sm font-mono">
+                <div className="flex justify-between border-b border-slate-700 pb-1">
+                  <span className="text-slate-400">Estado del chat:</span>
+                  <span className="text-red-400 font-semibold">Sin mensajes visibles</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-700 pb-1">
+                  <span className="text-slate-400">🏢 Org ID:</span>
+                  <span className="text-emerald-400">{userOrgId ?? "Desconocido"}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-700 pb-1">
+                  <span className="text-slate-400">💬 Thread ID:</span>
+                  <span className="text-yellow-400">{threadId}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-700 pb-1">
+                  <span className="text-slate-400">📂 Servidor (Loader):</span>
+                  <span className={data?.messages && (data?.messages ?? []).length > 0 ? "text-emerald-400" : "text-red-400"}>
+                    {(data?.messages ?? []).length} mensajes
+                  </span>
+                </div>
+                <div className="flex justify-between border-b border-slate-700 pb-1">
+                  <span className="text-slate-400">🌐 Navegador (Directo):</span>
+                  <span className={clientMessages.length > 0 ? "text-emerald-400" : "text-red-400"}>
+                    {clientMessages.length} mensajes
+                  </span>
+                </div>
+                {error && (
+                  <div className="flex justify-between border-b border-slate-700 pb-1">
+                    <span className="text-slate-400">❌ Error Servidor:</span>
+                    <span className="text-red-400">{(error as Error).message}</span>
+                  </div>
+                )}
+                {clientError && (
+                  <div className="flex justify-between border-b border-slate-700 pb-1">
+                    <span className="text-slate-400">❌ Error Navegador:</span>
+                    <span className="text-red-400">{clientError.message}</span>
+                  </div>
+                )}
+              </div>
+              <Button
+                variant="destructive"
+                className="w-full mt-2"
+                onClick={() => syncMut.mutate()}
+                disabled={syncMut.isPending}
+              >
+                {syncMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                🛠️ Auto-Reparar Mensajes Huérfanos
+              </Button>
+              <p className="text-[10px] text-slate-500 text-center">
+                Este botón asocia todos los mensajes de este chat a la organización actual.
+              </p>
+            </div>
+          )}
+
+          {mergedMessages.map((m) => {
             const mediaObj = (m.media as { url?: string; mimeType?: string } | null) ?? null;
             const isImage = mediaObj?.mimeType?.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
             return (
