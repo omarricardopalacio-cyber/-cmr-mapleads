@@ -1,9 +1,9 @@
 import { createFileRoute, Link, Outlet, useParams } from "@tanstack/react-router";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { listThreads } from "@/lib/crm.functions";
-import { sendDirectMessage } from "@/lib/messaging.functions";
+import { clearAllChats, sendDirectMessage } from "@/lib/messaging.functions";
 import { listSessions } from "@/lib/sessions.functions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/conversations")({
@@ -24,6 +24,8 @@ export const Route = createFileRoute("/_authenticated/conversations")({
 
 function ConversationsLayout() {
   const fn = useServerFn(listThreads);
+  const clearAll = useServerFn(clearAllChats);
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["threads"],
     queryFn: () => fn({}),
@@ -40,12 +42,35 @@ function ConversationsLayout() {
     return hay.includes(q.toLowerCase());
   });
 
+  const clearAllMut = useMutation({
+    mutationFn: () => clearAll({ data: undefined as never }),
+    onSuccess: () => {
+      toast.success("Todos los chats fueron borrados");
+      qc.invalidateQueries({ queryKey: ["threads"] });
+      qc.invalidateQueries({ queryKey: ["thread"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <div className="flex h-[calc(100vh-5rem)] -m-4 md:-m-6 border-t">
       {/* Sidebar lista de chats */}
       <aside className="w-full md:w-80 lg:w-96 border-r flex flex-col bg-card">
         <div className="p-3 border-b flex items-center gap-2">
           <h1 className="font-semibold flex-1">Chats</h1>
+          <Button
+            size="icon"
+            variant="ghost"
+            title="Borrar todos los chats"
+            disabled={clearAllMut.isPending}
+            onClick={() => {
+              if (confirm("¿Seguro que quieres borrar todos los chats y empezar de nuevo?")) {
+                clearAllMut.mutate();
+              }
+            }}
+          >
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
           <NewChatDialog />
         </div>
         <div className="p-2 border-b">
