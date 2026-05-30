@@ -591,6 +591,7 @@ export type Database = {
           id: string
           label: string
           last_heartbeat_at: string | null
+          me_wa_id: string | null
           org_id: string
           session_token: string
           status: Database["public"]["Enums"]["wa_session_status"]
@@ -601,6 +602,7 @@ export type Database = {
           id?: string
           label?: string
           last_heartbeat_at?: string | null
+          me_wa_id?: string | null
           org_id: string
           session_token: string
           status?: Database["public"]["Enums"]["wa_session_status"]
@@ -611,6 +613,7 @@ export type Database = {
           id?: string
           label?: string
           last_heartbeat_at?: string | null
+          me_wa_id?: string | null
           org_id?: string
           session_token?: string
           status?: Database["public"]["Enums"]["wa_session_status"]

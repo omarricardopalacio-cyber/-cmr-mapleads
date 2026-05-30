@@ -82,43 +82,63 @@ function toIso(ts: unknown): string | undefined {
   return undefined
 }
 
-function normalizeEvent(e: z.infer<typeof EventSchema>): NormalizedEvent {
+function digits(v: unknown): string | undefined {
+  if (v == null) return undefined
+  const s = String(v).split('@')[0].replace(/\D/g, '')
+  return s || undefined
+}
+
+function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null): NormalizedEvent {
   const rawType = String(e.type || '')
   const type: NormalizedEvent['type'] = TYPE_MAP[rawType] ?? 'status'
   const p: Record<string, any> = (e.payload as any) || {}
 
   const chatId = e.chatId ?? p.chatId ?? p.from ?? p.to
   const waMessageId = e.waMessageId ?? p.waMessageId ?? p.messageId ?? p.message_id ?? p.id
+
+  // Candidate wa_ids we received in this event
+  const fromWa = digits(p.from)
+  const toWa = digits(p.to)
+  const phoneWa = digits(p.phoneNumber ?? p.phone)
+  const chatWa = digits(chatId)
+
   let direction: 'in' | 'out' | undefined = e.direction ?? p.direction
+  if (!direction && typeof p.fromMe === 'boolean') direction = p.fromMe ? 'out' : 'in'
+
+  // If we know our own number, derive direction from from/to
+  if (meWaId) {
+    if (fromWa && fromWa === meWaId) direction = 'out'
+    else if (toWa && toWa === meWaId) direction = 'in'
+  }
   if (!direction) {
-    if (typeof p.fromMe === 'boolean') direction = p.fromMe ? 'out' : 'in'
-    else if (type === 'message-in') direction = 'in'
+    if (type === 'message-in') direction = 'in'
     else if (type === 'message-out') direction = 'out'
   }
+
+  // Counterpart = the wa_id that is NOT us
+  let counterpart: string | undefined
+  if (meWaId) {
+    counterpart = [fromWa, toWa, phoneWa, chatWa].find((w) => w && w !== meWaId)
+  }
+  if (!counterpart) {
+    counterpart =
+      phoneWa ?? (direction === 'out' ? toWa : fromWa) ?? fromWa ?? toWa ?? chatWa
+  }
+
   const text = e.text ?? p.text ?? p.body ?? p.content
   const sentAt = toIso(e.sentAt) ?? toIso(p.sentAt) ?? toIso(p.timestamp) ?? toIso(p.t)
 
   let contact = e.contact
-  if (!contact) {
-    // Prefer real phone number from payload when available (handles @lid chats)
-    const phoneFromPayload = p.phoneNumber ?? p.phone
-    const waSource: string | undefined =
-      phoneFromPayload ??
-      (direction === 'out' ? p.to : p.from) ??
-      p.from ??
-      p.to ??
-      (chatId as string | undefined)
-    if (waSource) {
-      const waId = String(waSource).split('@')[0]
-      if (waId)
-        contact = {
-          waId,
-          displayName: p.notifyName ?? p.pushname ?? p.author?.name,
-          phone: phoneFromPayload ? String(phoneFromPayload) : undefined,
-        }
+  if (!contact && counterpart) {
+    contact = {
+      waId: counterpart,
+      displayName: p.notifyName ?? p.pushname ?? p.author?.name,
+      phone: counterpart,
     }
+  } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
+    // The extension sent our own number as the contact; replace with counterpart
+    contact = { waId: counterpart, displayName: contact.displayName, phone: counterpart }
   }
-
 
   const commandId = e.commandId ?? p.commandId
   const ackStatus = e.ackStatus ?? p.status ?? p.ackStatus
@@ -137,6 +157,7 @@ function normalizeEvent(e: z.infer<typeof EventSchema>): NormalizedEvent {
     ackStatus: ackStatus != null ? String(ackStatus) : undefined,
   }
 }
+
 
 const PayloadSchema = z.object({
   events: z.array(EventSchema).min(1).max(50),
@@ -257,7 +278,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         const { data: session, error: sErr } = await supabaseAdmin
           .from('wa_sessions')
-          .select('id, org_id')
+          .select('id, org_id, me_wa_id')
           .eq('session_token', token)
           .maybeSingle()
         if (sErr || !session) return json(401, { error: 'Invalid session token' })
@@ -267,7 +288,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
           .eq('id', session.id)
 
-        const normalized = parsed.data.events.map(normalizeEvent)
+        const meWaId = session.me_wa_id ?? null
+        const normalized = parsed.data.events.map((ev) => normalizeEvent(ev, meWaId))
 
         const eventRows = normalized.map((e, i) => ({
           org_id: session.org_id,

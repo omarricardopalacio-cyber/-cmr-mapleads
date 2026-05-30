@@ -21,7 +21,7 @@ export const listSessions = createServerFn({ method: "GET" })
     const orgId = await getUserOrg(context.userId);
     const { data } = await supabaseAdmin
       .from("wa_sessions")
-      .select("id, label, status, last_heartbeat_at, created_at, session_token")
+      .select("id, label, status, last_heartbeat_at, created_at, session_token, me_wa_id")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false });
     return { sessions: data ?? [] };
@@ -41,8 +41,30 @@ export const createSession = createServerFn({ method: "POST" })
         session_token: token,
         created_by: context.userId,
       })
-      .select("id, label, status, session_token")
+      .select("id, label, status, session_token, me_wa_id")
       .single();
     if (error) throw new Error(error.message);
     return { session: row };
+  });
+
+export const updateSessionMe = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        sessionId: z.string().uuid(),
+        meWaId: z.string().max(32).nullable(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const normalized = data.meWaId ? data.meWaId.replace(/\D/g, "") : null;
+    const { error } = await supabaseAdmin
+      .from("wa_sessions")
+      .update({ me_wa_id: normalized || null })
+      .eq("id", data.sessionId)
+      .eq("org_id", orgId);
+    if (error) throw new Error(error.message);
+    return { ok: true, meWaId: normalized };
   });
