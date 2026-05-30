@@ -62,23 +62,65 @@ export const getOrgStats = createServerFn({ method: "GET" })
     const orgId = role?.org_id ?? null;
 
     if (!orgId) {
-      return { orgId: null, sessionsCount: 0, threadsCount: 0, orphanSessionsCount: 0 };
+      return {
+        orgId: null,
+        sessionsCount: 0,
+        threadsCount: 0,
+        contactsCount: 0,
+        orphanSessionsCount: 0,
+        orphanThreadsCount: 0,
+        orphanContactsCount: 0,
+      };
     }
 
-    const [sessionsRes, threadsRes, orphanNullRes, orphanDiffRes] = await Promise.all([
+    const [
+      sessionsRes,
+      threadsRes,
+      contactsRes,
+      orphanSessNull,
+      orphanSessDiff,
+      orphanThrNull,
+      orphanThrDiff,
+      orphanContNull,
+      orphanContDiff,
+    ] = await Promise.all([
       supabaseAdmin.from("wa_sessions").select("id", { count: "exact", head: true }).eq("org_id", orgId),
       supabaseAdmin.from("threads").select("id", { count: "exact", head: true }).eq("org_id", orgId),
+      supabaseAdmin.from("contacts").select("id", { count: "exact", head: true }).eq("org_id", orgId),
       supabaseAdmin.from("wa_sessions").select("id", { count: "exact", head: true }).is("org_id", null),
       supabaseAdmin.from("wa_sessions").select("id", { count: "exact", head: true }).neq("org_id", orgId),
+      supabaseAdmin.from("threads").select("id", { count: "exact", head: true }).is("org_id", null),
+      supabaseAdmin.from("threads").select("id", { count: "exact", head: true }).neq("org_id", orgId),
+      supabaseAdmin.from("contacts").select("id", { count: "exact", head: true }).is("org_id", null),
+      supabaseAdmin.from("contacts").select("id", { count: "exact", head: true }).neq("org_id", orgId),
     ]);
 
     return {
       orgId,
       sessionsCount: sessionsRes.count ?? 0,
       threadsCount: threadsRes.count ?? 0,
-      orphanSessionsCount: (orphanNullRes.count ?? 0) + (orphanDiffRes.count ?? 0),
+      contactsCount: contactsRes.count ?? 0,
+      orphanSessionsCount: (orphanSessNull.count ?? 0) + (orphanSessDiff.count ?? 0),
+      orphanThreadsCount: (orphanThrNull.count ?? 0) + (orphanThrDiff.count ?? 0),
+      orphanContactsCount: (orphanContNull.count ?? 0) + (orphanContDiff.count ?? 0),
     };
   });
+
+async function fetchOrphanIds(table: string, orgId: string): Promise<string[]> {
+  const nullRes = await supabaseAdmin.from(table).select("id").is("org_id", null);
+  const diffRes = await supabaseAdmin.from(table).select("id").neq("org_id", orgId);
+  const nullIds = (nullRes.data ?? []).map((r: { id: string }) => r.id);
+  const diffIds = (diffRes.data ?? []).map((r: { id: string }) => r.id);
+  return Array.from(new Set([...nullIds, ...diffIds]));
+}
+
+async function syncTableToOrg(table: string, orgId: string): Promise<number> {
+  const ids = await fetchOrphanIds(table, orgId);
+  if (ids.length === 0) return 0;
+  const { error } = await supabaseAdmin.from(table).update({ org_id: orgId }).in("id", ids);
+  if (error) throw new Error(`${table}: ${error.message}`);
+  return ids.length;
+}
 
 export const syncWaSessions = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -92,20 +134,35 @@ export const syncWaSessions = createServerFn({ method: "POST" })
       .maybeSingle();
     const orgId = role?.org_id ?? null;
     if (!orgId) throw new Error("No organization found");
+    return { synced: await syncTableToOrg("wa_sessions", orgId) };
+  });
 
-    const nullRes = await supabaseAdmin.from("wa_sessions").select("id").is("org_id", null);
-    const diffRes = await supabaseAdmin.from("wa_sessions").select("id").neq("org_id", orgId);
-    const ids = Array.from(new Set([
-      ...(nullRes.data ?? []).map((r: { id: string }) => r.id),
-      ...(diffRes.data ?? []).map((r: { id: string }) => r.id),
-    ]));
+export const syncThreads = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { userId } = context;
+    const { data: role } = await supabaseAdmin
+      .from("user_roles")
+      .select("org_id")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+    const orgId = role?.org_id ?? null;
+    if (!orgId) throw new Error("No organization found");
+    return { synced: await syncTableToOrg("threads", orgId) };
+  });
 
-    if (ids.length === 0) return { synced: 0 };
-
-    const { error } = await supabaseAdmin
-      .from("wa_sessions")
-      .update({ org_id: orgId })
-      .in("id", ids);
-    if (error) throw new Error(error.message);
-    return { synced: ids.length };
+export const syncContacts = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { userId } = context;
+    const { data: role } = await supabaseAdmin
+      .from("user_roles")
+      .select("org_id")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+    const orgId = role?.org_id ?? null;
+    if (!orgId) throw new Error("No organization found");
+    return { synced: await syncTableToOrg("contacts", orgId) };
   });

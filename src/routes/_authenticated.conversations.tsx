@@ -5,7 +5,7 @@ import { useState } from "react";
 import { listThreads } from "@/lib/crm.functions";
 import { clearAllChats, sendDirectMessage } from "@/lib/messaging.functions";
 import { listSessions } from "@/lib/sessions.functions";
-import { getOrgStats, syncWaSessions } from "@/lib/org.functions";
+import { getOrgStats, syncWaSessions, syncThreads, syncContacts } from "@/lib/org.functions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -202,7 +202,9 @@ function ConversationsLayout() {
 
 function DiagnosticsPanel() {
   const statsFn = useServerFn(getOrgStats);
-  const syncFn = useServerFn(syncWaSessions);
+  const syncSessFn = useServerFn(syncWaSessions);
+  const syncThrFn = useServerFn(syncThreads);
+  const syncContFn = useServerFn(syncContacts);
   const qc = useQueryClient();
 
   const { data: stats, isLoading } = useQuery({
@@ -211,21 +213,37 @@ function DiagnosticsPanel() {
     refetchInterval: 10000,
   });
 
-  const syncMut = useMutation({
-    mutationFn: () => syncFn({}),
-    onSuccess: (res) => {
-      toast.success(`${res.synced} sesiones sincronizadas a tu organización`);
-      qc.invalidateQueries({ queryKey: ["orgStats"] });
-      qc.invalidateQueries({ queryKey: ["threads"] });
-      qc.invalidateQueries({ queryKey: ["sessions"] });
-    },
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: ["orgStats"] });
+    qc.invalidateQueries({ queryKey: ["threads"] });
+    qc.invalidateQueries({ queryKey: ["sessions"] });
+    qc.invalidateQueries({ queryKey: ["contacts"] });
+  };
+
+  const syncSess = useMutation({
+    mutationFn: () => syncSessFn({}),
+    onSuccess: (res) => { toast.success(`${res.synced} sesiones sincronizadas`); invalidateAll(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const syncThr = useMutation({
+    mutationFn: () => syncThrFn({}),
+    onSuccess: (res) => { toast.success(`${res.synced} chats sincronizados`); invalidateAll(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const syncCont = useMutation({
+    mutationFn: () => syncContFn({}),
+    onSuccess: (res) => { toast.success(`${res.synced} contactos sincronizados`); invalidateAll(); },
     onError: (e: Error) => toast.error(e.message),
   });
 
   const orgId = stats?.orgId ?? "—";
   const sessionsCount = stats?.sessionsCount ?? 0;
   const threadsCount = stats?.threadsCount ?? 0;
-  const orphanCount = stats?.orphanSessionsCount ?? 0;
+  const contactsCount = stats?.contactsCount ?? 0;
+  const orphanSess = stats?.orphanSessionsCount ?? 0;
+  const orphanThr = stats?.orphanThreadsCount ?? 0;
+  const orphanCont = stats?.orphanContactsCount ?? 0;
+  const anyOrphan = orphanSess > 0 || orphanThr > 0 || orphanCont > 0;
 
   return (
     <div className="m-2 p-2 rounded-md border bg-amber-50 text-amber-900 border-amber-200 text-xs space-y-1.5">
@@ -240,23 +258,33 @@ function DiagnosticsPanel() {
         <span>{isLoading ? "..." : sessionsCount}</span>
         <span className="text-amber-700">💬 Chats:</span>
         <span>{isLoading ? "..." : threadsCount}</span>
+        <span className="text-amber-700">👤 Contactos:</span>
+        <span>{isLoading ? "..." : contactsCount}</span>
       </div>
-      {orphanCount > 0 && (
-        <div className="pt-1">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="w-full text-[11px] h-7 gap-1"
-            onClick={() => syncMut.mutate()}
-            disabled={syncMut.isPending}
-          >
-            <RefreshCw className={`h-3 w-3 ${syncMut.isPending ? "animate-spin" : ""}`} />
-            Sincronizar {orphanCount} sesión(es) a esta Org
-          </Button>
+      {anyOrphan && (
+        <div className="pt-1 space-y-1">
+          {orphanSess > 0 && (
+            <Button variant="destructive" size="sm" className="w-full text-[11px] h-7 gap-1" onClick={() => syncSess.mutate()} disabled={syncSess.isPending}>
+              <RefreshCw className={`h-3 w-3 ${syncSess.isPending ? "animate-spin" : ""}`} />
+              Sincronizar {orphanSess} sesión(es)
+            </Button>
+          )}
+          {orphanThr > 0 && (
+            <Button variant="destructive" size="sm" className="w-full text-[11px] h-7 gap-1" onClick={() => syncThr.mutate()} disabled={syncThr.isPending}>
+              <RefreshCw className={`h-3 w-3 ${syncThr.isPending ? "animate-spin" : ""}`} />
+              Sincronizar {orphanThr} chat(s)
+            </Button>
+          )}
+          {orphanCont > 0 && (
+            <Button variant="destructive" size="sm" className="w-full text-[11px] h-7 gap-1" onClick={() => syncCont.mutate()} disabled={syncCont.isPending}>
+              <RefreshCw className={`h-3 w-3 ${syncCont.isPending ? "animate-spin" : ""}`} />
+              Sincronizar {orphanCont} contacto(s)
+            </Button>
+          )}
         </div>
       )}
-      {orphanCount === 0 && !isLoading && (
-        <p className="text-[10px] text-amber-600">No hay sesiones huérfanas detectadas.</p>
+      {!anyOrphan && !isLoading && (
+        <p className="text-[10px] text-amber-600">Todo sincronizado. No hay datos huérfanos.</p>
       )}
     </div>
   );
