@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { listSessions, createSession } from "@/lib/sessions.functions";
+import { listSessions, createSession, updateSessionMe } from "@/lib/sessions.functions";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,9 @@ function SessionsPage() {
               </div>
               <Badge variant={s.status === "connected" ? "default" : "secondary"}>{s.status}</Badge>
             </div>
+
+            <MeNumberRow sessionId={s.id} initial={s.me_wa_id ?? ""} />
+
             <div className="rounded-md bg-muted p-3 text-xs font-mono space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">Backend URL</span>
@@ -79,6 +82,38 @@ function SessionsPage() {
             </div>
           </Card>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function MeNumberRow({ sessionId, initial }: { sessionId: string; initial: string }) {
+  const updateFn = useServerFn(updateSessionMe);
+  const qc = useQueryClient();
+  const [value, setValue] = useState(initial);
+  const mut = useMutation({
+    mutationFn: (v: string) => updateFn({ data: { sessionId, meWaId: v || null } }),
+    onSuccess: () => {
+      toast.success("Número guardado");
+      qc.invalidateQueries({ queryKey: ["wa-sessions"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-muted-foreground">
+        Mi número de WhatsApp (el que envía). Solo dígitos con código de país, ej: 573001234567
+      </label>
+      <div className="flex gap-2">
+        <Input
+          placeholder="573001234567"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          inputMode="numeric"
+        />
+        <Button onClick={() => mut.mutate(value)} disabled={mut.isPending}>
+          Guardar
+        </Button>
       </div>
     </div>
   );
