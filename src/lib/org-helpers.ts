@@ -10,6 +10,48 @@ export async function getUserOrg(userId: string): Promise<string | null> {
   return data?.org_id ?? null;
 }
 
+async function fetchOrphanIds(table: string, orgId: string): Promise<string[]> {
+  const nullRes = await supabaseAdmin.from(table).select("id").is("org_id", null);
+  const diffRes = await supabaseAdmin.from(table).select("id").neq("org_id", orgId);
+  const nullIds = (nullRes.data ?? []).map((r: { id: string }) => r.id);
+  const diffIds = (diffRes.data ?? []).map((r: { id: string }) => r.id);
+  return Array.from(new Set([...nullIds, ...diffIds]));
+}
+
+async function syncOrphanDataToOrg(userId: string, orgId: string) {
+  console.log(`[SYNC] Reasignando datos huérfanos a org ${orgId} para usuario ${userId}`);
+
+  const sessionIds = await fetchOrphanIds("wa_sessions", orgId);
+  if (sessionIds.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("wa_sessions")
+      .update({ org_id: orgId })
+      .in("id", sessionIds);
+    if (error) console.error(`[SYNC ERROR] wa_sessions:`, error.message);
+    else console.log(`[SYNC] ${sessionIds.length} wa_sessions reasignadas a org ${orgId}`);
+  }
+
+  const threadIds = await fetchOrphanIds("threads", orgId);
+  if (threadIds.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("threads")
+      .update({ org_id: orgId })
+      .in("id", threadIds);
+    if (error) console.error(`[SYNC ERROR] threads:`, error.message);
+    else console.log(`[SYNC] ${threadIds.length} threads reasignadas a org ${orgId}`);
+  }
+
+  const contactIds = await fetchOrphanIds("contacts", orgId);
+  if (contactIds.length > 0) {
+    const { error } = await supabaseAdmin
+      .from("contacts")
+      .update({ org_id: orgId })
+      .in("id", contactIds);
+    if (error) console.error(`[SYNC ERROR] contacts:`, error.message);
+    else console.log(`[SYNC] ${contactIds.length} contacts reasignados a org ${orgId}`);
+  }
+}
+
 export async function ensureUserOrg(userId: string): Promise<string> {
   let orgId = await getUserOrg(userId);
   if (orgId) return orgId;
@@ -18,7 +60,7 @@ export async function ensureUserOrg(userId: string): Promise<string> {
 
   const { data: org, error: orgError } = await supabaseAdmin
     .from("organizations")
-    .insert({ name: "Mi Empresa", plan: "free" })
+    .insert({ name: "Mi Empresa" })
     .select("id")
     .single();
 
@@ -39,5 +81,9 @@ export async function ensureUserOrg(userId: string): Promise<string> {
   }
 
   console.log(`[AUTO-HEAL] Org ${orgId} + rol owner creados para ${userId}`);
+
+  // Fase 2: Arrastrar datos huérfanos a la nueva org
+  await syncOrphanDataToOrg(userId, orgId);
+
   return orgId;
 }

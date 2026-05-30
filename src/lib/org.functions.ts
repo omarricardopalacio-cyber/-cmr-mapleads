@@ -48,3 +48,64 @@ export const ensureOrg = createServerFn({ method: "POST" })
 
     return { orgId: org.id, role: "owner" as const, name: org.name };
   });
+
+export const getOrgStats = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { userId } = context;
+    const { data: role } = await supabaseAdmin
+      .from("user_roles")
+      .select("org_id")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+    const orgId = role?.org_id ?? null;
+
+    if (!orgId) {
+      return { orgId: null, sessionsCount: 0, threadsCount: 0, orphanSessionsCount: 0 };
+    }
+
+    const [sessionsRes, threadsRes, orphanNullRes, orphanDiffRes] = await Promise.all([
+      supabaseAdmin.from("wa_sessions").select("id", { count: "exact", head: true }).eq("org_id", orgId),
+      supabaseAdmin.from("threads").select("id", { count: "exact", head: true }).eq("org_id", orgId),
+      supabaseAdmin.from("wa_sessions").select("id", { count: "exact", head: true }).is("org_id", null),
+      supabaseAdmin.from("wa_sessions").select("id", { count: "exact", head: true }).neq("org_id", orgId),
+    ]);
+
+    return {
+      orgId,
+      sessionsCount: sessionsRes.count ?? 0,
+      threadsCount: threadsRes.count ?? 0,
+      orphanSessionsCount: (orphanNullRes.count ?? 0) + (orphanDiffRes.count ?? 0),
+    };
+  });
+
+export const syncWaSessions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { userId } = context;
+    const { data: role } = await supabaseAdmin
+      .from("user_roles")
+      .select("org_id")
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+    const orgId = role?.org_id ?? null;
+    if (!orgId) throw new Error("No organization found");
+
+    const nullRes = await supabaseAdmin.from("wa_sessions").select("id").is("org_id", null);
+    const diffRes = await supabaseAdmin.from("wa_sessions").select("id").neq("org_id", orgId);
+    const ids = Array.from(new Set([
+      ...(nullRes.data ?? []).map((r: { id: string }) => r.id),
+      ...(diffRes.data ?? []).map((r: { id: string }) => r.id),
+    ]));
+
+    if (ids.length === 0) return { synced: 0 };
+
+    const { error } = await supabaseAdmin
+      .from("wa_sessions")
+      .update({ org_id: orgId })
+      .in("id", ids);
+    if (error) throw new Error(error.message);
+    return { synced: ids.length };
+  });

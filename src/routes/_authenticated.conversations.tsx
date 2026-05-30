@@ -5,6 +5,7 @@ import { useState } from "react";
 import { listThreads } from "@/lib/crm.functions";
 import { clearAllChats, sendDirectMessage } from "@/lib/messaging.functions";
 import { listSessions } from "@/lib/sessions.functions";
+import { getOrgStats, syncWaSessions } from "@/lib/org.functions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,7 +28,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search, Trash2, Inbox, User, Users } from "lucide-react";
+import { Plus, Search, Trash2, Inbox, User, Users, AlertTriangle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/conversations")({
@@ -100,6 +101,7 @@ function ConversationsLayout() {
           </AlertDialog>
           <NewChatDialog />
         </div>
+        <DiagnosticsPanel />
         <div className="p-2 border-b space-y-2">
           <Tabs value={filterTab} onValueChange={(v) => setFilterTab(v as "all" | "mine" | "unassigned")} className="w-full">
             <TabsList className="grid w-full grid-cols-3 h-8">
@@ -194,6 +196,68 @@ function ConversationsLayout() {
       <main className="flex-1 hidden md:flex flex-col bg-muted/10">
         <Outlet />
       </main>
+    </div>
+  );
+}
+
+function DiagnosticsPanel() {
+  const statsFn = useServerFn(getOrgStats);
+  const syncFn = useServerFn(syncWaSessions);
+  const qc = useQueryClient();
+
+  const { data: stats, isLoading } = useQuery({
+    queryKey: ["orgStats"],
+    queryFn: () => statsFn({}),
+    refetchInterval: 10000,
+  });
+
+  const syncMut = useMutation({
+    mutationFn: () => syncFn({}),
+    onSuccess: (res) => {
+      toast.success(`${res.synced} sesiones sincronizadas a tu organización`);
+      qc.invalidateQueries({ queryKey: ["orgStats"] });
+      qc.invalidateQueries({ queryKey: ["threads"] });
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const orgId = stats?.orgId ?? "—";
+  const sessionsCount = stats?.sessionsCount ?? 0;
+  const threadsCount = stats?.threadsCount ?? 0;
+  const orphanCount = stats?.orphanSessionsCount ?? 0;
+
+  return (
+    <div className="m-2 p-2 rounded-md border bg-amber-50 text-amber-900 border-amber-200 text-xs space-y-1.5">
+      <div className="flex items-center gap-1.5 font-semibold">
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+        Diagnóstico de Conexión
+      </div>
+      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+        <span className="text-amber-700">🔑 Org ID:</span>
+        <span className="font-mono truncate">{orgId}</span>
+        <span className="text-amber-700">📡 Sesiones:</span>
+        <span>{isLoading ? "..." : sessionsCount}</span>
+        <span className="text-amber-700">💬 Chats:</span>
+        <span>{isLoading ? "..." : threadsCount}</span>
+      </div>
+      {orphanCount > 0 && (
+        <div className="pt-1">
+          <Button
+            variant="destructive"
+            size="sm"
+            className="w-full text-[11px] h-7 gap-1"
+            onClick={() => syncMut.mutate()}
+            disabled={syncMut.isPending}
+          >
+            <RefreshCw className={`h-3 w-3 ${syncMut.isPending ? "animate-spin" : ""}`} />
+            Sincronizar {orphanCount} sesión(es) a esta Org
+          </Button>
+        </div>
+      )}
+      {orphanCount === 0 && !isLoading && (
+        <p className="text-[10px] text-amber-600">No hay sesiones huérfanas detectadas.</p>
+      )}
     </div>
   );
 }
