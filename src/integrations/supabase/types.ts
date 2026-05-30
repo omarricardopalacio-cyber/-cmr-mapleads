@@ -14,45 +14,99 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_actions_log: {
+        Row: {
+          action_details: string
+          action_name: string
+          created_at: string
+          id: string
+          org_id: string
+          thread_id: string
+        }
+        Insert: {
+          action_details: string
+          action_name: string
+          created_at?: string
+          id?: string
+          org_id: string
+          thread_id: string
+        }
+        Update: {
+          action_details?: string
+          action_name?: string
+          created_at?: string
+          id?: string
+          org_id?: string
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_actions_log_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_actions_log_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_configs: {
         Row: {
           enabled: boolean
           knowledge_base: string
           model: string
+          openai_api_key: string | null
           org_id: string
           provider: string
           respond_to: string
+          selected_provider: string | null
           system_prompt: string
           updated_at: string
           vertex_location: string | null
           vertex_model: string | null
           vertex_project: string | null
+          vertex_service_account_json: string | null
+          grok_api_key: string | null
         }
         Insert: {
           enabled?: boolean
           knowledge_base?: string
           model?: string
+          openai_api_key?: string | null
           org_id: string
           provider?: string
           respond_to?: string
+          selected_provider?: string | null
           system_prompt?: string
           updated_at?: string
           vertex_location?: string | null
           vertex_model?: string | null
           vertex_project?: string | null
+          vertex_service_account_json?: string | null
+          grok_api_key?: string | null
         }
         Update: {
           enabled?: boolean
           knowledge_base?: string
           model?: string
+          openai_api_key?: string | null
           org_id?: string
           provider?: string
           respond_to?: string
+          selected_provider?: string | null
           system_prompt?: string
           updated_at?: string
           vertex_location?: string | null
           vertex_model?: string | null
           vertex_project?: string | null
+          vertex_service_account_json?: string | null
+          grok_api_key?: string | null
         }
         Relationships: [
           {

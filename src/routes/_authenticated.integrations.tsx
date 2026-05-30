@@ -41,6 +41,17 @@ const VERTEX_MODELS = [
   "gemini-1.5-pro-002",
 ];
 
+const OPENAI_MODELS = [
+  { id: "gpt-4o", label: "GPT-4o" },
+  { id: "gpt-4o-mini", label: "GPT-4o Mini" },
+  { id: "gpt-4-turbo", label: "GPT-4 Turbo" },
+];
+
+const GROK_MODELS = [
+  { id: "grok-3", label: "Grok 3" },
+  { id: "grok-3-mini", label: "Grok 3 Mini" },
+];
+
 function IntegrationsPage() {
   const qc = useQueryClient();
   const fetchCfg = useServerFn(getAiConfig);
@@ -75,6 +86,7 @@ function IntegrationsPage() {
         data: {
           enabled: !!form.enabled,
           provider: form.provider,
+          selected_provider: form.selected_provider || form.provider,
           model: form.model,
           system_prompt: form.system_prompt ?? "",
           knowledge_base: form.knowledge_base ?? "",
@@ -82,6 +94,9 @@ function IntegrationsPage() {
           vertex_project: form.vertex_project ?? null,
           vertex_location: form.vertex_location ?? "us-central1",
           vertex_model: form.vertex_model ?? "gemini-2.5-flash",
+          openai_api_key: form.openai_api_key ?? null,
+          grok_api_key: form.grok_api_key ?? null,
+          vertex_service_account_json: form.vertex_service_account_json ?? null,
         },
       });
       toast.success("Configuración guardada");
@@ -106,7 +121,8 @@ function IntegrationsPage() {
     }
   };
 
-  const vertexReady = !!data?.hasVertexSecret;
+  const vertexReady = !!(form.vertex_service_account_json || data?.hasVertexSecret);
+  const selectedProvider = form.selected_provider || form.provider || "lovable";
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -131,13 +147,21 @@ function IntegrationsPage() {
       </Card>
 
       <Tabs
-        value={form.provider}
-        onValueChange={(v) => update({ provider: v })}
+        value={selectedProvider}
+        onValueChange={(v) => update({ selected_provider: v, provider: v })}
       >
-        <TabsList className="grid grid-cols-2 w-full max-w-md">
+        <TabsList className="grid grid-cols-4 w-full max-w-xl">
           <TabsTrigger value="lovable">
             Lovable AI
             <Badge variant="secondary" className="ml-2">listo</Badge>
+          </TabsTrigger>
+          <TabsTrigger value="openai">
+            OpenAI
+            <Badge variant="secondary" className="ml-2">API</Badge>
+          </TabsTrigger>
+          <TabsTrigger value="grok">
+            Grok
+            <Badge variant="secondary" className="ml-2">xAI</Badge>
           </TabsTrigger>
           <TabsTrigger value="vertex">
             Vertex AI
@@ -175,16 +199,80 @@ function IntegrationsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="openai" className="space-y-3 mt-4">
+          <Card className="p-5 space-y-3">
+            <div className="text-sm text-muted-foreground">
+              Conecta directamente con la API de OpenAI usando tu propia API Key.
+            </div>
+            <div>
+              <Label>API Key de OpenAI</Label>
+              <Input
+                type="password"
+                value={form.openai_api_key ?? ""}
+                onChange={(e) => update({ openai_api_key: e.target.value })}
+                placeholder="sk-..."
+              />
+            </div>
+            <div>
+              <Label>Modelo</Label>
+              <Select value={form.model} onValueChange={(v) => update({ model: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {OPENAI_MODELS.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="grok" className="space-y-3 mt-4">
+          <Card className="p-5 space-y-3">
+            <div className="text-sm text-muted-foreground">
+              Conecta directamente con la API de xAI (Grok) usando tu propia API Key.
+            </div>
+            <div>
+              <Label>API Key de xAI</Label>
+              <Input
+                type="password"
+                value={form.grok_api_key ?? ""}
+                onChange={(e) => update({ grok_api_key: e.target.value })}
+                placeholder="xai-..."
+              />
+            </div>
+            <div>
+              <Label>Modelo</Label>
+              <Select value={form.model} onValueChange={(v) => update({ model: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {GROK_MODELS.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="vertex" className="space-y-3 mt-4">
           <Card className="p-5 space-y-3">
             {!vertexReady && (
               <div className="rounded-md border border-orange-500/40 bg-orange-500/10 p-3 text-sm">
-                Para usar Vertex AI necesitas configurar el secreto{" "}
-                <code className="font-mono">VERTEX_SERVICE_ACCOUNT_JSON</code> con el JSON
-                de una cuenta de servicio de Google Cloud con rol{" "}
-                <code>Vertex AI User</code>. Pídeselo a Lovable para añadirlo a tu proyecto.
+                Para usar Vertex AI pega el JSON de tu cuenta de servicio de Google Cloud
+                en el campo de abajo. Necesita rol <code>Vertex AI User</code>.
               </div>
             )}
+            <div>
+              <Label>JSON de cuenta de servicio (Google Cloud)</Label>
+              <Textarea
+                rows={8}
+                value={form.vertex_service_account_json ?? ""}
+                onChange={(e) => update({ vertex_service_account_json: e.target.value })}
+                placeholder={`Pega aqui el contenido de tu archivo JSON de cuenta de servicio de Google Cloud...`}
+                className="font-mono text-xs"
+              />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>GCP Project ID</Label>

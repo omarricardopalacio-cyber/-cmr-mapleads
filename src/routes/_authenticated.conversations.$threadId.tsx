@@ -18,6 +18,7 @@ import {
   createReminder,
   completeReminder,
 } from "@/lib/reminders.functions";
+import { listAiActions } from "@/lib/ai.functions";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ import {
   FileText,
   Loader2,
   User,
+  Bot,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
@@ -557,16 +559,16 @@ function ThreadPage() {
         </form>
       </div>
 
-      {data?.thread?.contactId && (
+      {data?.thread?.contactId && data?.thread?.id && (
         <aside className="w-80 border-l bg-card hidden lg:flex flex-col">
-          <ContactContextPanel contactId={data.thread.contactId} />
+          <ContactContextPanel contactId={data.thread.contactId} threadId={data.thread.id} />
         </aside>
       )}
     </div>
   );
 }
 
-function ContactContextPanel({ contactId }: { contactId: string }) {
+function ContactContextPanel({ contactId, threadId }: { contactId: string; threadId: string }) {
   const qc = useQueryClient();
 
   // Tags hooks
@@ -673,6 +675,14 @@ function ContactContextPanel({ contactId }: { contactId: string }) {
   const [reminderAt, setReminderAt] = useState("");
   const [reminderOpen, setReminderOpen] = useState(false);
 
+  // AI Actions hooks
+  const listAiActionsFn = useServerFn(listAiActions);
+  const { data: aiActionsData } = useQuery({
+    queryKey: ["ai-actions", threadId],
+    queryFn: () => listAiActionsFn({ data: { threadId } }),
+    enabled: !!threadId,
+  });
+
   interface TagItem { id: string; name: string; color: string; }
   interface NoteItem { id: string; content: string; created_at: string; user_id: string | null; }
   interface ReminderItem { id: string; note: string; reminder_at: string; is_completed: boolean; created_at: string; }
@@ -687,7 +697,7 @@ function ContactContextPanel({ contactId }: { contactId: string }) {
 
   return (
     <Tabs defaultValue="tags" className="flex flex-col h-full">
-      <TabsList className="mx-3 mt-3 grid grid-cols-3">
+      <TabsList className="mx-3 mt-3 grid grid-cols-4">
         <TabsTrigger value="tags" className="text-xs">
           <Tag className="h-3.5 w-3.5 mr-1" />
           Etiquetas
@@ -699,6 +709,10 @@ function ContactContextPanel({ contactId }: { contactId: string }) {
         <TabsTrigger value="reminders" className="text-xs">
           <Clock className="h-3.5 w-3.5 mr-1" />
           Recordatorios
+        </TabsTrigger>
+        <TabsTrigger value="ai" className="text-xs">
+          <Bot className="h-3.5 w-3.5 mr-1" />
+          Asistente
         </TabsTrigger>
       </TabsList>
 
@@ -904,6 +918,37 @@ function ContactContextPanel({ contactId }: { contactId: string }) {
                     </div>
                   </CardContent>
                 </Card>
+              )
+            )}
+          </div>
+        </ScrollArea>
+      </TabsContent>
+
+      <TabsContent value="ai" className="flex-1 flex flex-col m-0 overflow-hidden">
+        <ScrollArea className="flex-1 p-3">
+          <div className="space-y-3">
+            {(aiActionsData?.logs ?? []).length === 0 && (
+              <p className="text-xs text-muted-foreground text-center">Sin acciones del asistente</p>
+            )}
+            {(aiActionsData?.logs ?? []).map(
+              (log: {
+                id: string;
+                action_name: string;
+                action_details: string;
+                created_at: string;
+              }) => (
+                <div key={log.id} className="rounded-md border bg-muted/40 p-2.5 space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Bot className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {log.action_name}
+                    </span>
+                  </div>
+                  <p className="text-xs">{log.action_details}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {new Date(log.created_at).toLocaleString()}
+                  </p>
+                </div>
               )
             )}
           </div>

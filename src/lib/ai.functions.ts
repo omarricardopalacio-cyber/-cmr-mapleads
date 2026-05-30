@@ -18,6 +18,7 @@ async function getUserOrg(userId: string) {
 const DEFAULT_CFG = {
   enabled: false,
   provider: "lovable" as const,
+  selected_provider: "lovable" as const,
   model: "google/gemini-2.5-flash",
   system_prompt: "Eres un asistente de ventas amable y conciso. Responde en español.",
   knowledge_base: "",
@@ -25,6 +26,9 @@ const DEFAULT_CFG = {
   vertex_project: "",
   vertex_location: "us-central1",
   vertex_model: "gemini-2.5-flash",
+  openai_api_key: "",
+  grok_api_key: "",
+  vertex_service_account_json: "",
 };
 
 export const getAiConfig = createServerFn({ method: "GET" })
@@ -36,13 +40,14 @@ export const getAiConfig = createServerFn({ method: "GET" })
       .select("*")
       .eq("org_id", orgId)
       .maybeSingle();
-    const hasVertexSecret = !!process.env.VERTEX_SERVICE_ACCOUNT_JSON;
+    const hasVertexSecret = !!(data?.vertex_service_account_json || process.env.VERTEX_SERVICE_ACCOUNT_JSON);
     return { config: data ?? { org_id: orgId, ...DEFAULT_CFG }, hasVertexSecret };
   });
 
 const SaveSchema = z.object({
   enabled: z.boolean(),
-  provider: z.enum(["lovable", "vertex"]),
+  provider: z.enum(["lovable", "vertex", "openai", "grok"]),
+  selected_provider: z.enum(["lovable", "vertex", "openai", "grok"]).optional(),
   model: z.string().min(1).max(100),
   system_prompt: z.string().max(8000),
   knowledge_base: z.string().max(50000),
@@ -50,6 +55,9 @@ const SaveSchema = z.object({
   vertex_project: z.string().max(100).nullable().optional(),
   vertex_location: z.string().max(50).nullable().optional(),
   vertex_model: z.string().max(100).nullable().optional(),
+  openai_api_key: z.string().max(500).nullable().optional(),
+  grok_api_key: z.string().max(500).nullable().optional(),
+  vertex_service_account_json: z.string().max(20000).nullable().optional(),
 });
 
 export const saveAiConfig = createServerFn({ method: "POST" })
@@ -77,4 +85,20 @@ export const testAiReply = createServerFn({ method: "POST" })
     if (!cfg) throw new Error("Configura la IA primero");
     const reply = await generateReply(cfg as any, data.message);
     return { reply };
+  });
+
+export const listAiActions = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ threadId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data: logs, error } = await supabaseAdmin
+      .from("ai_actions_log")
+      .select("id, action_name, action_details, created_at")
+      .eq("org_id", orgId)
+      .eq("thread_id", data.threadId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) throw new Error(error.message);
+    return { logs: (logs ?? []) as Array<{ id: string; action_name: string; action_details: string; created_at: string }> };
   });
