@@ -21,7 +21,7 @@ export const listMessages = createServerFn({ method: "GET" })
     const orgId = await getUserOrg(context.userId);
     const { data: thread } = await supabaseAdmin
       .from("threads")
-      .select("id, contact_id, session_id, contacts(display_name, wa_id)")
+      .select("id, contact_id, session_id, contacts(display_name, wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
@@ -37,7 +37,10 @@ export const listMessages = createServerFn({ method: "GET" })
       thread: {
         id: thread.id,
         sessionId: thread.session_id,
-        contact: { displayName: contact?.display_name ?? null, waId: contact?.wa_id ?? null },
+        contact: {
+          displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id ?? null,
+          waId: contact?.wa_id ?? null,
+        },
       },
       messages: messages ?? [],
     };
