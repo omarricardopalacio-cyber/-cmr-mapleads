@@ -15,6 +15,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -58,19 +69,32 @@ function ConversationsLayout() {
       <aside className="w-full md:w-80 lg:w-96 border-r flex flex-col bg-card">
         <div className="p-3 border-b flex items-center gap-2">
           <h1 className="font-semibold flex-1">Chats</h1>
-          <Button
-            size="icon"
-            variant="ghost"
-            title="Borrar todos los chats"
-            disabled={clearAllMut.isPending}
-            onClick={() => {
-              if (confirm("¿Seguro que quieres borrar todos los chats y empezar de nuevo?")) {
-                clearAllMut.mutate();
-              }
-            }}
-          >
-            <Trash2 className="h-4 w-4 text-destructive" />
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                title="Borrar todos los chats"
+                disabled={clearAllMut.isPending}
+              >
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Borrar todos los chats</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Esto eliminará conversaciones, mensajes y contactos guardados para empezar de cero.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={() => clearAllMut.mutate()}>
+                  Sí, borrar todo
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <NewChatDialog />
         </div>
         <div className="p-2 border-b">
