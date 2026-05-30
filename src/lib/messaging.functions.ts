@@ -58,8 +58,11 @@ export const sendMessage = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
-    const chatId = contact?.wa_id;
-    if (!chatId) throw new Error("Contact missing wa_id");
+    const waId = contact?.wa_id;
+    if (!waId) throw new Error("Contact missing wa_id");
+    // Build a proper chatId. If wa_id is just digits, suffix @c.us.
+    const chatId = /@/.test(waId) ? waId : `${waId}@c.us`;
+
 
     const { data: cmd, error } = await supabaseAdmin
       .from("engine_commands")
