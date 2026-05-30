@@ -96,6 +96,19 @@ function ThreadPage() {
             {data?.thread.contact.waId}
           </div>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Borrar todos los mensajes"
+          onClick={() => {
+            if (confirm("¿Seguro que quieres borrar todos los mensajes de este chat?")) {
+              clearMut.mutate();
+            }
+          }}
+          disabled={clearMut.isPending}
+        >
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
       </div>
 
       <div
