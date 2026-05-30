@@ -102,7 +102,8 @@ function ConversationsLayout() {
           </AlertDialog>
           <NewChatDialog />
         </div>
-        <DiagnosticsPanel />
+        {/* DiagnosticsPanel oculto temporalmente */}
+        {/* <DiagnosticsPanel /> */}
         <div className="p-2 border-b space-y-2">
           <Tabs value={filterTab} onValueChange={(v) => setFilterTab(v as "all" | "mine" | "unassigned")} className="w-full">
             <TabsList className="grid w-full grid-cols-3 h-8">
