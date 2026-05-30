@@ -29,6 +29,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Plus, Search, Trash2, Inbox, User, Users, AlertTriangle, RefreshCw } from "lucide-react";
+import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/conversations")({
@@ -127,11 +128,11 @@ function ConversationsLayout() {
               Sin conversaciones. Pulsa + para iniciar una.
             </p>
           )}
-          {threads.map((t) => {
+          {threads.map((t, idx) => {
             const c = Array.isArray(t.contacts) ? t.contacts[0] : t.contacts;
             const active = activeId === t.id;
-            const contactLabel = c?.display_name || c?.phone || (c?.wa_id ? c.wa_id.replace(/@lid$/, "") : "Contacto");
-            const contactMeta = c?.phone || c?.wa_id || "—";
+            const contactLabel = getContactDisplayName(c as any, idx + 1);
+            const contactMeta = formatPhoneOrWaId(c as any);
             const rawTags = Array.isArray(c?.contact_tags) ? c.contact_tags : [];
             const contactTags = rawTags
               .filter((x: { tags?: { id: string; name: string; color: string } }) => x?.tags)

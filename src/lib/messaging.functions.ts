@@ -34,6 +34,7 @@ export const listMessages = createServerFn({ method: "GET" })
     }
 
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
+    console.log("[listMessages] thread:", thread.id, "contact:", contact?.display_name ?? contact?.wa_id ?? "none", "messages:", (messages ?? []).length);
     return {
       thread: {
         id: thread.id,
@@ -41,8 +42,9 @@ export const listMessages = createServerFn({ method: "GET" })
         contactId: thread.contact_id,
         aiEnabled: (thread as any).ai_enabled ?? true,
         contact: {
-          displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id ?? null,
+          displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id?.replace(/@lid$/, "").replace(/@c\.us$/, "") ?? null,
           waId: contact?.wa_id ?? null,
+          phone: contact?.phone ?? null,
         },
       },
       messages: (messages ?? []) as Array<{

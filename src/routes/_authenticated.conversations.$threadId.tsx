@@ -72,6 +72,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
+import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/conversations/$threadId")({
   component: ThreadPage,
@@ -99,12 +100,15 @@ function ThreadPage() {
 
   const { data: qrData } = useQuery({ queryKey: ["quickReplies"], queryFn: () => listQr({}) });
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => list({ data: { threadId } }),
     refetchInterval: 5000,
     retry: false,
   });
+
+  // eslint-disable-next-line no-console
+  console.log("[DEBUG] Thread ID:", threadId, "Loading:", isLoading, "Error:", error, "Data messages:", (data?.messages ?? []).length);
 
   const aiEnabled = (data as unknown as Record<string, unknown>)?.thread?.aiEnabled ?? true;
 
@@ -231,16 +235,14 @@ function ThreadPage() {
             </Link>
           </Button>
           <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium">
-            {(data?.thread?.contact?.displayName || data?.thread?.contact?.waId || "?")
-              .slice(0, 1)
-              .toUpperCase()}
+            {getContactDisplayName(data?.thread?.contact ?? null).slice(0, 1).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-medium truncate">
-              {data?.thread?.contact?.displayName || data?.thread?.contact?.waId || "Conversación"}
+              {getContactDisplayName(data?.thread?.contact ?? null)}
             </div>
             <div className="text-xs text-muted-foreground font-mono truncate">
-              {data?.thread?.contact?.waId ?? ""}
+              {formatPhoneOrWaId(data?.thread?.contact ?? null)}
             </div>
           </div>
           <div className="flex items-center gap-2">

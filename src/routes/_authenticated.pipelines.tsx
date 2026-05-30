@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChevronLeft, ChevronRight, Phone } from "lucide-react";
 import { toast } from "sonner";
+import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/pipelines")({
   component: PipelinesPage,
@@ -88,8 +89,8 @@ function PipelinesPage() {
                   {stageContacts.length === 0 && (
                     <div className="text-xs text-muted-foreground text-center py-8">Sin contactos</div>
                   )}
-                  {stageContacts.map((c) => {
-                    const label = c.display_name || c.phone || c.wa_id || "Contacto";
+                  {stageContacts.map((c, idx) => {
+                    const label = getContactDisplayName(c, idx + 1);
                     const tags = (c.contact_tags ?? [])
                       .filter((x) => x?.tags)
                       .map((x) => x.tags!);
@@ -104,7 +105,7 @@ function PipelinesPage() {
                               <div className="text-sm font-medium truncate">{label}</div>
                               <div className="text-[10px] text-muted-foreground font-mono truncate flex items-center gap-1">
                                 <Phone className="h-2.5 w-2.5" />
-                                {c.phone || c.wa_id || "—"}
+                                {formatPhoneOrWaId(c)}
                               </div>
                             </div>
                           </div>
