@@ -55,16 +55,15 @@ export const sendMessage = createServerFn({ method: "POST" })
     const orgId = await getUserOrg(context.userId);
     const { data: thread } = await supabaseAdmin
       .from("threads")
-      .select("id, session_id, contacts(wa_id)")
+      .select("id, session_id, contacts(wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
-    const waId = contact?.wa_id;
-    if (!waId) throw new Error("Contact missing wa_id");
-    // Build a proper chatId. If wa_id is just digits, suffix @c.us.
-    const chatId = /@/.test(waId) ? waId : `${waId}@c.us`;
+    const target = contact?.phone ?? contact?.wa_id;
+    if (!target) throw new Error("Contact missing wa_id");
+    const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
 
     const { data: cmd, error } = await supabaseAdmin
