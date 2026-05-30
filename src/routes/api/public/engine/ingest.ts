@@ -145,7 +145,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   contact_id: contact.id,
                   last_message_at: e.sentAt ?? new Date().toISOString(),
                 },
-                { onConflict: 'org_id,session_id,contact_id' },
+                { onConflict: 'session_id,contact_id' },
               )
               .select('id')
               .single()
