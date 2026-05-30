@@ -40,6 +40,7 @@ const items = [
   { title: "Automatizaciones", url: "/automations", icon: Zap },
   { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
   { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
+  { title: "Integraciones IA", url: "/integrations", icon: Sparkles },
 ] as const;
 
 function AppSidebar() {
