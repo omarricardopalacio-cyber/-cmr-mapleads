@@ -20,19 +20,30 @@ export const listMessages = createServerFn({ method: "GET" })
   .inputValidator((d) => z.object({ threadId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data: thread } = await supabaseAdmin
+    if (!orgId) throw new Error("Organization not found");
+
+    const { data: thread, error: threadErr } = await supabaseAdmin
       .from("threads")
       .select("id, contact_id, session_id, ai_enabled, contacts(display_name, wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
+    if (threadErr) {
+      console.error("[listMessages] thread query error:", threadErr.message);
+      throw new Error(`Thread query failed: ${threadErr.message}`);
+    }
     if (!thread) throw new Error("Thread not found");
-    const { data: messages } = await supabaseAdmin
+
+    const { data: messages, error: msgErr } = await supabaseAdmin
       .from("messages")
       .select("id, direction, text, sent_at, media")
       .eq("thread_id", data.threadId)
       .order("sent_at", { ascending: true })
       .limit(500);
+    if (msgErr) {
+      console.error("[listMessages] messages query error:", msgErr.message);
+    }
+
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
     return {
       thread: {
@@ -45,7 +56,13 @@ export const listMessages = createServerFn({ method: "GET" })
           waId: contact?.wa_id ?? null,
         },
       },
-      messages: messages ?? [],
+      messages: (messages ?? []) as Array<{
+        id: string;
+        direction: string;
+        text: string | null;
+        sent_at: string;
+        media: Record<string, unknown> | null;
+      }>,
     };
   });
 
@@ -214,6 +231,36 @@ export const clearAllChats = createServerFn({ method: "POST" })
     if (contactsError) throw new Error(contactsError.message);
 
     return { success: true };
+  });
+
+export const uploadMedia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      base64: z.string(),
+      fileName: z.string(),
+      mimeType: z.string(),
+    }).parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    if (!orgId) throw new Error("Organization not found");
+    const path = `${orgId}/${Date.now()}_${data.fileName}`;
+    try {
+      const binaryString = atob(data.base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const { error: upErr } = await supabaseAdmin.storage
+        .from("media")
+        .upload(path, bytes, { contentType: data.mimeType, upsert: false });
+      if (upErr) throw new Error(upErr.message);
+      const { data: urlData } = supabaseAdmin.storage.from("media").getPublicUrl(path);
+      return { url: urlData.publicUrl };
+    } catch (err: unknown) {
+      throw new Error(`Upload failed: ${(err as Error).message}`);
+    }
   });
 
 

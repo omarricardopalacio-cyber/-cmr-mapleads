@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
-import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled } from "@/lib/messaging.functions";
+import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia } from "@/lib/messaging.functions";
 import { listQuickReplies } from "@/lib/automations.functions";
 import {
   listTags,
@@ -63,6 +63,10 @@ import {
   Clock,
   CheckCircle2,
   Zap,
+  Paperclip,
+  Image,
+  FileText,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
@@ -80,10 +84,14 @@ function ThreadPage() {
   const clear = useServerFn(clearThreadMessages);
   const toggleAi = useServerFn(toggleAiEnabled);
   const listQr = useServerFn(listQuickReplies);
+  const upload = useServerFn(uploadMedia);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<{ file: File; preview: string } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: qrData } = useQuery({ queryKey: ["quickReplies"], queryFn: () => listQr({}) });
   const aiEnabled = data?.thread?.aiEnabled ?? true;
@@ -101,7 +109,7 @@ function ThreadPage() {
   });
 
   useEffect(() => {
-    if (!isLoading && !data) navigate({ to: "/conversations" });
+    if (!isLoading && data === null) navigate({ to: "/conversations" });
   }, [data, isLoading, navigate]);
 
   useEffect(() => {
@@ -122,29 +130,60 @@ function ThreadPage() {
     };
   }, [threadId, qc]);
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const preview = URL.createObjectURL(file);
+    setSelectedFile({ file, preview });
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim() || sending) return;
+    if ((!text.trim() && !selectedFile) || sending || uploading) return;
     setSending(true);
     try {
       let payloadText = text.trim();
       let mediaUrl: string | null = null;
       let mimeType: string | null = null;
+
+      if (selectedFile) {
+        setUploading(true);
+        const reader = new FileReader();
+        const base64 = await new Promise<string>((resolve, reject) => {
+          reader.onload = () => {
+            const result = reader.result as string;
+            const base64Data = result.split(",")[1];
+            resolve(base64Data);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(selectedFile.file);
+        });
+        const { url } = await upload({ data: { base64, fileName: selectedFile.file.name, mimeType: selectedFile.file.type } });
+        mediaUrl = url;
+        mimeType = selectedFile.file.type;
+        setUploading(false);
+        setSelectedFile(null);
+      }
+
       if (payloadText.startsWith("/")) {
         const shortcut = payloadText.split(" ")[0].slice(1);
         const qr = (qrData?.items ?? []).find((r: { shortcut?: string }) => r.shortcut === shortcut);
         if (qr) {
           payloadText = qr.text_content || payloadText;
-          mediaUrl = qr.media_url || null;
-          mimeType = qr.mime_type || null;
+          if (!mediaUrl) {
+            mediaUrl = qr.media_url || null;
+            mimeType = qr.mime_type || null;
+          }
         }
       }
-      await send({ data: { threadId, text: payloadText, media_url: mediaUrl, mime_type: mimeType } });
+
+      await send({ data: { threadId, text: payloadText || " ", media_url: mediaUrl, mime_type: mimeType } });
       setText("");
       setShowQr(false);
-      toast.success("Mensaje encolado");
+      toast.success(mediaUrl ? "Multimedia encolada" : "Mensaje encolado");
     } catch (err: unknown) {
       toast.error((err as Error)?.message ?? "Error al enviar");
+      setUploading(false);
     } finally {
       setSending(false);
     }
@@ -218,30 +257,61 @@ function ThreadPage() {
           }}
         >
           {isLoading && <p className="text-muted-foreground text-sm">Cargando...</p>}
-          {!isLoading && data?.messages.length === 0 && (
+          {!isLoading && (data?.messages?.length ?? 0) === 0 && (
             <p className="text-muted-foreground text-sm text-center">Sin mensajes aún.</p>
           )}
-          {data?.messages.map((m) => (
-            <div
-              key={m.id}
-              className={`max-w-[70%] rounded-lg px-3 py-2 text-sm shadow-sm ${
-                m.direction === "out"
-                  ? "ml-auto bg-primary text-primary-foreground"
-                  : "mr-auto bg-card border"
-              }`}
-            >
-              <div className="whitespace-pre-wrap break-words">
-                {m.text || <i className="opacity-60">[media]</i>}
+          {(data?.messages ?? []).map((m) => {
+            const mediaObj = (m.media as { url?: string; mimeType?: string } | null) ?? null;
+            const isImage = mediaObj?.mimeType?.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
+            return (
+              <div
+                key={m.id}
+                className={`max-w-[70%] rounded-lg px-3 py-2 text-sm shadow-sm ${
+                  m.direction === "out"
+                    ? "ml-auto bg-primary text-primary-foreground"
+                    : "mr-auto bg-card border"
+                }`}
+              >
+                <div className="whitespace-pre-wrap break-words">
+                  {isImage && mediaObj?.url ? (
+                    <img
+                      src={mediaObj.url}
+                      alt="Media"
+                      className="max-w-[250px] rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                      onClick={() => window.open(mediaObj.url, "_blank")}
+                      loading="lazy"
+                    />
+                  ) : mediaObj?.url ? (
+                    <a
+                      href={mediaObj.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 underline"
+                    >
+                      <FileText className="h-4 w-4" />
+                      <span>Ver archivo</span>
+                    </a>
+                  ) : null}
+                  {m.text ? <div className={mediaObj?.url ? "mt-2" : ""}>{m.text}</div> : null}
+                  {!m.text && !mediaObj?.url && <i className="opacity-60">[mensaje vacío]</i>}
+                </div>
+                <div className="text-[10px] opacity-70 mt-1 text-right">
+                  {m.sent_at ? new Date(m.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                </div>
               </div>
-              <div className="text-[10px] opacity-70 mt-1 text-right">
-                {new Date(m.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <form onSubmit={handleSend} className="border-t p-3 flex gap-2 bg-card relative">
-          <Popover open={showQr && !!text.startsWith("/") && (qrData?.items.length ?? 0) > 0} onOpenChange={setShowQr}>
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden"
+            accept="image/*,application/pdf"
+            onChange={handleFileSelect}
+          />
+          <Popover open={showQr && !!text.startsWith("/") && (qrData?.items?.length ?? 0) > 0} onOpenChange={setShowQr}>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -273,15 +343,36 @@ function ThreadPage() {
               </ScrollArea>
             </PopoverContent>
           </Popover>
-          <Input
-            value={text}
-            onChange={(e) => { setText(e.target.value); setShowQr(e.target.value.startsWith("/")); }}
-            placeholder="Escribe un mensaje..."
-            disabled={sending}
-            autoFocus
-          />
-          <Button type="submit" disabled={sending || !text.trim()}>
-            <Send className="h-4 w-4" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+            title="Adjuntar archivo"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
+          <div className="flex-1 relative">
+            {selectedFile && (
+              <div className="absolute -top-12 left-0 flex items-center gap-2 bg-muted rounded-md px-2 py-1 text-xs">
+                <Image className="h-3 w-3" />
+                <span className="max-w-[150px] truncate">{selectedFile.file.name}</span>
+                <button type="button" onClick={() => setSelectedFile(null)} className="hover:text-destructive">
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+            <Input
+              value={text}
+              onChange={(e) => { setText(e.target.value); setShowQr(e.target.value.startsWith("/")); }}
+              placeholder={selectedFile ? "Añade un mensaje (opcional)..." : "Escribe un mensaje..."}
+              disabled={sending || uploading}
+              autoFocus
+            />
+          </div>
+          <Button type="submit" disabled={sending || uploading || (!text.trim() && !selectedFile)}>
+            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </form>
       </div>
