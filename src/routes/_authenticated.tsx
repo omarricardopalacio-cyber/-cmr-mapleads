@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
