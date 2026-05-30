@@ -100,13 +100,25 @@ function normalizeEvent(e: z.infer<typeof EventSchema>): NormalizedEvent {
 
   let contact = e.contact
   if (!contact) {
+    // Prefer real phone number from payload when available (handles @lid chats)
+    const phoneFromPayload = p.phoneNumber ?? p.phone
     const waSource: string | undefined =
-      (direction === 'out' ? p.to : p.from) ?? p.from ?? p.to ?? (chatId as string | undefined)
+      phoneFromPayload ??
+      (direction === 'out' ? p.to : p.from) ??
+      p.from ??
+      p.to ??
+      (chatId as string | undefined)
     if (waSource) {
       const waId = String(waSource).split('@')[0]
-      if (waId) contact = { waId, displayName: p.notifyName ?? p.pushname, phone: p.phone }
+      if (waId)
+        contact = {
+          waId,
+          displayName: p.notifyName ?? p.pushname ?? p.author?.name,
+          phone: phoneFromPayload ? String(phoneFromPayload) : undefined,
+        }
     }
   }
+
 
   const commandId = e.commandId ?? p.commandId
   const ackStatus = e.ackStatus ?? p.status ?? p.ackStatus
@@ -309,9 +321,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             })
 
             if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
-              await maybeAutoReply(session.org_id, session.id, e.chatId, e.text)
-              await maybeAiReply(session.org_id, session.id, e.chatId, contact.id, thread.id, e.text)
+              // Use phone@c.us when we have a real phone (avoids @lid issues)
+              const sendChatId = e.contact?.phone
+                ? `${e.contact.phone}@c.us`
+                : /^\d+$/.test(waId)
+                  ? `${waId}@c.us`
+                  : e.chatId
+              await maybeAutoReply(session.org_id, session.id, sendChatId, e.text)
+              await maybeAiReply(session.org_id, session.id, sendChatId, contact.id, thread.id, e.text)
             }
+
           } else if (e.type === 'ack' && e.commandId) {
             await supabaseAdmin
               .from('engine_commands')
