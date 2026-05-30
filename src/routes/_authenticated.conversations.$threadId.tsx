@@ -21,6 +21,7 @@ function ThreadPage() {
   const qc = useQueryClient();
   const list = useServerFn(listMessages);
   const send = useServerFn(sendMessage);
+  const clear = useServerFn(clearThreadMessages);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
