@@ -65,6 +65,16 @@ function ThreadPage() {
     }
   };
 
+  const clearMut = useMutation({
+    mutationFn: () => clear({ data: { threadId } }),
+    onSuccess: () => {
+      toast.success("Chat limpiado");
+      qc.invalidateQueries({ queryKey: ["thread", threadId] });
+      qc.invalidateQueries({ queryKey: ["threads"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-card">
