@@ -12,7 +12,7 @@ export const listMessages = createServerFn({ method: "GET" })
     const orgId = await ensureUserOrg(context.userId);
     const { data: thread, error: threadErr } = await supabaseAdmin
       .from("threads")
-      .select("id, contact_id, session_id, ai_enabled, contacts(display_name, wa_id, phone)")
+      .select("id, contact_id, session_id, ai_enabled, contacts:contact_id(id, display_name, wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
@@ -30,6 +30,7 @@ export const listMessages = createServerFn({ method: "GET" })
       .limit(500);
     if (msgErr) {
       console.error("[listMessages] messages query error:", msgErr.message);
+      throw new Error(`Messages query failed: ${msgErr.message}`);
     }
 
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
