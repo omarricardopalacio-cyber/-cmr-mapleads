@@ -88,6 +88,25 @@ function digits(v: unknown): string | undefined {
   return s || undefined
 }
 
+function normalizeWaKey(v: unknown): string | undefined {
+  if (v == null) return undefined
+  const raw = String(v).trim()
+  if (!raw) return undefined
+  const base = raw.split('@')[0].replace(/\D/g, '')
+  if (!base) return undefined
+  return raw.includes('@lid') ? `${base}@lid` : base
+}
+
+function isLidKey(v?: string | null): boolean {
+  return Boolean(v && v.endsWith('@lid'))
+}
+
+function pickDisplayName(name: unknown, waId?: string, phone?: string): string | undefined {
+  const clean = typeof name === 'string' ? name.trim() : ''
+  if (clean && clean.toLowerCase() !== 'unknown') return clean
+  return phone ?? waId?.replace(/@lid$/, '')
+}
+
 function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null): NormalizedEvent {
   const rawType = String(e.type || '')
   const type: NormalizedEvent['type'] = TYPE_MAP[rawType] ?? 'status'
@@ -96,41 +115,25 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
   const chatId = e.chatId ?? p.chatId ?? p.from ?? p.to
   const waMessageId = e.waMessageId ?? p.waMessageId ?? p.messageId ?? p.message_id ?? p.id
 
-  // Candidate wa_ids we received in this event
-  const fromWa = digits(p.from)
-  const toWa = digits(p.to)
-  const phoneWa = digits(p.phoneNumber ?? p.phone)
-  const chatWa = digits(chatId)
-
-  // LID = anonymous WhatsApp identifier (e.g. "21917838930175@lid"), NOT a real phone.
-  // When the from/chat is a @lid, we must prefer the real phoneNumber field.
-  const fromIsLid = typeof p.from === 'string' && p.from.includes('@lid')
-  const chatIsLid = typeof chatId === 'string' && chatId.includes('@lid')
+   const fromWa = normalizeWaKey(p.from)
+   const toWa = normalizeWaKey(p.to)
+   const chatWa = normalizeWaKey(chatId)
 
   let direction: 'in' | 'out' | undefined = e.direction ?? p.direction
   if (!direction && typeof p.fromMe === 'boolean') direction = p.fromMe ? 'out' : 'in'
 
-  // If we know our own number, derive direction from from/to
   if (meWaId) {
-    if (fromWa && fromWa === meWaId) direction = 'out'
-    else if (toWa && toWa === meWaId) direction = 'in'
+     if (digits(fromWa) === meWaId) direction = 'out'
+     else if (digits(toWa) === meWaId) direction = 'in'
   }
   if (!direction) {
     if (type === 'message-in') direction = 'in'
     else if (type === 'message-out') direction = 'out'
   }
 
-  // Counterpart = the real phone of the other party (never a @lid)
-  let counterpart: string | undefined
-  if ((fromIsLid || chatIsLid) && phoneWa) {
-    counterpart = phoneWa
-  } else if (meWaId) {
-    counterpart = [phoneWa, fromWa, toWa, chatWa].find((w) => w && w !== meWaId)
-  }
-  if (!counterpart) {
-    counterpart =
-      phoneWa ?? (direction === 'out' ? toWa : fromWa) ?? fromWa ?? toWa ?? chatWa
-  }
+   const counterpart =
+     (direction === 'out' ? toWa ?? chatWa ?? fromWa : fromWa ?? chatWa ?? toWa) ?? chatWa
+   const counterpartPhone = counterpart && !isLidKey(counterpart) ? digits(counterpart) : undefined
 
   const text = e.text ?? p.text ?? p.body ?? p.content
   const sentAt = toIso(e.sentAt) ?? toIso(p.sentAt) ?? toIso(p.timestamp) ?? toIso(p.t)
@@ -139,12 +142,25 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
   if (!contact && counterpart) {
     contact = {
       waId: counterpart,
-      displayName: p.notifyName ?? p.pushname ?? p.author?.name,
-      phone: counterpart,
+       displayName: pickDisplayName(p.notifyName ?? p.pushname ?? p.author?.name, counterpart, counterpartPhone),
+       phone: counterpartPhone,
     }
-  } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
-    // The extension sent our own number as the contact; replace with counterpart
-    contact = { waId: counterpart, displayName: contact.displayName, phone: counterpart }
+   } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
+     contact = {
+       waId: counterpart,
+       displayName: pickDisplayName(contact.displayName, counterpart, counterpartPhone),
+       phone: counterpartPhone,
+     }
+   } else if (contact) {
+     const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
+     const normalizedPhone = contact.phone ? digits(contact.phone) : counterpartPhone
+     if (normalizedWaId) {
+       contact = {
+         waId: normalizedWaId,
+         displayName: pickDisplayName(contact.displayName, normalizedWaId, normalizedPhone),
+         phone: !isLidKey(normalizedWaId) ? normalizedPhone ?? digits(normalizedWaId) : normalizedPhone,
+       }
+     }
   }
 
   const commandId = e.commandId ?? p.commandId
@@ -208,6 +224,49 @@ async function maybeAutoReply(orgId: string, sessionId: string, chatId: string, 
       .eq('id', r.id)
     return // one rule per message
   }
+}
+
+async function resolvePhoneForLidMessage(args: {
+  orgId: string
+  sessionId: string
+  waId: string
+  text?: string
+  sentAt?: string
+}) {
+  const { orgId, sessionId, waId, text, sentAt } = args
+
+  const { data: existing } = await supabaseAdmin
+    .from('contacts')
+    .select('id, phone')
+    .eq('org_id', orgId)
+    .eq('wa_id', waId)
+    .maybeSingle()
+  if (existing?.phone) return { contactId: existing.id, phone: existing.phone }
+
+  if (!text?.trim()) return { contactId: existing?.id ?? null, phone: null }
+
+  const { data: commands } = await supabaseAdmin
+    .from('engine_commands')
+    .select('payload, created_at')
+    .eq('org_id', orgId)
+    .eq('session_id', sessionId)
+    .eq('type', 'send_message')
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  const targetTs = sentAt ? new Date(sentAt).getTime() : Date.now()
+  for (const cmd of commands ?? []) {
+    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+    if (String(payload.text ?? '').trim() !== text.trim()) continue
+    const chatId = String(payload.chatId ?? '')
+    const phone = digits(chatId)
+    if (!phone) continue
+    const createdTs = new Date(cmd.created_at).getTime()
+    if (Math.abs(targetTs - createdTs) > 1000 * 60 * 30) continue
+    return { contactId: existing?.id ?? null, phone }
+  }
+
+  return { contactId: existing?.id ?? null, phone: null }
 }
 
 async function maybeAiReply(
@@ -308,21 +367,64 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         for (const e of normalized) {
           if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
-            const waId = e.contact?.waId ?? String(e.chatId).split('@')[0]
-            const { data: contact } = await supabaseAdmin
-              .from('contacts')
-              .upsert(
-                {
-                  org_id: session.org_id,
-                  wa_id: waId,
-                  display_name: e.contact?.displayName ?? null,
-                  phone: e.contact?.phone ?? null,
-                },
-                { onConflict: 'org_id,wa_id' },
-              )
-              .select('id')
-              .single()
-            if (!contact) continue
+            const waId = e.contact?.waId ?? normalizeWaKey(e.chatId)
+            if (!waId) continue
+
+            let contactId: string | null = null
+            let phone = e.contact?.phone ?? null
+
+            if (!phone && isLidKey(waId)) {
+              const resolved = await resolvePhoneForLidMessage({
+                orgId: session.org_id,
+                sessionId: session.id,
+                waId,
+                text: e.text,
+                sentAt: e.sentAt,
+              })
+              contactId = resolved.contactId
+              phone = resolved.phone
+            }
+
+            if (phone) {
+              const { data: byPhone } = await supabaseAdmin
+                .from('contacts')
+                .select('id, wa_id')
+                .eq('org_id', session.org_id)
+                .eq('phone', phone)
+                .maybeSingle()
+              if (byPhone) {
+                contactId = byPhone.id
+                if (byPhone.wa_id !== waId || !e.contact?.displayName) {
+                  await supabaseAdmin
+                    .from('contacts')
+                    .update({
+                      wa_id: waId,
+                      display_name: e.contact?.displayName ?? phone,
+                      phone,
+                    })
+                    .eq('id', byPhone.id)
+                }
+              }
+            }
+
+            if (!contactId) {
+              const { data: byWa } = await supabaseAdmin
+                .from('contacts')
+                .upsert(
+                  {
+                    org_id: session.org_id,
+                    wa_id: waId,
+                    display_name: e.contact?.displayName ?? phone ?? waId.replace(/@lid$/, ''),
+                    phone,
+                  },
+                  { onConflict: 'org_id,wa_id' },
+                )
+                .select('id')
+                .single()
+              contactId = byWa?.id ?? null
+            }
+
+            if (!contactId) continue
 
             const { data: thread } = await supabaseAdmin
               .from('threads')
@@ -330,7 +432,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 {
                   org_id: session.org_id,
                   session_id: session.id,
-                  contact_id: contact.id,
+                  contact_id: contactId,
                   last_message_at: e.sentAt ?? new Date().toISOString(),
                 },
                 { onConflict: 'session_id,contact_id' },
@@ -357,7 +459,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   ? `${waId}@c.us`
                   : e.chatId
               await maybeAutoReply(session.org_id, session.id, sendChatId, e.text)
-              await maybeAiReply(session.org_id, session.id, sendChatId, contact.id, thread.id, e.text)
+              await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
             }
 
           } else if (e.type === 'ack' && e.commandId) {

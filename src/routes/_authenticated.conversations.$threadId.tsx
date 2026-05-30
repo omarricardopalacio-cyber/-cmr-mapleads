@@ -42,7 +42,12 @@ function ThreadPage() {
     queryKey: ["thread", threadId],
     queryFn: () => list({ data: { threadId } }),
     refetchInterval: 5000,
+    retry: false,
   });
+
+  useEffect(() => {
+    if (!isLoading && !data) navigate({ to: "/conversations" });
+  }, [data, isLoading, navigate]);
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
