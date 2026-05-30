@@ -278,7 +278,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         const { data: session, error: sErr } = await supabaseAdmin
           .from('wa_sessions')
-          .select('id, org_id')
+          .select('id, org_id, me_wa_id')
           .eq('session_token', token)
           .maybeSingle()
         if (sErr || !session) return json(401, { error: 'Invalid session token' })
@@ -288,7 +288,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
           .eq('id', session.id)
 
-        const normalized = parsed.data.events.map(normalizeEvent)
+        const meWaId = session.me_wa_id ?? null
+        const normalized = parsed.data.events.map((ev) => normalizeEvent(ev, meWaId))
 
         const eventRows = normalized.map((e, i) => ({
           org_id: session.org_id,
