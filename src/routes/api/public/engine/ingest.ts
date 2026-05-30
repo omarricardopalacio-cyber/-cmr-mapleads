@@ -247,8 +247,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               wa_message_id: e.waMessageId ?? null,
               direction: e.direction ?? (e.type === 'message-in' ? 'in' : 'out'),
               text: e.text ?? null,
-              media: e.media ?? null,
-              raw: e.raw ?? null,
+              media: (e.media as any) ?? null,
+              raw: (e.raw as any) ?? null,
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
