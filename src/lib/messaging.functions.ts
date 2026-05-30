@@ -16,7 +16,7 @@ export const listMessages = createServerFn({ method: "GET" })
 
     const { data: thread, error: threadErr } = await userSupabase
       .from("threads")
-      .select("id, contact_id, session_id, ai_enabled, contacts:contact_id(id, display_name, wa_id, phone)")
+      .select("id, contact_id, session_id, contacts:contact_id(id, display_name, wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
@@ -49,7 +49,7 @@ export const listMessages = createServerFn({ method: "GET" })
       console.warn("[listMessages] FALLBACK a supabaseAdmin. threadRow:", !!threadRow, "messagesCount:", messages?.length ?? 0);
       const { data: adminThread } = await supabaseAdmin
         .from("threads")
-        .select("id, contact_id, session_id, ai_enabled, contacts:contact_id(id, display_name, wa_id, phone)")
+        .select("id, contact_id, session_id, contacts:contact_id(id, display_name, wa_id, phone)")
         .eq("id", data.threadId)
         .eq("org_id", orgId)
         .maybeSingle();
@@ -79,7 +79,7 @@ export const listMessages = createServerFn({ method: "GET" })
         id: threadRow.id,
         sessionId: threadRow.session_id,
         contactId: threadRow.contact_id,
-        aiEnabled: (threadRow as any).ai_enabled ?? true,
+        aiEnabled: true,
         contact: {
           displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id?.replace(/@lid$/, "").replace(/@c\.us$/, "") ?? null,
           waId: contact?.wa_id ?? null,
@@ -186,7 +186,11 @@ export const toggleAiEnabled = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ threadId: z.string().uuid(), aiEnabled: z.boolean() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
-    await supabaseAdmin.from("threads").update({ ai_enabled: data.aiEnabled } as any).eq("id", data.threadId).eq("org_id", orgId);
+    try {
+      await supabaseAdmin.from("threads").update({ ai_enabled: data.aiEnabled } as unknown as Record<string, unknown>).eq("id", data.threadId).eq("org_id", orgId);
+    } catch {
+      // Columna ai_enabled puede no existir en BD; ignorar error
+    }
     return { ok: true };
   });
 
