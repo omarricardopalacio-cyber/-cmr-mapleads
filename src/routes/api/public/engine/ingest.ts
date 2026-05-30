@@ -310,6 +310,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
             if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
               await maybeAutoReply(session.org_id, session.id, e.chatId, e.text)
+              await maybeAiReply(session.org_id, session.id, e.chatId, contact.id, thread.id, e.text)
             }
           } else if (e.type === 'ack' && e.commandId) {
             await supabaseAdmin
