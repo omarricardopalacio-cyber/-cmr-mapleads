@@ -7,8 +7,10 @@ import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Send } from "lucide-react";
+import { ArrowLeft, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useMutation } from "@tanstack/react-query";
+import { clearThreadMessages } from "@/lib/messaging.functions";
 
 export const Route = createFileRoute("/_authenticated/conversations/$threadId")({
   component: ThreadPage,
@@ -19,6 +21,7 @@ function ThreadPage() {
   const qc = useQueryClient();
   const list = useServerFn(listMessages);
   const send = useServerFn(sendMessage);
+  const clear = useServerFn(clearThreadMessages);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -62,6 +65,16 @@ function ThreadPage() {
     }
   };
 
+  const clearMut = useMutation({
+    mutationFn: () => clear({ data: { threadId } }),
+    onSuccess: () => {
+      toast.success("Chat limpiado");
+      qc.invalidateQueries({ queryKey: ["thread", threadId] });
+      qc.invalidateQueries({ queryKey: ["threads"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-card">
@@ -83,6 +96,19 @@ function ThreadPage() {
             {data?.thread.contact.waId}
           </div>
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Borrar todos los mensajes"
+          onClick={() => {
+            if (confirm("¿Seguro que quieres borrar todos los mensajes de este chat?")) {
+              clearMut.mutate();
+            }
+          }}
+          disabled={clearMut.isPending}
+        >
+          <Trash2 className="h-4 w-4 text-destructive" />
+        </Button>
       </div>
 
       <div

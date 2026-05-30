@@ -117,3 +117,34 @@ export const sendDirectMessage = createServerFn({ method: "POST" })
 
   });
 
+export const clearThreadMessages = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ threadId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data: thread } = await supabaseAdmin
+      .from("threads")
+      .select("id")
+      .eq("id", data.threadId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (!thread) throw new Error("Thread not found");
+
+    const { error } = await supabaseAdmin
+      .from("messages")
+      .delete()
+      .eq("thread_id", data.threadId)
+      .eq("org_id", orgId);
+    if (error) throw new Error(error.message);
+
+    // Reset unread count on thread
+    await supabaseAdmin
+      .from("threads")
+      .update({ unread_count: 0, last_message_at: null })
+      .eq("id", data.threadId)
+      .eq("org_id", orgId);
+
+    return { success: true };
+  });
+
+
