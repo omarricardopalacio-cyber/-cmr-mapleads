@@ -37,6 +37,7 @@ export const listMessages = createServerFn({ method: "GET" })
       thread: {
         id: thread.id,
         sessionId: thread.session_id,
+        contactId: thread.contact_id,
         contact: {
           displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id ?? null,
           waId: contact?.wa_id ?? null,
