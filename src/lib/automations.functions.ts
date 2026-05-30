@@ -73,13 +73,11 @@ export const deleteAutoReply = createServerFn({ method: "POST" })
   });
 
 // ───── QUICK REPLIES ─────
-const dyn = (table: string) => (supabaseAdmin as unknown as { from: (t: string) => { select: (cols: string) => { eq: (c: string, v: string | boolean) => { order: (col: string, opts?: unknown) => Promise<{ data: unknown[] | null }>; }; }; upsert: (row: unknown) => { select: () => { single: () => Promise<{ data: unknown | null; error: Error | null }>; }; }; delete: () => { eq: (c: string, v: string) => { eq: (c: string, v: string) => Promise<unknown>; }; }; } }).from(table);
-
 export const listQuickReplies = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data } = await dyn("quick_replies")
+    const { data } = await dyn().from("quick_replies")
       .select("*")
       .eq("org_id", orgId)
       .order("shortcut", { ascending: true });
@@ -102,7 +100,7 @@ export const upsertQuickReply = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
     const row = { ...data, org_id: orgId };
-    const { data: result, error } = await dyn("quick_replies")
+    const { data: result, error } = await dyn().from("quick_replies")
       .upsert(row)
       .select()
       .single();
@@ -115,7 +113,7 @@ export const deleteQuickReply = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    await dyn("quick_replies").delete().eq("id", data.id).eq("org_id", orgId);
+    await dyn().from("quick_replies").delete().eq("id", data.id).eq("org_id", orgId);
     return { ok: true };
   });
 
