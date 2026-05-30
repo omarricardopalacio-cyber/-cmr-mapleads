@@ -14,6 +14,56 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_configs: {
+        Row: {
+          enabled: boolean
+          knowledge_base: string
+          model: string
+          org_id: string
+          provider: string
+          respond_to: string
+          system_prompt: string
+          updated_at: string
+          vertex_location: string | null
+          vertex_model: string | null
+          vertex_project: string | null
+        }
+        Insert: {
+          enabled?: boolean
+          knowledge_base?: string
+          model?: string
+          org_id: string
+          provider?: string
+          respond_to?: string
+          system_prompt?: string
+          updated_at?: string
+          vertex_location?: string | null
+          vertex_model?: string | null
+          vertex_project?: string | null
+        }
+        Update: {
+          enabled?: boolean
+          knowledge_base?: string
+          model?: string
+          org_id?: string
+          provider?: string
+          respond_to?: string
+          system_prompt?: string
+          updated_at?: string
+          vertex_location?: string | null
+          vertex_model?: string | null
+          vertex_project?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_configs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       auto_replies: {
         Row: {
           cooldown_seconds: number
