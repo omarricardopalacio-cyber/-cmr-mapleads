@@ -199,18 +199,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
           .eq('id', session.id)
 
-        const eventRows = parsed.data.events.map((e) => ({
+        const normalized = parsed.data.events.map(normalizeEvent)
+
+        const eventRows = normalized.map((e, i) => ({
           org_id: session.org_id,
           session_id: session.id,
           type: e.type,
-          payload: e as unknown as never,
+          payload: parsed.data.events[i] as unknown as never,
         }))
         await supabaseAdmin.from('events').insert(eventRows)
 
-
-        for (const e of parsed.data.events) {
+        for (const e of normalized) {
           if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
-            const waId = e.contact?.waId ?? e.chatId
+            const waId = e.contact?.waId ?? String(e.chatId).split('@')[0]
             const { data: contact } = await supabaseAdmin
               .from('contacts')
               .upsert(
@@ -251,7 +252,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
-            // Auto-reply on inbound
             if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
               await maybeAutoReply(session.org_id, session.id, e.chatId, e.text)
             }
@@ -263,6 +263,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               .eq('session_id', session.id)
           }
         }
+
 
 
         return json(200, { ok: true, processed: parsed.data.events.length })
