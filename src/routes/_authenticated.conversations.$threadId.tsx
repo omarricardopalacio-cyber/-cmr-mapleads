@@ -7,8 +7,10 @@ import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Send } from "lucide-react";
+import { ArrowLeft, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useMutation } from "@tanstack/react-query";
+import { clearThreadMessages } from "@/lib/messaging.functions";
 
 export const Route = createFileRoute("/_authenticated/conversations/$threadId")({
   component: ThreadPage,
