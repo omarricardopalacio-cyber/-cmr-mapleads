@@ -109,6 +109,17 @@ function pickDisplayName(name: unknown, waId?: string, phone?: string): string |
   return phone ?? waId?.replace(/@lid$/, '')
 }
 
+function extractSessionTelemetry(rawEvent: z.infer<typeof EventSchema>) {
+  const p = (rawEvent.payload as Record<string, unknown> | undefined) ?? (rawEvent.raw as Record<string, unknown> | undefined) ?? {}
+  const device = (p.device as Record<string, unknown> | undefined) ?? (p.deviceInfo as Record<string, unknown> | undefined) ?? {}
+  return {
+    phoneNumber: typeof p.phoneNumber === 'string' ? p.phoneNumber : typeof p.me === 'string' ? p.me : undefined,
+    deviceName: typeof device.name === 'string' ? device.name : typeof p.deviceName === 'string' ? p.deviceName : undefined,
+    batteryLevel: typeof device.battery === 'number' ? device.battery : typeof p.battery === 'number' ? p.battery : undefined,
+    platform: typeof device.platform === 'string' ? device.platform : typeof p.platform === 'string' ? p.platform : undefined,
+  }
+}
+
 function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null): NormalizedEvent {
   const rawType = String(e.type || '')
   const type: NormalizedEvent['type'] = TYPE_MAP[rawType] ?? 'status'
@@ -475,14 +486,27 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         const { data: session, error: sErr } = await supabaseAdmin
           .from('wa_sessions')
-          .select('id, org_id, me_wa_id')
+          .select('id, org_id, me_wa_id, default_agent_id, default_flow_id')
           .eq('session_token', token)
           .maybeSingle()
         if (sErr || !session) return json(401, { error: 'Invalid session token' })
 
+        // Extract telemetry from the first heartbeat/session_ready event
+        const telemetryEvent = parsed.data.events.find(
+          (ev) => ev.type === 'HEARTBEAT' || ev.type === 'SESSION_READY',
+        )
+        const telemetry = telemetryEvent ? extractSessionTelemetry(telemetryEvent) : null
         await supabaseAdmin
           .from('wa_sessions')
-          .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
+          .update({
+            status: 'connected',
+            last_heartbeat_at: new Date().toISOString(),
+            last_sync_at: new Date().toISOString(),
+            ...(telemetry?.phoneNumber ? { phone_number: telemetry.phoneNumber } : {}),
+            ...(telemetry?.deviceName ? { device_name: telemetry.deviceName } : {}),
+            ...(telemetry?.batteryLevel != null ? { battery_level: telemetry.batteryLevel } : {}),
+            ...(telemetry?.platform ? { platform: telemetry.platform } : {}),
+          })
           .eq('id', session.id)
 
         const meWaId = session.me_wa_id ?? null
@@ -565,12 +589,44 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   session_id: session.id,
                   contact_id: contactId,
                   last_message_at: e.sentAt ?? new Date().toISOString(),
+                  assigned_to_user_id: session.default_agent_id ?? null,
                 },
                 { onConflict: 'session_id,contact_id' },
               )
               .select('id')
               .single()
             if (!thread) continue
+
+            // Auto-enroll in default flow for new contacts on this session
+            if (session.default_flow_id) {
+              try {
+                const { data: firstStep } = await dyn()
+                  .from('flow_steps')
+                  .select('id')
+                  .eq('flow_id', session.default_flow_id)
+                  .is('parent_step_id', null)
+                  .order('step_order', { ascending: true })
+                  .limit(1)
+                  .maybeSingle();
+                if (firstStep) {
+                  await dyn()
+                    .from('flow_runs')
+                    .upsert({
+                      org_id: session.org_id,
+                      flow_id: session.default_flow_id,
+                      contact_id: contactId,
+                      current_step_id: firstStep.id,
+                      status: 'active',
+                      next_execution_at: new Date().toISOString(),
+                      last_interaction_at: new Date().toISOString(),
+                    }, { onConflict: 'flow_id,contact_id' })
+                    .select()
+                    .single();
+                }
+              } catch (flowErr: any) {
+                console.error('[ingest] default flow enrollment error (non-fatal):', flowErr.message);
+              }
+            }
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,

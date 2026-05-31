@@ -1,26 +1,88 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
-import { listSessions, createSession, updateSessionMe } from "@/lib/sessions.functions";
-import { Card } from "@/components/ui/card";
+import { useState, useEffect, useRef } from "react";
+import {
+  listSessions,
+  createSession,
+  updateSessionMe,
+  updateSessionConfig,
+} from "@/lib/sessions.functions";
+import { listOrgMembers } from "@/lib/crm.functions";
+import { listFlows } from "@/lib/automations.functions";
+import { supabase } from "@/integrations/supabase/client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Copy } from "lucide-react";
+import {
+  Copy,
+  Smartphone,
+  Battery,
+  BatteryLow,
+  BatteryMedium,
+  BatteryFull,
+  Activity,
+  Wifi,
+  WifiOff,
+  Settings,
+  MonitorSmartphone,
+  User,
+  Workflow,
+  Terminal,
+} from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/sessions")({
   component: SessionsPage,
 });
+
+interface SessionRow {
+  id: string;
+  label: string;
+  status: string;
+  last_heartbeat_at: string | null;
+  last_sync_at: string | null;
+  created_at: string;
+  session_token: string;
+  me_wa_id: string | null;
+  phone_number: string | null;
+  device_name: string | null;
+  battery_level: number | null;
+  platform: string | null;
+  default_agent_id: string | null;
+  default_flow_id: string | null;
+}
 
 function SessionsPage() {
   const listFn = useServerFn(listSessions);
   const createFn = useServerFn(createSession);
   const qc = useQueryClient();
   const [label, setLabel] = useState("");
+  const [logs, setLogs] = useState<Array<{ id: string; text: string; ts: Date }>>([]);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
-  const { data, isLoading } = useQuery({ queryKey: ["wa-sessions"], queryFn: () => listFn({}) });
+  const { data, isLoading } = useQuery({
+    queryKey: ["wa-sessions"],
+    queryFn: () => listFn({}),
+  });
+
   const mut = useMutation({
     mutationFn: (l: string) => createFn({ data: { label: l } }),
     onSuccess: () => {
@@ -31,17 +93,58 @@ function SessionsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  useEffect(() => {
+    const channel = supabase
+      .channel("session-events")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "events" },
+        (payload) => {
+          const ev = payload.new as Record<string, unknown>;
+          const type = String(ev.type ?? "unknown");
+          const sessionId = String(ev.session_id ?? "").slice(0, 8);
+          const raw = (ev.payload as Record<string, unknown> | undefined) ?? {};
+          const device = (raw.device as Record<string, unknown> | undefined) ?? {};
+          const battery = device.battery ?? raw.battery;
+          const now = new Date();
+          let text = `[${now.toLocaleTimeString()}] ${type.toUpperCase()} | session:${sessionId}`;
+          if (type === "HEARTBEAT" || type === "SESSION_READY") {
+            text += ` | Batería: ${battery ?? "?"}%`;
+          } else if (type === "message-in") {
+            text += ` | Mensaje de ${String(raw.from ?? raw.chatId ?? "?")}`;
+          } else if (type === "message-out") {
+            text += ` | Enviado a ${String(raw.to ?? raw.chatId ?? "?")}`;
+          } else if (type === "ack") {
+            text += ` | ACK ${String(raw.status ?? "ok")}`;
+          }
+          setLogs((prev) => {
+            const next = [...prev, { id: String(ev.id ?? Date.now()), text, ts: now }];
+            return next.slice(-100);
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
+
   const backendBase = "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34-dev.lovable.app";
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 h-[calc(100vh-6rem)] flex flex-col">
       <div>
-        <h1 className="text-2xl font-semibold">Sesiones de WhatsApp</h1>
+        <h1 className="text-2xl font-semibold">Centro de Mando</h1>
         <p className="text-muted-foreground text-sm">
-          Cada sesión = un número/dispositivo conectado a través de la extensión.
+          Control multi-número, telemetría y enrutamiento inteligente.
         </p>
       </div>
 
-      <Card className="p-4 flex gap-2">
+      <Card className="p-4 flex gap-2 shrink-0">
         <Input
           placeholder="Nombre (ej: Soporte, Ventas)"
           value={label}
@@ -52,70 +155,211 @@ function SessionsPage() {
         </Button>
       </Card>
 
-      <div className="space-y-2">
-        {isLoading && <p className="text-muted-foreground">Cargando...</p>}
-        {data?.sessions.map((s) => (
-          <Card key={s.id} className="p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-medium">{s.label}</div>
-                <div className="text-xs text-muted-foreground">
-                  Última señal: {s.last_heartbeat_at ? new Date(s.last_heartbeat_at).toLocaleString() : "nunca"}
-                </div>
-              </div>
-              <Badge variant={s.status === "connected" ? "default" : "secondary"}>{s.status}</Badge>
-            </div>
-
-            <MeNumberRow sessionId={s.id} initial={s.me_wa_id ?? ""} />
-
-            <div className="rounded-md bg-muted p-3 text-xs font-mono space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground">Backend URL</span>
-                <CopyButton value={backendBase} />
-              </div>
-              <div className="break-all">{backendBase}</div>
-              <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">
-                <span className="text-muted-foreground">Session token</span>
-                <CopyButton value={s.session_token} />
-              </div>
-              <div className="break-all">{s.session_token}</div>
-            </div>
-          </Card>
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 shrink-0">
+        {isLoading &&
+          Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i} className="p-4 space-y-3">
+              <Skeleton className="h-5 w-32" />
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-8 w-full" />
+            </Card>
+          ))}
+        {(data?.sessions ?? []).map((s) => (
+          <SessionCard key={s.id} session={s as unknown as SessionRow} backendBase={backendBase} />
         ))}
+      </div>
+
+      <div className="flex-1 min-h-0 flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <Terminal className="h-4 w-4 text-emerald-500" />
+          <span className="text-sm font-medium">Consola de red en vivo</span>
+          <Badge variant="outline" className="text-[10px]">{logs.length} eventos</Badge>
+        </div>
+        <div className="flex-1 bg-black border border-green-900/50 rounded-lg p-3 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="font-mono text-xs space-y-1 text-green-500">
+              {logs.length === 0 && (
+                <div className="text-green-700 italic">Esperando eventos de la extensión maple...</div>
+              )}
+              {logs.map((log) => (
+                <div key={log.id} className="break-all">{log.text}</div>
+              ))}
+              <div ref={logsEndRef} />
+            </div>
+          </ScrollArea>
+        </div>
       </div>
     </div>
   );
 }
 
-function MeNumberRow({ sessionId, initial }: { sessionId: string; initial: string }) {
-  const updateFn = useServerFn(updateSessionMe);
+function SessionCard({ session, backendBase }: { session: SessionRow; backendBase: string }) {
   const qc = useQueryClient();
-  const [value, setValue] = useState(initial);
-  const mut = useMutation({
-    mutationFn: (v: string) => updateFn({ data: { sessionId, meWaId: v || null } }),
+  const updateMeFn = useServerFn(updateSessionMe);
+  const updateCfgFn = useServerFn(updateSessionConfig);
+  const membersFn = useServerFn(listOrgMembers);
+  const flowsFn = useServerFn(listFlows);
+  const [meValue, setMeValue] = useState(session.me_wa_id ?? "");
+  const [cfgOpen, setCfgOpen] = useState(false);
+
+  const { data: membersData } = useQuery({
+    queryKey: ["org-members"],
+    queryFn: () => membersFn({}),
+    enabled: cfgOpen,
+  });
+
+  const { data: flowsData } = useQuery({
+    queryKey: ["flows"],
+    queryFn: () => flowsFn({}),
+    enabled: cfgOpen,
+  });
+
+  const meMut = useMutation({
+    mutationFn: (v: string) => updateMeFn({ data: { sessionId: session.id, meWaId: v || null } }),
     onSuccess: () => {
       toast.success("Número guardado");
       qc.invalidateQueries({ queryKey: ["wa-sessions"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const cfgMut = useMutation({
+    mutationFn: (vals: { defaultAgentId: string | null; defaultFlowId: string | null }) =>
+      updateCfgFn({ data: { sessionId: session.id, ...vals } }),
+    onSuccess: () => {
+      toast.success("Configuración guardada");
+      qc.invalidateQueries({ queryKey: ["wa-sessions"] });
+      setCfgOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const isConnected = session.status === "connected";
+  const lastHb = session.last_heartbeat_at ? new Date(session.last_heartbeat_at) : null;
+  const secSince = lastHb ? Math.round((Date.now() - lastHb.getTime()) / 1000) : null;
+  const syncText =
+    secSince == null ? "Sin señal" : secSince < 60 ? `Sincronizado hace ${secSince}s` : `Sincronizado hace ${Math.round(secSince / 60)} min`;
+
+  const BatteryIcon = session.battery_level == null ? Battery : session.battery_level <= 20 ? BatteryLow : session.battery_level <= 60 ? BatteryMedium : BatteryFull;
+  const batteryColor = session.battery_level == null ? "text-muted-foreground" : session.battery_level <= 20 ? "text-red-500" : session.battery_level <= 60 ? "text-amber-500" : "text-emerald-500";
+
   return (
-    <div className="space-y-1">
-      <label className="text-xs text-muted-foreground">
-        Mi número de WhatsApp (el que envía). Solo dígitos con código de país, ej: 573001234567
-      </label>
-      <div className="flex gap-2">
-        <Input
-          placeholder="573001234567"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          inputMode="numeric"
-        />
-        <Button onClick={() => mut.mutate(value)} disabled={mut.isPending}>
-          Guardar
-        </Button>
-      </div>
-    </div>
+    <Card className="relative overflow-hidden">
+      <div className={`h-1 ${isConnected ? "bg-emerald-500" : "bg-red-500"}`} />
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between">
+          <div className="space-y-0.5 min-w-0">
+            <CardTitle className="text-sm font-semibold truncate">{session.label}</CardTitle>
+            <div className="text-[11px] text-muted-foreground truncate">{session.phone_number ?? session.me_wa_id ?? "Sin número"}</div>
+          </div>
+          <Badge variant={isConnected ? "default" : "destructive"} className={`text-[10px] gap-1 ${isConnected ? "bg-emerald-500 hover:bg-emerald-600" : ""}`}>
+            {isConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+            {isConnected ? "Conectado" : "Desconectado"}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 text-xs">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <BatteryIcon className={`h-3.5 w-3.5 ${batteryColor}`} />
+            <span>{session.battery_level != null ? `${session.battery_level}%` : "N/A"}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <MonitorSmartphone className="h-3.5 w-3.5" />
+            <span className="truncate">{session.platform ?? "Desconocido"}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-muted-foreground col-span-2">
+            <Smartphone className="h-3.5 w-3.5" />
+            <span className="truncate">{session.device_name ?? "Dispositivo no reportado"}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Activity className="h-3 w-3" />
+          {syncText}
+        </div>
+        <div className="space-y-1.5 pt-1">
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Mi número WhatsApp</label>
+          <div className="flex gap-2">
+            <Input className="h-8 text-xs" placeholder="573001234567" value={meValue} onChange={(e) => setMeValue(e.target.value)} inputMode="numeric" />
+            <Button className="h-8 text-xs" onClick={() => meMut.mutate(meValue)} disabled={meMut.isPending}>
+              Guardar
+            </Button>
+          </div>
+        </div>
+        <div className="rounded-md bg-muted p-2.5 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Backend</span>
+            <CopyButton value={backendBase} />
+          </div>
+          <div className="break-all text-muted-foreground">{backendBase}</div>
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">
+            <span className="text-muted-foreground">Token</span>
+            <CopyButton value={session.session_token} />
+          </div>
+          <div className="break-all text-muted-foreground">{session.session_token}</div>
+        </div>
+        <Sheet open={cfgOpen} onOpenChange={setCfgOpen}>
+          <SheetTrigger asChild>
+            <Button variant="outline" size="sm" className="w-full h-8 text-xs gap-1">
+              <Settings className="h-3 w-3" />
+              Configurar enrutamiento
+            </Button>
+          </SheetTrigger>
+          <SheetContent>
+            <SheetHeader>
+              <SheetTitle className="text-sm">Enrutamiento: {session.label}</SheetTitle>
+            </SheetHeader>
+            <div className="space-y-4 pt-4 text-xs">
+              <div className="space-y-1.5">
+                <label className="text-muted-foreground flex items-center gap-1">
+                  <User className="h-3 w-3" /> Agente por defecto
+                </label>
+                <Select
+                  value={session.default_agent_id ?? "none"}
+                  onValueChange={(v) =>
+                    cfgMut.mutate({ defaultAgentId: v === "none" ? null : v, defaultFlowId: session.default_flow_id })
+                  }
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Sin asignar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin asignar</SelectItem>
+                    {(membersData?.members ?? []).map((m: { id: string; display_name?: string; email?: string }) => (
+                      <SelectItem key={m.id} value={m.id}>{m.display_name ?? m.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-muted-foreground flex items-center gap-1">
+                  <Workflow className="h-3 w-3" /> Flujo por defecto
+                </label>
+                <Select
+                  value={session.default_flow_id ?? "none"}
+                  onValueChange={(v) =>
+                    cfgMut.mutate({ defaultAgentId: session.default_agent_id, defaultFlowId: v === "none" ? null : v })
+                  }
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Sin flujo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin flujo</SelectItem>
+                    {(flowsData?.items ?? []).map((f: { id: string; name: string }) => (
+                      <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Cuando llegue un mensaje nuevo, el contacto se asignará al agente elegido y se inscribirá automáticamente en el flujo seleccionado.
+              </p>
+            </div>
+          </SheetContent>
+        </Sheet>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -640,39 +640,74 @@ export type Database = {
       }
       wa_sessions: {
         Row: {
+          battery_level: number | null
           created_at: string
           created_by: string | null
+          default_agent_id: string | null
+          default_flow_id: string | null
+          device_name: string | null
           id: string
           label: string
           last_heartbeat_at: string | null
+          last_sync_at: string | null
           me_wa_id: string | null
           org_id: string
+          phone_number: string | null
+          platform: string | null
           session_token: string
           status: Database["public"]["Enums"]["wa_session_status"]
         }
         Insert: {
+          battery_level?: number | null
           created_at?: string
           created_by?: string | null
+          default_agent_id?: string | null
+          default_flow_id?: string | null
+          device_name?: string | null
           id?: string
           label?: string
           last_heartbeat_at?: string | null
+          last_sync_at?: string | null
           me_wa_id?: string | null
           org_id: string
+          phone_number?: string | null
+          platform?: string | null
           session_token: string
           status?: Database["public"]["Enums"]["wa_session_status"]
         }
         Update: {
+          battery_level?: number | null
           created_at?: string
           created_by?: string | null
+          default_agent_id?: string | null
+          default_flow_id?: string | null
+          device_name?: string | null
           id?: string
           label?: string
           last_heartbeat_at?: string | null
+          last_sync_at?: string | null
           me_wa_id?: string | null
           org_id?: string
+          phone_number?: string | null
+          platform?: string | null
           session_token?: string
           status?: Database["public"]["Enums"]["wa_session_status"]
         }
         Relationships: [
+          {
+            foreignKeyName: "wa_sessions_default_agent_id_fkey"
+            columns: ["default_agent_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wa_sessions_default_flow_id_fkey"
+            columns: ["default_flow_id"]
+            isOneToOne: false
+            referencedRelation: "flows"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "wa_sessions_org_id_fkey"
             columns: ["org_id"]

@@ -21,7 +21,9 @@ export const listSessions = createServerFn({ method: "GET" })
     const orgId = await getUserOrg(context.userId);
     const { data } = await supabaseAdmin
       .from("wa_sessions")
-      .select("id, label, status, last_heartbeat_at, created_at, session_token, me_wa_id")
+      .select(
+        "id, label, status, last_heartbeat_at, last_sync_at, created_at, session_token, me_wa_id, phone_number, device_name, battery_level, platform, default_agent_id, default_flow_id"
+      )
       .eq("org_id", orgId)
       .order("created_at", { ascending: false });
     return { sessions: data ?? [] };
@@ -67,4 +69,29 @@ export const updateSessionMe = createServerFn({ method: "POST" })
       .eq("org_id", orgId);
     if (error) throw new Error(error.message);
     return { ok: true, meWaId: normalized };
+  });
+
+export const updateSessionConfig = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        sessionId: z.string().uuid(),
+        defaultAgentId: z.string().uuid().nullable(),
+        defaultFlowId: z.string().uuid().nullable(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { error } = await supabaseAdmin
+      .from("wa_sessions")
+      .update({
+        default_agent_id: data.defaultAgentId,
+        default_flow_id: data.defaultFlowId,
+      })
+      .eq("id", data.sessionId)
+      .eq("org_id", orgId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
