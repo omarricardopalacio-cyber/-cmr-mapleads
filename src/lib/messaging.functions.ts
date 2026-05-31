@@ -2,8 +2,74 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { convertUrlToBase64 } from "@/lib/media";
+import { convertUrlToBase64, storagePathFromMediaUrl } from "@/lib/media";
+import { sanitizeMessageText } from "@/lib/message-text";
 import { ensureUserOrg } from "@/lib/org-helpers";
+
+async function downloadMediaFromStorage(
+  path: string
+): Promise<{ base64: string; mimeType: string }> {
+  const { data, error } = await supabaseAdmin.storage.from("media").download(path);
+  if (error || !data) throw new Error(error?.message || "Storage download failed");
+  const arrayBuffer = await data.arrayBuffer();
+  const base64 = Buffer.from(arrayBuffer).toString("base64");
+  const mimeType = data.type || "application/octet-stream";
+  return { base64, mimeType };
+}
+
+async function resolveMediaForCommand(opts: {
+  media_url?: string | null;
+  media_base64?: string | null;
+  media_storage_path?: string | null;
+  mime_type?: string | null;
+  caption?: string | null;
+  text?: string;
+}): Promise<{ media?: string; caption?: string }> {
+  const caption = opts.caption || opts.text || undefined;
+
+  if (opts.media_base64) {
+    const raw = opts.media_base64.trim();
+    const media = raw.startsWith("data:")
+      ? raw
+      : `data:${opts.mime_type || "application/octet-stream"};base64,${raw}`;
+    return { media, caption };
+  }
+
+  const storagePath =
+    opts.media_storage_path ||
+    (opts.media_url ? storagePathFromMediaUrl(opts.media_url) : null);
+
+  if (storagePath) {
+    const { base64, mimeType } = await downloadMediaFromStorage(storagePath);
+    return {
+      media: `data:${opts.mime_type || mimeType};base64,${base64}`,
+      caption,
+    };
+  }
+
+  if (opts.media_url) {
+    const { base64, mimeType } = await convertUrlToBase64(opts.media_url);
+    return {
+      media: `data:${opts.mime_type || mimeType};base64,${base64}`,
+      caption,
+    };
+  }
+
+  return {};
+}
+
+async function signMessageMedia(
+  media: Record<string, unknown> | null
+): Promise<Record<string, unknown> | null> {
+  if (!media || typeof media !== "object") return media;
+  const url = typeof media.url === "string" ? media.url : null;
+  if (!url) return media;
+  const path = storagePathFromMediaUrl(url);
+  if (!path) return media;
+  const { data, error } = await supabaseAdmin.storage.from("media").createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) return media;
+  return { ...media, url: data.signedUrl };
+}
 
 export const listMessages = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -74,6 +140,14 @@ export const listMessages = createServerFn({ method: "GET" })
 
     const contact = Array.isArray(threadRow.contacts) ? threadRow.contacts[0] : threadRow.contacts;
     console.log("[listMessages] thread:", threadRow.id, "contact:", contact?.display_name ?? contact?.wa_id ?? "none", "messages:", (messages ?? []).length, "fallback:", useFallback);
+    const enriched = await Promise.all(
+      (messages ?? []).map(async (m) => ({
+        ...m,
+        text: sanitizeMessageText(m.text),
+        media: await signMessageMedia(m.media as Record<string, unknown> | null),
+      }))
+    );
+
     return {
       thread: {
         id: threadRow.id,
@@ -86,7 +160,7 @@ export const listMessages = createServerFn({ method: "GET" })
           phone: contact?.phone ?? null,
         },
       },
-      messages: (messages ?? []) as Array<{
+      messages: enriched as Array<{
         id: string;
         direction: string;
         text: string | null;
@@ -99,13 +173,21 @@ export const listMessages = createServerFn({ method: "GET" })
 export const sendMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) =>
-    z.object({
-      threadId: z.string().uuid(),
-      text: z.string().min(1).max(4000),
-      media_url: z.string().url().nullable().optional(),
-      mime_type: z.string().max(100).nullable().optional(),
-      caption: z.string().max(2000).nullable().optional(),
-    }).parse(d)
+    z
+      .object({
+        threadId: z.string().uuid(),
+        text: z.string().max(4000).default(""),
+        media_url: z.string().url().nullable().optional(),
+        media_base64: z.string().max(35_000_000).nullable().optional(),
+        media_storage_path: z.string().max(500).nullable().optional(),
+        mime_type: z.string().max(100).nullable().optional(),
+        caption: z.string().max(2000).nullable().optional(),
+      })
+      .refine(
+        (v) => v.text.trim().length > 0 || v.media_url || v.media_base64 || v.media_storage_path,
+        { message: "Message text or media is required" }
+      )
+      .parse(d)
   )
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
@@ -121,16 +203,24 @@ export const sendMessage = createServerFn({ method: "POST" })
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
-    const payload: Record<string, unknown> = { chatId, text: data.text };
+    const payload: Record<string, unknown> = { chatId, text: data.text.trim() || data.caption || "" };
 
-    if (data.media_url) {
-      try {
-        const { base64, mimeType } = await convertUrlToBase64(data.media_url);
-        payload.media = `data:${data.mime_type || mimeType};base64,${base64}`;
-        payload.caption = data.caption || data.text;
-      } catch {
-        throw new Error("Failed to convert media URL to base64");
+    try {
+      const mediaFields = await resolveMediaForCommand({
+        media_url: data.media_url,
+        media_base64: data.media_base64,
+        media_storage_path: data.media_storage_path,
+        mime_type: data.mime_type,
+        caption: data.caption,
+        text: data.text,
+      });
+      if (mediaFields.media) {
+        payload.media = mediaFields.media;
+        payload.caption = mediaFields.caption;
       }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(msg.includes("fetch") ? "Failed to convert media URL to base64" : msg);
     }
 
     const { data: cmd, error } = await supabaseAdmin
@@ -145,6 +235,34 @@ export const sendMessage = createServerFn({ method: "POST" })
       .select("id")
       .single();
     if (error || !cmd) throw new Error(error?.message || "insert failed");
+
+    const displayText = sanitizeMessageText(
+      data.caption || data.text,
+      data.caption
+    );
+    const messageMedia =
+      data.media_url && data.mime_type
+        ? { url: data.media_url, mime_type: data.mime_type }
+        : data.media_url
+          ? { url: data.media_url }
+          : null;
+
+    await supabaseAdmin.from("messages").insert({
+      org_id: orgId,
+      thread_id: data.threadId,
+      direction: "out",
+      text: displayText,
+      media: messageMedia,
+      wa_message_id: `pending-${cmd.id}`,
+      sent_at: new Date().toISOString(),
+    });
+
+    await supabaseAdmin
+      .from("threads")
+      .update({ last_message_at: new Date().toISOString() })
+      .eq("id", data.threadId)
+      .eq("org_id", orgId);
+
     return { commandId: cmd.id };
   });
 
@@ -295,7 +413,7 @@ export const uploadMedia = createServerFn({ method: "POST" })
         .upload(path, bytes, { contentType: data.mimeType, upsert: false });
       if (upErr) throw new Error(upErr.message);
       const { data: urlData } = supabaseAdmin.storage.from("media").getPublicUrl(path);
-      return { url: urlData.publicUrl };
+      return { url: urlData.publicUrl, storagePath: path };
     } catch (err: unknown) {
       throw new Error(`Upload failed: ${(err as Error).message}`);
     }

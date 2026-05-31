@@ -45,6 +45,17 @@ function assertSafeUrl(raw: string): URL {
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25MB cap
 
+/** Path inside bucket `media` from a Supabase public/signed object URL. */
+export function storagePathFromMediaUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const match = u.pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/media\/(.+)$/);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function convertUrlToBase64(url: string): Promise<{ base64: string; mimeType: string }> {
   const safe = assertSafeUrl(url);
   const response = await fetch(safe.toString(), { redirect: "error" });

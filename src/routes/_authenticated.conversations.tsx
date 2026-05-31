@@ -69,7 +69,7 @@ function ConversationsLayout() {
   });
 
   return (
-    <div className="flex h-[calc(100vh-5rem)] -m-4 md:-m-6 border-t">
+    <div className="flex h-[calc(100vh-5rem)] min-h-0 -m-4 md:-m-6 border-t overflow-hidden">
       {/* Sidebar lista de chats */}
       <aside className="w-full md:w-80 lg:w-96 border-r flex flex-col bg-card">
         <div className="p-3 border-b flex items-center gap-2">
@@ -195,7 +195,7 @@ function ConversationsLayout() {
       </aside>
 
       {/* Panel de chat */}
-      <main className="flex-1 hidden md:flex flex-col bg-muted/10">
+      <main className="flex-1 hidden md:flex flex-col bg-muted/10 min-h-0 min-w-0 overflow-hidden">
         <Outlet />
       </main>
     </div>

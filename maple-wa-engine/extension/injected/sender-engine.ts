@@ -67,18 +67,18 @@ class SenderEngine {
       if (result.success) {
         this.queue.shift();
         task.status = "sent";
-        this.emitStatus(task.taskId, "sent", result.messageId);
+        this.emitStatus(task, "sent", result.messageId);
         task.resolve?.({ success: true, messageId: result.messageId });
       } else if (task.retryCount < SEND_RETRY_MAX) {
         task.retryCount++;
         task.status = "pending";
-        this.emitStatus(task.taskId, "retry", undefined, `Retry ${task.retryCount}/${SEND_RETRY_MAX}`);
+        this.emitStatus(task, "retry", undefined, `Retry ${task.retryCount}/${SEND_RETRY_MAX}`);
         await this.delay(SEND_RETRY_DELAY * task.retryCount);
       } else {
         this.queue.shift();
         task.status = "failed";
         task.error = result.error;
-        this.emitStatus(task.taskId, "failed", undefined, result.error);
+        this.emitStatus(task, "failed", undefined, result.error);
         task.resolve?.({ success: false, error: result.error });
       }
     }
@@ -249,14 +249,25 @@ class SenderEngine {
   }
 
   private emitStatus(
-    taskId: string,
+    task: SendTask,
     status: "sent" | "failed" | "retry",
     messageId?: string,
     error?: string
   ): void {
     postFromInjected("WA_EVENT", {
       event: status === "sent" ? "MESSAGE_SENT" : status === "failed" ? "MESSAGE_FAILED" : "MESSAGE_ACK",
-      payload: { taskId, status, messageId, error, timestamp: Date.now() },
+      payload: {
+        taskId: task.taskId,
+        chatId: task.chatId,
+        text: task.caption || task.text,
+        fromMe: true,
+        direction: "out",
+        status,
+        messageId,
+        waMessageId: messageId,
+        error,
+        timestamp: Date.now(),
+      },
     });
   }
 

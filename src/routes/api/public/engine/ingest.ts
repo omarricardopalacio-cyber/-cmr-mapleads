@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import { generateReply } from '@/lib/ai.server'
+import { sanitizeMessageText } from '@/lib/message-text'
 import { z } from 'zod'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
@@ -272,7 +273,11 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
      (direction === 'out' ? toWa ?? chatWa ?? fromWa : fromWa ?? chatWa ?? toWa) ?? chatWa
    const counterpartPhone = counterpart && !isLidKey(counterpart) ? digits(counterpart) : undefined
 
-  const text = e.text ?? p.text ?? p.body ?? p.content
+  const rawText = e.text ?? p.text ?? p.body ?? p.content
+  const text =
+    rawText != null
+      ? sanitizeMessageText(String(rawText), p.caption != null ? String(p.caption) : undefined) ?? undefined
+      : undefined
   const sentAt = toIso(e.sentAt) ?? toIso(p.sentAt) ?? toIso(p.timestamp) ?? toIso(p.t)
 
   let contact = e.contact
@@ -755,6 +760,35 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               e.media as Record<string, unknown> | undefined,
               session.org_id,
             )
+
+            const direction = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
+            if (direction === 'out' && e.text) {
+              const since = new Date(Date.now() - 15_000).toISOString()
+              const { data: recentOut } = await supabaseAdmin
+                .from('messages')
+                .select('id, wa_message_id')
+                .eq('thread_id', thread.id)
+                .eq('direction', 'out')
+                .eq('text', e.text)
+                .gte('sent_at', since)
+                .order('sent_at', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+              if (recentOut?.wa_message_id?.startsWith('pending-')) {
+                await supabaseAdmin
+                  .from('messages')
+                  .update({
+                    wa_message_id: e.waMessageId ?? recentOut.wa_message_id,
+                    media: (enrichedMedia as any) ?? undefined,
+                  })
+                  .eq('id', recentOut.id)
+                continue
+              }
+              if (recentOut && e.waMessageId && recentOut.wa_message_id === e.waMessageId) {
+                continue
+              }
+            }
+
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,

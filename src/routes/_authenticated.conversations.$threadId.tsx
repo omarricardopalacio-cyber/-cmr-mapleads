@@ -79,6 +79,7 @@ import {
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
 import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
+import { sanitizeMessageText, isBase64Thumbnail } from "@/lib/message-text";
 
 export const Route = createFileRoute("/_authenticated/conversations/$threadId")({
   component: ThreadPage,
@@ -242,6 +243,9 @@ function ThreadPage() {
       let mediaUrl: string | null = null;
       let mimeType: string | null = null;
 
+      let mediaBase64: string | null = null;
+      let mediaStoragePath: string | null = null;
+
       if (selectedFile) {
         setUploading(true);
         const reader = new FileReader();
@@ -254,9 +258,13 @@ function ThreadPage() {
           reader.onerror = reject;
           reader.readAsDataURL(selectedFile.file);
         });
-        const { url } = await upload({ data: { base64, fileName: selectedFile.file.name, mimeType: selectedFile.file.type } });
-        mediaUrl = url;
+        mediaBase64 = base64;
         mimeType = selectedFile.file.type;
+        const uploaded = await upload({
+          data: { base64, fileName: selectedFile.file.name, mimeType: selectedFile.file.type },
+        });
+        mediaUrl = uploaded.url;
+        mediaStoragePath = uploaded.storagePath ?? null;
         setUploading(false);
         setSelectedFile(null);
       }
@@ -273,9 +281,20 @@ function ThreadPage() {
         }
       }
 
-      await send({ data: { threadId, text: payloadText || " ", media_url: mediaUrl, mime_type: mimeType, caption: payloadText || undefined } });
+      await send({
+        data: {
+          threadId,
+          text: payloadText || (mediaUrl ? " " : ""),
+          media_url: mediaUrl,
+          media_base64: mediaBase64,
+          media_storage_path: mediaStoragePath,
+          mime_type: mimeType,
+          caption: payloadText || undefined,
+        },
+      });
       setText("");
       setShowQr(false);
+      qc.invalidateQueries({ queryKey: ["thread", threadId] });
       toast.success(mediaUrl ? "Multimedia encolada" : "Mensaje encolado");
     } catch (err: unknown) {
       toast.error((err as Error)?.message ?? "Error al enviar");
@@ -297,8 +316,8 @@ function ThreadPage() {
   });
 
   return (
-    <div className="flex h-full">
-      <div className="flex-1 flex flex-col min-w-0">
+    <div className="flex h-full min-h-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className="flex items-center gap-3 px-4 py-3 border-b bg-card">
           <Button asChild variant="ghost" size="icon" className="md:hidden">
             <Link to="/conversations">
@@ -452,6 +471,7 @@ function ThreadPage() {
           )}
 
           {mergedMessages.map((m) => {
+            const displayText = sanitizeMessageText(m.text);
             const mediaObj = (m.media as { url?: string; mimeType?: string; filename?: string; caption?: string } | null) ?? null;
             const mime = mediaObj?.mimeType || "";
             const isImage = mime.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
@@ -504,8 +524,10 @@ function ThreadPage() {
                       </div>
                     </div>
                   ) : null}
-                  {m.text ? <div className={mediaObj?.url ? "mt-2" : ""}>{m.text}</div> : null}
-                  {!m.text && !mediaObj?.url && <i className="opacity-60">[mensaje vacío]</i>}
+                  {displayText ? <div className={mediaObj?.url ? "mt-2" : ""}>{displayText}</div> : null}
+                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && (
+                    <i className="opacity-60">[mensaje vacío]</i>
+                  )}
                 </div>
                 <div className="text-[10px] opacity-70 mt-1 text-right">
                   {m.sent_at ? new Date(m.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
@@ -515,7 +537,10 @@ function ThreadPage() {
           })}
         </div>
 
-        <form onSubmit={handleSend} className="border-t p-3 flex gap-2 bg-card relative">
+        <form
+          onSubmit={handleSend}
+          className="border-t p-3 bg-card relative shrink-0 z-10 grid grid-cols-[auto_auto_auto_1fr_auto] items-end gap-2"
+        >
           <input
             type="file"
             ref={fileInputRef}
@@ -623,7 +648,7 @@ function ThreadPage() {
           >
             <Paperclip className="h-4 w-4" />
           </Button>
-          <div className="flex-1 min-w-0 relative">
+          <div className="min-w-0 relative col-span-1">
             {selectedFile && (
               <div className="absolute -top-12 left-0 flex items-center gap-2 bg-muted rounded-md px-2 py-1 text-xs max-w-full">
                 <Image className="h-3 w-3 shrink-0" />
