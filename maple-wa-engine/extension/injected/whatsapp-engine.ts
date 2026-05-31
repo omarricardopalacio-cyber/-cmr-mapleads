@@ -1,0 +1,148 @@
+// ============================================================
+// MAPLE WA ENGINE — Injected Script Entry Point
+// Se inyecta en WhatsApp Web como script <script src="...">
+// ============================================================
+
+import { waitForWPP, isWPPReady } from "./wpp-bootstrap";
+import { initEventEngine } from "./event-engine";
+import { senderEngine } from "./sender-engine";
+import { postFromInjected } from "../bridge/postmessage";
+import * as chatDetector from "./chat-detector";
+import * as contactDetector from "./contact-detector";
+
+// Evitar inicialización doble
+if ((window as any).__MAPLE_WA_ENGINE_INITIALIZED) {
+  console.warn("[WhatsAppEngine] Ya inicializado, ignorando");
+} else {
+  (window as any).__MAPLE_WA_ENGINE_INITIALIZED = true;
+  init();
+}
+
+async function init(): Promise<void> {
+  console.log("[WhatsAppEngine] Iniciando...");
+
+  try {
+    await waitForWPP();
+    console.log("[WhatsAppEngine] WPP listo");
+
+    await initEventEngine();
+    console.log("[WhatsAppEngine] EventEngine listo");
+
+    // Notificar que la sesión está lista
+    const WPP = (window as any).WPP;
+    const myDevice = await WPP.whatsapp.Browser?.id?.();
+    const phone = myDevice?.user || "";
+
+    postFromInjected("WA_EVENT", {
+      event: "SESSION_READY",
+      payload: {
+        sessionId: `wa-${phone}-${Date.now()}`,
+        browserId: "chrome",
+        deviceId: phone,
+        phoneNumber: phone,
+        profileName: document.querySelector('[data-testid="user-profile"]')?.textContent || "",
+        isReady: true,
+        connectedAt: Date.now(),
+      },
+    });
+
+    // Escuchar comandos desde el Content Script
+    window.addEventListener("message", handleCommands);
+
+    console.log("[WhatsAppEngine] Listo y escuchando comandos");
+  } catch (err) {
+    console.error("[WhatsAppEngine] Error en inicialización:", err);
+    postFromInjected("WA_EVENT", {
+      event: "SESSION_LOST",
+      payload: { error: (err as Error).message, timestamp: Date.now() },
+    });
+  }
+}
+
+async function handleCommands(event: MessageEvent): Promise<void> {
+  if (event.source !== window.parent && event.source !== window) return;
+  const msg = event.data;
+  if (msg?.source !== "MAPLE_WA_CONTENT") return;
+  if (msg?.channel !== "WA_COMMAND") return;
+
+  const { id, event: rawCmdEvent, payload } = msg;
+  const cmdEvent = (rawCmdEvent || "").toUpperCase().replace(/-/g, "_");
+  let response: any = null;
+  let error: string | null = null;
+
+  try {
+    switch (cmdEvent) {
+      case "SEND_MESSAGE": {
+        const sendResult = await senderEngine.send({
+          chatId: payload.chatId,
+          text: payload.text,
+          media: payload.media,
+          caption: payload.caption,
+          quotedMsgId: payload.quotedMsgId,
+          options: payload.options,
+        });
+        if (!sendResult.success) {
+          error = sendResult.error || "SEND_FAILED";
+        } else {
+          response = { messageId: sendResult.messageId, sent: true };
+        }
+        break;
+      }
+
+      case "GET_ACTIVE_CHAT":
+        response = await chatDetector.getActiveChat();
+        break;
+
+      case "GET_CHAT_LIST":
+        response = await chatDetector.getChatList();
+        break;
+
+      case "GET_CHAT_MESSAGES":
+        response = await chatDetector.getChatMessages(payload.chatId, payload.options);
+        break;
+
+      case "FIND_CHAT":
+        response = await chatDetector.findChat(payload.chatId);
+        break;
+
+      case "GET_CONTACT_LIST":
+        response = await contactDetector.getContactList();
+        break;
+
+      case "GET_CONTACT":
+        response = await contactDetector.getContact(payload.contactId);
+        break;
+
+      case "GET_PROFILE_PICTURE":
+        response = await contactDetector.getProfilePictureUrl(payload.contactId);
+        break;
+
+      case "GET_LABELS":
+        response = await contactDetector.getLabels();
+        break;
+
+      case "GET_WPP_STATUS":
+        response = {
+          ready: isWPPReady(),
+          timestamp: Date.now(),
+        };
+        break;
+
+      case "PING":
+        response = { pong: true, timestamp: Date.now() };
+        break;
+
+      default:
+        error = `Comando desconocido: ${cmdEvent}`;
+    }
+  } catch (err: any) {
+    error = err?.message || String(err);
+    console.error(`[WhatsAppEngine] Error ejecutando ${cmdEvent}:`, err);
+  }
+
+  // Responder al Content Script
+  postFromInjected("WA_RESPONSE", {
+    id,
+    payload: error ? { error } : response,
+  });
+}
