@@ -61,11 +61,22 @@ export const deleteTag = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+async function assertContactInOrg(contactId: string, orgId: string) {
+  const { data: contact } = await supabaseAdmin
+    .from("contacts")
+    .select("id")
+    .eq("id", contactId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (!contact) throw new Error("Contact not found");
+}
+
 export const listContactTags = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ contactId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
+    await assertContactInOrg(data.contactId, orgId);
     const { data: rows } = await supabaseAdmin
       .from("contact_tags")
       .select("tag_id, tags(id, name, color)")
@@ -83,6 +94,7 @@ export const addContactTag = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
+    await assertContactInOrg(data.contactId, orgId);
     const { data: tag } = await supabaseAdmin
       .from("tags")
       .select("id")
@@ -104,6 +116,7 @@ export const removeContactTag = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
+    await assertContactInOrg(data.contactId, orgId);
     const { error } = await supabaseAdmin
       .from("contact_tags")
       .delete()
@@ -112,3 +125,4 @@ export const removeContactTag = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { success: true };
   });
+
