@@ -14,99 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
-      ai_actions_log: {
-        Row: {
-          action_details: string
-          action_name: string
-          created_at: string
-          id: string
-          org_id: string
-          thread_id: string
-        }
-        Insert: {
-          action_details: string
-          action_name: string
-          created_at?: string
-          id?: string
-          org_id: string
-          thread_id: string
-        }
-        Update: {
-          action_details?: string
-          action_name?: string
-          created_at?: string
-          id?: string
-          org_id?: string
-          thread_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ai_actions_log_org_id_fkey"
-            columns: ["org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ai_actions_log_thread_id_fkey"
-            columns: ["thread_id"]
-            isOneToOne: false
-            referencedRelation: "threads"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       ai_configs: {
         Row: {
           enabled: boolean
           knowledge_base: string
           model: string
-          openai_api_key: string | null
           org_id: string
           provider: string
           respond_to: string
-          selected_provider: string | null
           system_prompt: string
           updated_at: string
           vertex_location: string | null
           vertex_model: string | null
           vertex_project: string | null
-          vertex_service_account_json: string | null
-          grok_api_key: string | null
         }
         Insert: {
           enabled?: boolean
           knowledge_base?: string
           model?: string
-          openai_api_key?: string | null
           org_id: string
           provider?: string
           respond_to?: string
-          selected_provider?: string | null
           system_prompt?: string
           updated_at?: string
           vertex_location?: string | null
           vertex_model?: string | null
           vertex_project?: string | null
-          vertex_service_account_json?: string | null
-          grok_api_key?: string | null
         }
         Update: {
           enabled?: boolean
           knowledge_base?: string
           model?: string
-          openai_api_key?: string | null
           org_id?: string
           provider?: string
           respond_to?: string
-          selected_provider?: string | null
           system_prompt?: string
           updated_at?: string
           vertex_location?: string | null
           vertex_model?: string | null
           vertex_project?: string | null
-          vertex_service_account_json?: string | null
-          grok_api_key?: string | null
         }
         Relationships: [
           {
@@ -277,6 +223,7 @@ export type Database = {
           id: string
           org_id: string
           phone: string | null
+          pipeline_stage_id: string | null
           updated_at: string
           wa_id: string
         }
@@ -286,6 +233,7 @@ export type Database = {
           id?: string
           org_id: string
           phone?: string | null
+          pipeline_stage_id?: string | null
           updated_at?: string
           wa_id: string
         }
@@ -295,6 +243,7 @@ export type Database = {
           id?: string
           org_id?: string
           phone?: string | null
+          pipeline_stage_id?: string | null
           updated_at?: string
           wa_id?: string
         }
@@ -304,6 +253,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contacts_pipeline_stage_id_fkey"
+            columns: ["pipeline_stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
             referencedColumns: ["id"]
           },
         ]
@@ -482,6 +438,41 @@ export type Database = {
         }
         Relationships: []
       }
+      pipeline_stages: {
+        Row: {
+          color: string
+          created_at: string | null
+          id: string
+          name: string
+          org_id: string
+          position: number
+        }
+        Insert: {
+          color?: string
+          created_at?: string | null
+          id?: string
+          name: string
+          org_id: string
+          position: number
+        }
+        Update: {
+          color?: string
+          created_at?: string | null
+          id?: string
+          name?: string
+          org_id?: string
+          position?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_stages_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -556,6 +547,7 @@ export type Database = {
       }
       threads: {
         Row: {
+          assigned_to_user_id: string | null
           contact_id: string
           created_at: string
           id: string
@@ -565,6 +557,7 @@ export type Database = {
           unread_count: number
         }
         Insert: {
+          assigned_to_user_id?: string | null
           contact_id: string
           created_at?: string
           id?: string
@@ -574,6 +567,7 @@ export type Database = {
           unread_count?: number
         }
         Update: {
+          assigned_to_user_id?: string | null
           contact_id?: string
           created_at?: string
           id?: string
@@ -640,74 +634,39 @@ export type Database = {
       }
       wa_sessions: {
         Row: {
-          battery_level: number | null
           created_at: string
           created_by: string | null
-          default_agent_id: string | null
-          default_flow_id: string | null
-          device_name: string | null
           id: string
           label: string
           last_heartbeat_at: string | null
-          last_sync_at: string | null
           me_wa_id: string | null
           org_id: string
-          phone_number: string | null
-          platform: string | null
           session_token: string
           status: Database["public"]["Enums"]["wa_session_status"]
         }
         Insert: {
-          battery_level?: number | null
           created_at?: string
           created_by?: string | null
-          default_agent_id?: string | null
-          default_flow_id?: string | null
-          device_name?: string | null
           id?: string
           label?: string
           last_heartbeat_at?: string | null
-          last_sync_at?: string | null
           me_wa_id?: string | null
           org_id: string
-          phone_number?: string | null
-          platform?: string | null
           session_token: string
           status?: Database["public"]["Enums"]["wa_session_status"]
         }
         Update: {
-          battery_level?: number | null
           created_at?: string
           created_by?: string | null
-          default_agent_id?: string | null
-          default_flow_id?: string | null
-          device_name?: string | null
           id?: string
           label?: string
           last_heartbeat_at?: string | null
-          last_sync_at?: string | null
           me_wa_id?: string | null
           org_id?: string
-          phone_number?: string | null
-          platform?: string | null
           session_token?: string
           status?: Database["public"]["Enums"]["wa_session_status"]
         }
         Relationships: [
-          {
-            foreignKeyName: "wa_sessions_default_agent_id_fkey"
-            columns: ["default_agent_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "wa_sessions_default_flow_id_fkey"
-            columns: ["default_flow_id"]
-            isOneToOne: false
-            referencedRelation: "flows"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "wa_sessions_org_id_fkey"
             columns: ["org_id"]
