@@ -223,19 +223,6 @@ export const sendMessage = createServerFn({ method: "POST" })
       throw new Error(msg.includes("fetch") ? "Failed to convert media URL to base64" : msg);
     }
 
-    const { data: cmd, error } = await supabaseAdmin
-      .from("engine_commands")
-      .insert({
-        org_id: orgId,
-        session_id: thread.session_id,
-        type: "SEND_MESSAGE",
-        payload,
-        status: "pending",
-      })
-      .select("id")
-      .single();
-    if (error || !cmd) throw new Error(error?.message || "insert failed");
-
     const displayText = sanitizeMessageText(
       data.caption || data.text,
       data.caption
@@ -247,15 +234,37 @@ export const sendMessage = createServerFn({ method: "POST" })
           ? { url: data.media_url }
           : null;
 
-    await supabaseAdmin.from("messages").insert({
+    // Generar un ID para el comando para poder usarlo en el wa_message_id
+    const cmdId = crypto.randomUUID();
+
+    const { error: insertErr } = await supabaseAdmin.from("messages").insert({
       org_id: orgId,
       thread_id: data.threadId,
       direction: "out",
       text: displayText,
       media: messageMedia,
-      wa_message_id: `pending-${cmd.id}`,
+      wa_message_id: `pending-${cmdId}`,
       sent_at: new Date().toISOString(),
     });
+    
+    if (insertErr) {
+      console.error("[sendMessage] Error inserting pending message:", insertErr);
+      throw new Error(`Error al guardar mensaje pendiente: ${insertErr.message}`);
+    }
+
+    const { data: cmd, error } = await supabaseAdmin
+      .from("engine_commands")
+      .insert({
+        id: cmdId,
+        org_id: orgId,
+        session_id: thread.session_id,
+        type: "SEND_MESSAGE",
+        payload,
+        status: "pending",
+      })
+      .select("id")
+      .single();
+    if (error || !cmd) throw new Error(error?.message || "insert failed");
 
     await supabaseAdmin
       .from("threads")
