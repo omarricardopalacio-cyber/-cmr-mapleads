@@ -1,5 +1,8 @@
 -- Fix para asegurar que las columnas de auto_replies existan en instancias donde la migración anterior ya había corrido
 ALTER TABLE public.auto_replies
+ADD COLUMN IF NOT EXISTS trigger_type TEXT DEFAULT 'keyword',
+ADD COLUMN IF NOT EXISTS media_url TEXT,
+ADD COLUMN IF NOT EXISTS mime_type TEXT,
 ADD COLUMN IF NOT EXISTS action_add_tags UUID[],
 ADD COLUMN IF NOT EXISTS action_remove_tags UUID[],
 ADD COLUMN IF NOT EXISTS action_ai_behavior TEXT DEFAULT 'no_change';
