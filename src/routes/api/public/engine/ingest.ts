@@ -780,15 +780,20 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             }
 
             const direction = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
-            if (direction === 'out' && e.text) {
+            if (direction === 'out') {
               const since = new Date(Date.now() - 15_000).toISOString()
-              const { data: recentOut } = await supabaseAdmin
+              let query = supabaseAdmin
                 .from('messages')
                 .select('id, wa_message_id, media')
                 .eq('thread_id', thread.id)
                 .eq('direction', 'out')
-                .eq('text', e.text)
                 .gte('sent_at', since)
+              
+              if (e.text) {
+                query = query.eq('text', e.text)
+              }
+              
+              const { data: recentOut } = await query
                 .order('sent_at', { ascending: false })
                 .limit(1)
                 .maybeSingle()
