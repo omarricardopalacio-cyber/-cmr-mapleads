@@ -834,17 +834,20 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
 
               if (recentOut?.wa_message_id?.startsWith('pending-')) {
-                // Prevenir que la extensión borre destructivamente la URL multimedia ya guardada en base de datos
-                const originalMedia = recentOut.media as any;
-                const newMedia = enrichedMedia as any;
+                // El mensaje pendiente fue creado por el CRM, lo que significa que el CRM ya subió el archivo a Storage.
+                // La extensión no tiene el archivo (sin base64), así que simplemente ignoramos el media de la extensión
+                // y conservamos intacto el media original que ya tiene la URL.
+                let finalMedia = recentOut.media;
                 
-                // Si originalMedia ya tenía url, la conservamos y descartamos el error de "falta base64" de la extensión
-                let finalMedia = newMedia ?? null;
-                if (originalMedia?.url) {
-                  finalMedia = { ...originalMedia };
-                  // Si la extensión trajo un mimeType distinto u otro dato útil, lo podríamos mezclar, pero priorizamos no tener error
-                } else if (newMedia?.url) {
-                  finalMedia = newMedia;
+                // Por si acaso la base de datos lo devuelve como string
+                if (typeof finalMedia === 'string') {
+                  try { finalMedia = JSON.parse(finalMedia); } catch {}
+                }
+
+                // Si por alguna razón el original no tiene URL, pero el nuevo sí (muy raro en salidas), lo usamos
+                const parsedNewMedia = enrichedMedia as any;
+                if (!finalMedia?.url && parsedNewMedia?.url) {
+                  finalMedia = parsedNewMedia;
                 }
 
                 await supabaseAdmin

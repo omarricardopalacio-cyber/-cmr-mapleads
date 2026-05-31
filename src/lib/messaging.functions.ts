@@ -229,7 +229,7 @@ export const sendMessage = createServerFn({ method: "POST" })
     );
     const messageMedia =
       data.media_url && data.mime_type
-        ? { url: data.media_url, mime_type: data.mime_type }
+        ? { url: data.media_url, mimeType: data.mime_type, mime_type: data.mime_type }
         : data.media_url
           ? { url: data.media_url }
           : null;

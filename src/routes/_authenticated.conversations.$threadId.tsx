@@ -491,7 +491,7 @@ function ThreadPage() {
           {mergedMessages.map((m) => {
             const displayText = sanitizeMessageText(m.text);
             const mediaObj = (m.media as { url?: string; mimeType?: string; filename?: string; caption?: string; error?: string }) ?? null;
-            const mime = mediaObj?.mimeType || "";
+            const mime = (mediaObj?.mimeType || (mediaObj as any)?.mime_type || (mediaObj as any)?.mimetype || "")?.toLowerCase();
             const isImage = mime.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
             const isVideo = mime.startsWith("video/");
             const isAudio = mime.startsWith("audio/");
