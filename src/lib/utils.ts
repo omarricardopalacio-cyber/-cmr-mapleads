@@ -12,21 +12,34 @@ interface ContactLike {
 }
 
 export function getContactDisplayName(contact: ContactLike | null | undefined, indexFallback?: number): string {
-  const display = contact?.display_name?.trim() ?? "";
-  const looksNumeric = /^\+?\d{6,}$/.test(display);
-  if (display && display.toLowerCase() !== "unknown" && !looksNumeric) {
-    return display;
+  // Si display_name es nulo, vacío, 'unknown' o igual al wa_id, usar teléfono formateado
+  if (!contact?.display_name || contact.display_name === "unknown" || contact.display_name.trim() === "" || contact.display_name === contact.wa_id) {
+    const formattedPhone = formatPhoneOrWaId(contact);
+    if (formattedPhone !== 'Sin Número') {
+      const cleanPhone = formattedPhone.replace(/\D/g, ''); // Solo dígitos
+      const last4 = cleanPhone.slice(-4);
+      return `Cliente ${last4}`;
+    }
   }
-  return indexFallback ? `Cliente ${indexFallback}` : "Cliente";
+  // Si tiene un display_name válido, usarlo
+  if (contact?.display_name && contact.display_name !== "unknown" && contact.display_name.trim() !== "") {
+    return contact.display_name;
+  }
+  // Fallback final
+  return `Cliente ${indexFallback ?? "Nuevo"}`;
 }
 
 export function formatPhoneOrWaId(contact: ContactLike | null | undefined): string {
-  if (contact?.phone && contact.phone.trim() !== "") {
-    return `+${contact.phone.replace(/\D/g, "")}`;
+  if (!contact) return 'Sin Número';
+  // 1. Prioridad: Si tiene teléfono real, muéstralo con un '+' elegante
+  if (contact.phone && contact.phone.trim() !== '') {
+    const cleanPhone = contact.phone.replace(/\D/g, ''); // Solo dígitos
+    return `+${cleanPhone}`;
   }
-  if (contact?.wa_id) {
-    if (/@lid$/i.test(contact.wa_id)) return "Sin número";
-    return contact.wa_id.replace(/@lid$/, "").replace(/@c\.us$/, "").replace(/@s\.whatsapp\.net$/, "");
+  // 2. Si es un JID (@lid o @c.us), límpialo de raíz
+  if (contact.wa_id) {
+    const cleanId = contact.wa_id.split('@')[0]; // Toma solo los números antes del arroba
+    return `+${cleanId}`;
   }
-  return "—";
+  return 'Sin Número';
 }

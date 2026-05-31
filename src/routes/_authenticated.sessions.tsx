@@ -247,14 +247,15 @@ function SessionCard({ session, backendBase }: { session: SessionRow; backendBas
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const isConnected = session.status === "connected";
-  const lastHb = session.last_heartbeat_at ? new Date(session.last_heartbeat_at) : null;
+  const isConnected = session?.status === "connected";
+  const lastHb = session?.last_heartbeat_at ? new Date(session.last_heartbeat_at) : null;
   const secSince = lastHb ? Math.round((Date.now() - lastHb.getTime()) / 1000) : null;
   const syncText =
     secSince == null ? "Sin señal" : secSince < 60 ? `Sincronizado hace ${secSince}s` : `Sincronizado hace ${Math.round(secSince / 60)} min`;
 
-  const BatteryIcon = session.battery_level == null ? Battery : session.battery_level <= 20 ? BatteryLow : session.battery_level <= 60 ? BatteryMedium : BatteryFull;
-  const batteryColor = session.battery_level == null ? "text-muted-foreground" : session.battery_level <= 20 ? "text-red-500" : session.battery_level <= 60 ? "text-amber-500" : "text-emerald-500";
+  const batteryLevel = session?.battery_level ?? null;
+  const BatteryIcon = batteryLevel == null ? Battery : batteryLevel <= 20 ? BatteryLow : batteryLevel <= 60 ? BatteryMedium : BatteryFull;
+  const batteryColor = batteryLevel == null ? "text-muted-foreground" : batteryLevel <= 20 ? "text-red-500" : batteryLevel <= 60 ? "text-amber-500" : "text-emerald-500";
 
   return (
     <Card className="relative overflow-hidden">
@@ -262,8 +263,8 @@ function SessionCard({ session, backendBase }: { session: SessionRow; backendBas
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between">
           <div className="space-y-0.5 min-w-0">
-            <CardTitle className="text-sm font-semibold truncate">{session.label}</CardTitle>
-            <div className="text-[11px] text-muted-foreground truncate">{session.phone_number ?? session.me_wa_id ?? "Sin número"}</div>
+            <CardTitle className="text-sm font-semibold truncate">{session?.label ?? "Sesión sin nombre"}</CardTitle>
+            <div className="text-[11px] text-muted-foreground truncate">{session?.phone_number ?? session?.me_wa_id ?? "Sin número"}</div>
           </div>
           <Badge variant={isConnected ? "default" : "destructive"} className={`text-[10px] gap-1 ${isConnected ? "bg-emerald-500 hover:bg-emerald-600" : ""}`}>
             {isConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
@@ -275,15 +276,15 @@ function SessionCard({ session, backendBase }: { session: SessionRow; backendBas
         <div className="grid grid-cols-2 gap-2">
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <BatteryIcon className={`h-3.5 w-3.5 ${batteryColor}`} />
-            <span>{session.battery_level != null ? `${session.battery_level}%` : "N/A"}</span>
+            <span>{batteryLevel != null ? `${batteryLevel}%` : "N/A"}</span>
           </div>
           <div className="flex items-center gap-1.5 text-muted-foreground">
             <MonitorSmartphone className="h-3.5 w-3.5" />
-            <span className="truncate">{session.platform ?? "Desconocido"}</span>
+            <span className="truncate">{session?.platform ?? "Desconocido"}</span>
           </div>
           <div className="flex items-center gap-1.5 text-muted-foreground col-span-2">
             <Smartphone className="h-3.5 w-3.5" />
-            <span className="truncate">{session.device_name ?? "Dispositivo no reportado"}</span>
+            <span className="truncate">{session?.device_name ?? "Dispositivo no reportado"}</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -307,9 +308,9 @@ function SessionCard({ session, backendBase }: { session: SessionRow; backendBas
           <div className="break-all text-muted-foreground">{backendBase}</div>
           <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">
             <span className="text-muted-foreground">Token</span>
-            <CopyButton value={session.session_token} />
+            <CopyButton value={session?.session_token ?? ""} />
           </div>
-          <div className="break-all text-muted-foreground">{session.session_token}</div>
+          <div className="break-all text-muted-foreground">{session?.session_token ?? "N/A"}</div>
         </div>
         <Sheet open={cfgOpen} onOpenChange={setCfgOpen}>
           <SheetTrigger asChild>
