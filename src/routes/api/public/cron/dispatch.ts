@@ -21,9 +21,22 @@ export const Route = createFileRoute("/api/public/cron/dispatch")({
   },
 });
 
+function timingSafeStringEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
 async function handler({ request }: { request: Request }) {
-  const apikey = request.headers.get("apikey") ?? request.headers.get("authorization");
-  if (!apikey) return json(401, { error: "missing apikey" });
+  const CRON_SECRET = process.env.CRON_SECRET;
+  if (!CRON_SECRET) return json(500, { error: "server not configured: CRON_SECRET missing" });
+  const raw = request.headers.get("apikey") ?? request.headers.get("authorization") ?? "";
+  const apikey = raw.replace(/^Bearer\s+/i, "").trim();
+  if (!apikey || !timingSafeStringEqual(apikey, CRON_SECRET)) {
+    return json(401, { error: "invalid apikey" });
+  }
+
 
   const result = { scheduled: 0, broadcast: 0 };
   const now = new Date().toISOString();
