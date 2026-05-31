@@ -78,10 +78,18 @@ function SessionsPage() {
   const [logs, setLogs] = useState<Array<{ id: string; text: string; ts: Date }>>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["wa-sessions"],
     queryFn: () => listFn({}),
   });
+
+  // Logging temporal para depuración
+  useEffect(() => {
+    console.log("[Sessions Debug] isLoading:", isLoading);
+    console.log("[Sessions Debug] data:", data);
+    console.log("[Sessions Debug] error:", error);
+    console.log("[Sessions Debug] sessions count:", data?.sessions?.length ?? 0);
+  }, [data, isLoading, error]);
 
   const mut = useMutation({
     mutationFn: (l: string) => createFn({ data: { label: l } }),
