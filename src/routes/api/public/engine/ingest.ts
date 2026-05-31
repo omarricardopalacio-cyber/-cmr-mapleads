@@ -761,6 +761,21 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               session.org_id,
             )
 
+            if (e.media && !enrichedMedia) {
+              console.warn('[ingest] ⚠️ Media PERDIDA en processMediaUpload. Input:', {
+                mediaType: (e.media as any)?.type,
+                hasBase64: !!(e.media as any)?.base64,
+                base64Len: ((e.media as any)?.base64 || '').length,
+              });
+            }
+
+            if (!enrichedMedia && e.media) {
+              console.log('[ingest] ℹ️ No enrichedMedia pero sí hay media objeto:', {
+                waMessageId: e.waMessageId,
+                textLen: e.text?.length,
+              });
+            }
+
             const direction = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
             if (direction === 'out' && e.text) {
               const since = new Date(Date.now() - 15_000).toISOString()

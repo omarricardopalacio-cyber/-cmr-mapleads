@@ -121,7 +121,9 @@ function ThreadPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => list({ data: { threadId } }),
-    refetchInterval: 5000,
+    refetchInterval: 3000,  // Reducido de 5s a 3s para detectar cambios más rápido
+    refetchOnMount: true,   // Refetch cuando monta el componente
+    refetchOnWindowFocus: true,  // Refetch cuando vuelve a la ventana
     retry: false,
   });
 
@@ -219,7 +221,21 @@ function ThreadPage() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `thread_id=eq.${threadId}` },
-        () => qc.invalidateQueries({ queryKey: ["thread", threadId] })
+        () => {
+          console.log('[REALTIME] INSERT detectado, invalidando query');
+          qc.invalidateQueries({ queryKey: ["thread", threadId] });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages", filter: `thread_id=eq.${threadId}` },
+        (payload) => {
+          console.log('[REALTIME] UPDATE detectado (media procesada)', {
+            waMessageId: (payload.new as any)?.wa_message_id,
+            hasMedia: !!(payload.new as any)?.media,
+          });
+          qc.invalidateQueries({ queryKey: ["thread", threadId] });
+        }
       )
       .subscribe();
     return () => {
@@ -295,6 +311,8 @@ function ThreadPage() {
       setText("");
       setShowQr(false);
       qc.invalidateQueries({ queryKey: ["thread", threadId] });
+      // Refetch inmediato para mostrar el mensaje encolado sin esperar 3 segundos
+      await qc.refetchQueries({ queryKey: ["thread", threadId] });
       toast.success(mediaUrl ? "Multimedia encolada" : "Mensaje encolado");
     } catch (err: unknown) {
       toast.error((err as Error)?.message ?? "Error al enviar");
@@ -478,6 +496,10 @@ function ThreadPage() {
             const isVideo = mime.startsWith("video/");
             const isAudio = mime.startsWith("audio/");
             const isDoc = !isImage && !isVideo && !isAudio && mediaObj?.url;
+            
+            // Debug: Si hay media pero no URL, mostrar warning
+            const hasMediaButNoUrl = m.media && !mediaObj?.url;
+            
             return (
               <div
                 key={m.id}
@@ -523,9 +545,13 @@ function ThreadPage() {
                         </a>
                       </div>
                     </div>
+                  ) : hasMediaButNoUrl ? (
+                    <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-2">
+                      <span className="text-xs text-yellow-600">⚠️ Media sin URL (sincronizando...)</span>
+                    </div>
                   ) : null}
                   {displayText ? <div className={mediaObj?.url ? "mt-2" : ""}>{displayText}</div> : null}
-                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && (
+                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && (
                     <i className="opacity-60">[mensaje vacío]</i>
                   )}
                 </div>
