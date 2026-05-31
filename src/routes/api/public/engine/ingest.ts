@@ -781,7 +781,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
             const direction = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
             if (direction === 'out') {
-              const since = new Date(Date.now() - 15_000).toISOString()
+              // Buscar mensajes en los últimos 2 minutos en lugar de 15s por si tarda en subir a WA
+              const since = new Date(Date.now() - 120_000).toISOString()
               let query = supabaseAdmin
                 .from('messages')
                 .select('id, wa_message_id, media')
@@ -793,17 +794,31 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 query = query.eq('text', e.text)
               }
               
+              if (e.media) {
+                // Si el evento de la extensión confirma un multimedia, buscar un mensaje pendiente que también tenga multimedia
+                query = query.not('media', 'is', null)
+              } else if (!e.text) {
+                // Si no hay texto ni media, tal vez es un mensaje vacío, no filtramos por media
+              }
+
               const { data: recentOut } = await query
                 .order('sent_at', { ascending: false })
                 .limit(1)
                 .maybeSingle()
+              
               if (recentOut?.wa_message_id?.startsWith('pending-')) {
                 // Prevenir que la extensión borre destructivamente la URL multimedia ya guardada en base de datos
                 const originalMedia = recentOut.media as any;
                 const newMedia = enrichedMedia as any;
-                const finalMedia = newMedia?.url 
-                  ? newMedia 
-                  : (originalMedia?.url ? originalMedia : (newMedia ?? null));
+                
+                // Si originalMedia ya tenía url, la conservamos y descartamos el error de "falta base64" de la extensión
+                let finalMedia = newMedia ?? null;
+                if (originalMedia?.url) {
+                  finalMedia = { ...originalMedia };
+                  // Si la extensión trajo un mimeType distinto u otro dato útil, lo podríamos mezclar, pero priorizamos no tener error
+                } else if (newMedia?.url) {
+                  finalMedia = newMedia;
+                }
 
                 await supabaseAdmin
                   .from('messages')
