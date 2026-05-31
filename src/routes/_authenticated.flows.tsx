@@ -401,6 +401,7 @@ function StepEditor({ flowId, step, steps, onSave, onCancel }: { flowId: string;
   const [text, setText] = useState(step.step_data?.text ?? "");
   const [mediaUrl, setMediaUrl] = useState(step.step_data?.media_url ?? "");
   const [mimeType, setMimeType] = useState(step.step_data?.mime_type ?? "");
+  const [mediaType, setMediaType] = useState(step.step_data?.media_type ?? "image");
   const [amount, setAmount] = useState(step.step_data?.amount ?? 1);
   const [unit, setUnit] = useState(step.step_data?.unit ?? "hours");
   const [tagId, setTagId] = useState(step.step_data?.tag_id ?? "");
@@ -442,15 +443,33 @@ function StepEditor({ flowId, step, steps, onSave, onCancel }: { flowId: string;
       )}
 
       {type === "send_media" && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-3">
           <div className="space-y-1">
-            <Label className="text-xs">URL media</Label>
+            <Label className="text-xs">Tipo de media</Label>
+            <Select value={mediaType} onValueChange={setMediaType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="image">Imagen</SelectItem>
+                <SelectItem value="video">Video</SelectItem>
+                <SelectItem value="document">Documento</SelectItem>
+                <SelectItem value="audio">Audio</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">URL del archivo</Label>
             <Input value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} placeholder="https://..." />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">MIME type</Label>
-            <Input value={mimeType} onChange={(e) => setMimeType(e.target.value)} placeholder="image/jpeg" />
+            <Label className="text-xs">Caption (opcional)</Label>
+            <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Texto descriptivo del archivo" />
           </div>
+          {mediaType === "document" && (
+            <div className="space-y-1">
+              <Label className="text-xs">Nombre del archivo (opcional)</Label>
+              <Input value={mimeType} onChange={(e) => setMimeType(e.target.value)} placeholder="documento.pdf" />
+            </div>
+          )}
         </div>
       )}
 
@@ -523,7 +542,7 @@ function StepEditor({ flowId, step, steps, onSave, onCancel }: { flowId: string;
           flow_id: flowId,
           step_type: type,
           step_order: order,
-          step_data: type === "send_message" ? { text } : type === "send_media" ? { media_url: mediaUrl, mime_type: mimeType } : type === "wait" ? { amount, unit } : type === "add_tag" || type === "remove_tag" ? { tag_id: tagId } : type === "toggle_ai" ? { ai_enabled: aiEnabled } : {},
+          step_data: type === "send_message" ? { text } : type === "send_media" ? { media_url: mediaUrl, media_type: mediaType, mime_type: mimeType, caption: text } : type === "wait" ? { amount, unit } : type === "add_tag" || type === "remove_tag" ? { tag_id: tagId } : type === "toggle_ai" ? { ai_enabled: aiEnabled } : {},
           parent_step_id: parentStepId === "none" ? null : parentStepId,
           branch: parentStepId && parentStepId !== "none" ? branch : null,
         })}>
