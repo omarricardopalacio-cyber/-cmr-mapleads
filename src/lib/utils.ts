@@ -12,17 +12,12 @@ interface ContactLike {
 }
 
 export function getContactDisplayName(contact: ContactLike | null | undefined, indexFallback?: number): string {
-  if (contact?.display_name && contact.display_name !== "unknown" && contact.display_name.trim() !== "") {
-    return contact.display_name;
+  const display = contact?.display_name?.trim() ?? "";
+  const looksNumeric = /^\+?\d{6,}$/.test(display);
+  if (display && display.toLowerCase() !== "unknown" && !looksNumeric) {
+    return display;
   }
-  if (contact?.phone && contact.phone.trim() !== "") {
-    return `Cliente ${contact.phone.slice(-4)}`;
-  }
-  if (contact?.wa_id) {
-    const clean = contact.wa_id.replace(/@lid$/, "").replace(/@c\.us$/, "").replace(/@s\.whatsapp\.net$/, "");
-    if (clean && clean.length > 3) return `Cliente ${clean}`;
-  }
-  return `Cliente ${indexFallback ?? "Nuevo"}`;
+  return indexFallback ? `Cliente ${indexFallback}` : "Cliente";
 }
 
 export function formatPhoneOrWaId(contact: ContactLike | null | undefined): string {
@@ -30,6 +25,7 @@ export function formatPhoneOrWaId(contact: ContactLike | null | undefined): stri
     return `+${contact.phone.replace(/\D/g, "")}`;
   }
   if (contact?.wa_id) {
+    if (/@lid$/i.test(contact.wa_id)) return "Sin número";
     return contact.wa_id.replace(/@lid$/, "").replace(/@c\.us$/, "").replace(/@s\.whatsapp\.net$/, "");
   }
   return "—";
