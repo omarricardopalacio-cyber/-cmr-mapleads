@@ -296,9 +296,22 @@ export const upsertFlow = createServerFn({ method: "POST" })
       .object({
         id: z.string().uuid().optional(),
         name: z.string().min(1).max(100),
-        trigger_type: z.enum(["keyword", "tag_added", "new_contact"]),
+        trigger_type: z.enum(["keyword", "tag_added", "new_contact", "manual"]),
         trigger_value: z.string().nullable().optional(),
         is_active: z.boolean().default(false),
+        description: z.string().nullable().optional(),
+        ai_mode: z.enum(["none", "on_completion", "during_flow", "on_response", "fallback", "time_limited"]).default("none"),
+        ai_time_limit_minutes: z.number().int().positive().nullable().optional(),
+        ai_enabled_after_flow: z.boolean().default(false),
+        ai_enabled_during_flow: z.boolean().default(false),
+        ai_fallback_enabled: z.boolean().default(false),
+        ai_transfer_on_failure: z.boolean().default(false),
+        ai_maintain_context: z.boolean().default(true),
+        ai_can_access_crm: z.boolean().default(true),
+        ai_can_access_tags: z.boolean().default(true),
+        ai_knowledge_sources: z.array(z.any()).default([]),
+        ai_transfer_rules: z.array(z.any()).default([]),
+        ai_custom_system_prompt: z.string().nullable().optional(),
       })
       .parse(d)
   )
@@ -310,6 +323,19 @@ export const upsertFlow = createServerFn({ method: "POST" })
       trigger_type: data.trigger_type,
       trigger_value: data.trigger_value ?? null,
       is_active: data.is_active,
+      description: data.description ?? null,
+      ai_mode: data.ai_mode,
+      ai_time_limit_minutes: data.ai_time_limit_minutes ?? null,
+      ai_enabled_after_flow: data.ai_enabled_after_flow,
+      ai_enabled_during_flow: data.ai_enabled_during_flow,
+      ai_fallback_enabled: data.ai_fallback_enabled,
+      ai_transfer_on_failure: data.ai_transfer_on_failure,
+      ai_maintain_context: data.ai_maintain_context,
+      ai_can_access_crm: data.ai_can_access_crm,
+      ai_can_access_tags: data.ai_can_access_tags,
+      ai_knowledge_sources: data.ai_knowledge_sources,
+      ai_transfer_rules: data.ai_transfer_rules,
+      ai_custom_system_prompt: data.ai_custom_system_prompt ?? null,
     };
     if (data.id) {
       const { data: row, error } = await dyn()
@@ -419,5 +445,135 @@ export const deleteFlowStep = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
     await supabaseAdmin.rpc("delete_flow_step_safe", { p_step_id: data.id, p_org_id: orgId });
+    return { ok: true };
+  });
+
+// ───── KNOWLEDGE SOURCES ─────
+export const listKnowledgeSources = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data } = await dyn()
+      .from("knowledge_sources")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+    return { items: data ?? [] };
+  });
+
+export const upsertKnowledgeSource = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        id: z.string().uuid().optional(),
+        name: z.string().min(1).max(200),
+        source_type: z.enum(["faq", "products", "services", "catalog", "pdf_document", "website", "internal_kb", "custom_prompt"]),
+        content: z.string().min(1),
+        metadata: z.record(z.any()).default({}),
+        is_active: z.boolean().default(true),
+      })
+      .parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const payload = {
+      org_id: orgId,
+      name: data.name,
+      source_type: data.source_type,
+      content: data.content,
+      metadata: data.metadata,
+      is_active: data.is_active,
+    };
+    if (data.id) {
+      const { data: row, error } = await dyn()
+        .from("knowledge_sources")
+        .update(payload)
+        .eq("id", data.id)
+        .eq("org_id", orgId)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return { item: row };
+    }
+    const { data: row, error } = await dyn()
+      .from("knowledge_sources")
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return { item: row };
+  });
+
+export const deleteKnowledgeSource = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await dyn().from("knowledge_sources").delete().eq("id", data.id).eq("org_id", orgId);
+    return { ok: true };
+  });
+
+// ───── TRANSFER RULES ─────
+export const listTransferRules = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { data } = await dyn()
+      .from("transfer_rules")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+    return { items: data ?? [] };
+  });
+
+export const upsertTransferRule = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        id: z.string().uuid().optional(),
+        name: z.string().min(1).max(200),
+        condition_type: z.enum(["request_human", "ai_no_response", "purchase_intent", "complaint", "support_request", "custom"]),
+        condition_config: z.record(z.any()).default({}),
+        is_active: z.boolean().default(true),
+      })
+      .parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const payload = {
+      org_id: orgId,
+      name: data.name,
+      condition_type: data.condition_type,
+      condition_config: data.condition_config,
+      is_active: data.is_active,
+    };
+    if (data.id) {
+      const { data: row, error } = await dyn()
+        .from("transfer_rules")
+        .update(payload)
+        .eq("id", data.id)
+        .eq("org_id", orgId)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return { item: row };
+    }
+    const { data: row, error } = await dyn()
+      .from("transfer_rules")
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    return { item: row };
+  });
+
+export const deleteTransferRule = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await dyn().from("transfer_rules").delete().eq("id", data.id).eq("org_id", orgId);
     return { ok: true };
   });

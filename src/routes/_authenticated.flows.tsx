@@ -11,6 +11,8 @@ import {
   listFlowSteps,
   upsertFlowStep,
   deleteFlowStep,
+  listKnowledgeSources,
+  listTransferRules,
 } from "@/lib/automations.functions";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Zap, GitBranch, Plus, Save, X, ArrowRight, Clock, MessageSquare, Image, Tag, Bot, Sparkles } from "lucide-react";
+import { Trash2, Zap, GitBranch, Plus, Save, X, ArrowRight, Clock, MessageSquare, Image, Tag, Bot, Sparkles, BookOpen, UserCheck, Settings } from "lucide-react";
 
 interface Flow {
   id: string;
@@ -144,6 +146,26 @@ function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () => void }
   const [triggerValue, setTriggerValue] = useState(existing?.trigger_value ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
 
+  // AI Configuration
+  const [aiMode, setAiMode] = useState(existing?.ai_mode ?? "none");
+  const [aiTimeLimitMinutes, setAiTimeLimitMinutes] = useState(existing?.ai_time_limit_minutes ?? 30);
+  const [aiEnabledAfterFlow, setAiEnabledAfterFlow] = useState(existing?.ai_enabled_after_flow ?? false);
+  const [aiEnabledDuringFlow, setAiEnabledDuringFlow] = useState(existing?.ai_enabled_during_flow ?? false);
+  const [aiFallbackEnabled, setAiFallbackEnabled] = useState(existing?.ai_fallback_enabled ?? false);
+  const [aiTransferOnFailure, setAiTransferOnFailure] = useState(existing?.ai_transfer_on_failure ?? false);
+  const [aiMaintainContext, setAiMaintainContext] = useState(existing?.ai_maintain_context ?? true);
+  const [aiCanAccessCrm, setAiCanAccessCrm] = useState(existing?.ai_can_access_crm ?? true);
+  const [aiCanAccessTags, setAiCanAccessTags] = useState(existing?.ai_can_access_tags ?? true);
+  const [aiCustomSystemPrompt, setAiCustomSystemPrompt] = useState(existing?.ai_custom_system_prompt ?? "");
+
+  // Load knowledge sources and transfer rules
+  const listKbFn = useServerFn(listKnowledgeSources);
+  const listTrFn = useServerFn(listTransferRules);
+  const { data: kbData } = useQuery({ queryKey: ["knowledgeSources"], queryFn: () => listKbFn({}) });
+  const { data: trData } = useQuery({ queryKey: ["transferRules"], queryFn: () => listTrFn({}) });
+  const knowledgeSources = (kbData as { items?: any[] })?.items ?? [];
+  const transferRules = (trData as { items?: any[] })?.items ?? [];
+
   const { data: stepsData } = useQuery({
     queryKey: ["flowSteps", flowId],
     queryFn: () => listStepsFn({ data: { flowId } }),
@@ -161,13 +183,24 @@ function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () => void }
         trigger_type: triggerType,
         trigger_value: triggerValue || null,
         description,
+        ai_mode: aiMode,
+        ai_time_limit_minutes: aiMode === "time_limited" ? aiTimeLimitMinutes : null,
+        ai_enabled_after_flow: aiEnabledAfterFlow,
+        ai_enabled_during_flow: aiEnabledDuringFlow,
+        ai_fallback_enabled: aiFallbackEnabled,
+        ai_transfer_on_failure: aiTransferOnFailure,
+        ai_maintain_context: aiMaintainContext,
+        ai_can_access_crm: aiCanAccessCrm,
+        ai_can_access_tags: aiCanAccessTags,
+        ai_knowledge_sources: [],
+        ai_transfer_rules: [],
+        ai_custom_system_prompt: aiCustomSystemPrompt || null,
       },
     });
     const savedFlow = (res as any)?.flow;
     if (savedFlow) {
       toast.success("Flujo guardado");
       if (isNew) {
-        // redirect editor to new flow id via close + reopen pattern handled by parent
         onClose();
         return;
       }
@@ -211,6 +244,74 @@ function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () => void }
       </div>
       <div className="flex gap-2">
         <Button size="sm" onClick={saveFlowMeta}><Save className="h-4 w-4 mr-1" />Guardar flujo</Button>
+      </div>
+
+      {/* AI Configuration Section */}
+      <div className="space-y-3 pt-2 border-t">
+        <div className="flex items-center gap-2">
+          <Bot className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium">Configuración de IA</h3>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Modo de IA</Label>
+            <Select value={aiMode} onValueChange={setAiMode}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No activar IA</SelectItem>
+                <SelectItem value="on_completion">Activar al finalizar flujo</SelectItem>
+                <SelectItem value="during_flow">Activar durante todo el flujo</SelectItem>
+                <SelectItem value="on_response">Activar solo si responde</SelectItem>
+                <SelectItem value="fallback">IA como respaldo</SelectItem>
+                <SelectItem value="time_limited">IA con límite de tiempo</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          {aiMode === "time_limited" && (
+            <div className="space-y-1">
+              <Label className="text-xs">Límite de tiempo (minutos)</Label>
+              <Input type="number" value={aiTimeLimitMinutes} onChange={(e) => setAiTimeLimitMinutes(Number(e.target.value))} />
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="flex items-center gap-2">
+            <Switch checked={aiEnabledAfterFlow} onCheckedChange={setAiEnabledAfterFlow} />
+            <Label className="text-xs">Activar al finalizar</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={aiEnabledDuringFlow} onCheckedChange={setAiEnabledDuringFlow} />
+            <Label className="text-xs">Activar durante flujo</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={aiFallbackEnabled} onCheckedChange={setAiFallbackEnabled} />
+            <Label className="text-xs">Usar como respaldo</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={aiTransferOnFailure} onCheckedChange={setAiTransferOnFailure} />
+            <Label className="text-xs">Transferir si falla</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={aiMaintainContext} onCheckedChange={setAiMaintainContext} />
+            <Label className="text-xs">Mantener contexto</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={aiCanAccessCrm} onCheckedChange={setAiCanAccessCrm} />
+            <Label className="text-xs">Acceso a CRM</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={aiCanAccessTags} onCheckedChange={setAiCanAccessTags} />
+            <Label className="text-xs">Acceso a etiquetas</Label>
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs">Prompt del sistema personalizado (opcional)</Label>
+          <Textarea value={aiCustomSystemPrompt} onChange={(e) => setAiCustomSystemPrompt(e.target.value)} placeholder="Instrucciones personalizadas para la IA..." rows={2} />
+        </div>
       </div>
 
       {!isNew && (
