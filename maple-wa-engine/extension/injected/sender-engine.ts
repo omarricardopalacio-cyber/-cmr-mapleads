@@ -93,46 +93,130 @@ class SenderEngine {
     return `${chatId}@c.us`;
   }
 
+  private extractVerifiedChatId(queryResult: unknown, fallback: string): string {
+    if (!queryResult) return fallback;
+    if (typeof queryResult === "string") return queryResult;
+    if (typeof queryResult === "boolean") return fallback;
+    if (typeof queryResult === "object") {
+      const record = queryResult as { wid?: string | { _serialized?: string } };
+      const wid = record.wid;
+      if (typeof wid === "string" && wid.includes("@")) return wid;
+      if (wid && typeof wid === "object" && wid._serialized) return wid._serialized;
+    }
+    return fallback;
+  }
+
   /**
-   * Fuerza la sincronización del LID en caché local de WhatsApp Web antes de enviar.
-   * Evita el error "No LID for user" en entornos multi-dispositivo.
+   * Resuelve el JID verificado en servidores de WhatsApp (@c.us, @lid, etc.).
+   * Los grupos (@g.us) omiten queryExists.
    */
   private async ensureContactLid(
     WPP: NonNullable<ReturnType<typeof getWPP>>,
     normalizedChatId: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; verifiedChatId?: string }> {
+    if (normalizedChatId.endsWith("@g.us")) {
+      return { success: true, verifiedChatId: normalizedChatId };
+    }
+
     const queryExists = WPP.contact?.queryExists;
     if (typeof queryExists !== "function") {
       console.error("[MAPLE SENDER] WPP.contact.queryExists no disponible en esta versión de WA-JS");
       return {
         success: false,
-        error: "Motor WPP desactualizado: no se puede resolver el LID del contacto.",
+        error: "Motor WPP desactualizado para queryExists",
       };
     }
 
-    console.log(
-      `[MAPLE SENDER] Resolviendo LID de usuario en servidores de WhatsApp para: ${normalizedChatId}`
-    );
+    console.log(`[MAPLE SENDER] Resolviendo LID de usuario para: ${normalizedChatId}`);
 
-    let lidExists = false;
     try {
-      lidExists = await queryExists.call(WPP.contact, normalizedChatId);
-    } catch (lidErr: unknown) {
-      const message = lidErr instanceof Error ? lidErr.message : String(lidErr);
-      console.error(
-        `[MAPLE SENDER] Error crítico al consultar existencia/LID de ${normalizedChatId}:`,
-        lidErr
+      const result = await queryExists.call(WPP.contact, normalizedChatId);
+
+      if (!result) {
+        return {
+          success: false,
+          error: LID_RESOLVE_ERROR,
+        };
+      }
+
+      const verifiedChatId = this.extractVerifiedChatId(result, normalizedChatId);
+      console.log(
+        `[MAPLE SENDER] LID resuelto con éxito. JID Verificado de WhatsApp: ${verifiedChatId}`
       );
-      throw new Error(`Fallo de red al sincronizar el contacto (LID): ${message}`);
+
+      return { success: true, verifiedChatId };
+    } catch (lidErr: unknown) {
+      console.error("[MAPLE SENDER] Error consultando queryExists, aplicando fallback:", lidErr);
+      return { success: true, verifiedChatId: normalizedChatId };
+    }
+  }
+
+  private buildSendOptions(task: SendTask): Record<string, unknown> {
+    const sendOptions: Record<string, unknown> = {
+      createChat: true,
+      ...(task.options || {}),
+    };
+
+    delete sendOptions.quotedMsg;
+    delete sendOptions.quotedMsgId;
+
+    if (
+      task.quotedMsgId &&
+      typeof task.quotedMsgId === "string" &&
+      task.quotedMsgId.trim() !== ""
+    ) {
+      sendOptions.quotedMsg = task.quotedMsgId.trim();
     }
 
-    if (!lidExists) {
-      console.warn(`[MAPLE SENDER] El contacto ${normalizedChatId} no existe en WhatsApp.`);
-      return { success: false, error: LID_RESOLVE_ERROR };
-    }
+    return sendOptions;
+  }
 
-    console.log(`[MAPLE SENDER] LID resuelto con éxito para ${normalizedChatId}. Procediendo al envío.`);
-    return { success: true };
+  private async executeTaskWithWpp(
+    WPP: NonNullable<ReturnType<typeof getWPP>>,
+    task: SendTask,
+    controller: AbortController
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const normalizedChatId = this.normalizeChatId(task.chatId);
+    const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT);
+
+    try {
+      const lidCheck = await this.ensureContactLid(WPP, normalizedChatId);
+      if (!lidCheck.success) {
+        return { success: false, error: lidCheck.error };
+      }
+
+      const targetChatId = lidCheck.verifiedChatId || normalizedChatId;
+      const sendOptions = this.buildSendOptions(task);
+
+      console.log(`[MAPLE SENDER] Iniciando transmisión hacia destinatario final: ${targetChatId}`);
+
+      let result: any;
+
+      if (task.media) {
+        result = await WPP.chat.sendFileMessage(targetChatId, task.media, {
+          type: task.options?.mimetype || "application/octet-stream",
+          caption: task.caption || task.text,
+          ...sendOptions,
+        });
+      } else {
+        result = await WPP.chat.sendTextMessage(targetChatId, task.text || "", sendOptions);
+      }
+
+      if (controller.signal.aborted) {
+        throw new Error("SEND_ABORTED");
+      }
+
+      const messageId = result?.id?._serialized || result?.id || task.taskId;
+      console.log(`[MAPLE SENDER] Mensaje transmitido con éxito. ID: ${messageId}`);
+      return { success: true, messageId };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[MAPLE SENDER] Fallo absoluto en la transmisión del mensaje:", err);
+      return { success: false, error: message || "SEND_ERROR" };
+    } finally {
+      clearTimeout(timeout);
+      this.activeTasks.delete(task.taskId);
+    }
   }
 
   private async executeTask(task: SendTask): Promise<{ success: boolean; messageId?: string; error?: string }> {
@@ -141,67 +225,10 @@ class SenderEngine {
       return { success: false, error: "WPP no disponible" };
     }
 
-    const normalizedChatId = this.normalizeChatId(task.chatId);
-
     const controller = new AbortController();
     this.activeTasks.set(task.taskId, controller);
 
-    const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT);
-
-    try {
-      const lidCheck = await this.ensureContactLid(WPP, normalizedChatId);
-      if (!lidCheck.success) {
-        clearTimeout(timeout);
-        this.activeTasks.delete(task.taskId);
-        return { success: false, error: lidCheck.error };
-      }
-
-      let result: any;
-
-      if (task.media) {
-        // Enviar archivo desde base64
-        result = await WPP.chat.sendFileMessage(
-          normalizedChatId,
-          task.media,
-          {
-            type: task.options?.mimetype || "application/octet-stream",
-            caption: task.caption || task.text,
-            quotedMsg: task.quotedMsgId,
-            createChat: true,
-          }
-        );
-      } else {
-        // Enviar texto
-        result = await WPP.chat.sendTextMessage(
-          normalizedChatId,
-          task.text || "",
-          {
-            quotedMsg: task.quotedMsgId,
-            createChat: true,
-            ...task.options,
-          }
-        );
-      }
-
-      if (controller.signal.aborted) {
-        throw new Error("SEND_ABORTED");
-      }
-
-      clearTimeout(timeout);
-      this.activeTasks.delete(task.taskId);
-
-      return {
-        success: true,
-        messageId: result?.id?._serialized || result?.id || task.taskId,
-      };
-    } catch (err: any) {
-      clearTimeout(timeout);
-      this.activeTasks.delete(task.taskId);
-      return {
-        success: false,
-        error: err?.message || "SEND_ERROR",
-      };
-    }
+    return this.executeTaskWithWpp(WPP, task, controller);
   }
 
   private async waitForRateLimit(): Promise<void> {

@@ -6,6 +6,7 @@
 import { waitForWPP, getWPP } from "./wpp-bootstrap";
 import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
+import { isBase64Thumbnail, sanitizeMessageBody } from "../shared/message-text";
 
 let listenersInitialized = false;
 let cleanupFns: Array<() => void> = [];
@@ -144,11 +145,6 @@ async function normalizeMessage(msg: any): Promise<any> {
     };
   }
 
-  let body = msg.body || "";
-  if (!body && (msg.type === "image" || msg.type === "video" || msg.type === "document")) {
-    body = msg.caption || "";
-  }
-
   const phoneNumber = getMyPhoneNumber();
 
   const media = extractMediaData(msg);
@@ -168,12 +164,26 @@ async function normalizeMessage(msg: any): Promise<any> {
     }
   }
 
+  const cleanBody = sanitizeMessageBody({
+    body: msg.body,
+    caption: msg.caption,
+    isMedia: msg.isMedia,
+    type: msg.type,
+  });
+
+  if (msg.isMedia && isBase64Thumbnail(msg.body)) {
+    console.log(
+      `[MAPLE EVENT ENGINE] Filtrado thumbnail base64 en body para mensaje ${msg.id?._serialized}. Usando caption.`
+    );
+  }
+
   return {
     messageId: msg.id?._serialized,
     chatId: msg.id?.remote?._serialized,
     from: msg.from?._serialized || msg.id?.remote?._serialized,
     to: msg.to?._serialized,
-    body,
+    body: cleanBody,
+    text: cleanBody,
     type: msg.type,
     timestamp: msg.t,
     fromMe: msg.id?.fromMe || false,

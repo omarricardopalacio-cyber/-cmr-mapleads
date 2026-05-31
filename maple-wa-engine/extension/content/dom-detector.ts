@@ -5,6 +5,7 @@
 // ============================================================
 
 import { sendToBackground } from "../bridge/postmessage";
+import { isBase64Thumbnail } from "../shared/message-text";
 
 const SEEN = new Map<string, number>();
 const TTL_MS = 120_000;
@@ -186,7 +187,10 @@ function extractTimestamp(node: HTMLElement): string | null {
 function parseMessageNode(node: HTMLElement): any {
   const dataId = node.getAttribute?.("data-id") || "";
   const dir = direction(node);
-  const text = extractText(node);
+  let text = extractText(node);
+  if (isBase64Thumbnail(text)) {
+    text = "";
+  }
   const tsLabel = extractTimestamp(node);
 
   const hasImage = !!node.querySelector('img[src^="blob:"]') ||
