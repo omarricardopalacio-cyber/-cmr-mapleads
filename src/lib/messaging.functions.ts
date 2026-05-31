@@ -99,7 +99,13 @@ export const listMessages = createServerFn({ method: "GET" })
 export const sendMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) =>
-    z.object({ threadId: z.string().uuid(), text: z.string().min(1).max(4000), media_url: z.string().url().nullable().optional(), mime_type: z.string().max(100).nullable().optional() }).parse(d)
+    z.object({
+      threadId: z.string().uuid(),
+      text: z.string().min(1).max(4000),
+      media_url: z.string().url().nullable().optional(),
+      mime_type: z.string().max(100).nullable().optional(),
+      caption: z.string().max(2000).nullable().optional(),
+    }).parse(d)
   )
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
@@ -115,14 +121,13 @@ export const sendMessage = createServerFn({ method: "POST" })
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
-    let payload: Record<string, unknown> = { chatId, text: data.text };
-    let type = "send_message";
+    const payload: Record<string, unknown> = { chatId, text: data.text };
 
     if (data.media_url) {
       try {
         const { base64, mimeType } = await convertUrlToBase64(data.media_url);
-        type = "send_media";
-        payload = { chatId, base64, mimeType: data.mime_type || mimeType };
+        payload.media = `data:${data.mime_type || mimeType};base64,${base64}`;
+        payload.caption = data.caption || data.text;
       } catch {
         throw new Error("Failed to convert media URL to base64");
       }
@@ -133,7 +138,7 @@ export const sendMessage = createServerFn({ method: "POST" })
       .insert({
         org_id: orgId,
         session_id: thread.session_id,
-        type,
+        type: "SEND_MESSAGE",
         payload,
         status: "pending",
       })

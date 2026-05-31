@@ -84,6 +84,57 @@ function toIso(ts: unknown): string | undefined {
   return undefined
 }
 
+async function processMediaUpload(
+  media: Record<string, unknown> | null | undefined,
+  orgId: string,
+): Promise<Record<string, unknown> | null> {
+  if (!media) return null
+
+  const base64Raw = media.base64 as string | undefined
+  if (!base64Raw) return media
+
+  try {
+    let base64String = base64Raw
+    let mimeType = (media.mimetype as string) || 'application/octet-stream'
+
+    // Strip data URI prefix if present (e.g., data:image/jpeg;base64,...)
+    const dataUriMatch = base64String.match(/^data:([^;]+);base64,(.+)$/)
+    if (dataUriMatch) {
+      mimeType = dataUriMatch[1]
+      base64String = dataUriMatch[2]
+    }
+
+    const binaryString = atob(base64String)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
+
+    const ext = mimeType.split('/')[1] || 'bin'
+    const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const path = `${orgId}/${fileName}`
+
+    const { error: upErr } = await supabaseAdmin.storage
+      .from('media')
+      .upload(path, bytes, { contentType: mimeType, upsert: false })
+    if (upErr) {
+      console.error('[ingest] media upload error:', upErr.message)
+      return media
+    }
+
+    const { data: urlData } = supabaseAdmin.storage.from('media').getPublicUrl(path)
+    return {
+      url: urlData.publicUrl,
+      mimeType,
+      caption: (media.caption as string) || undefined,
+      filename: fileName,
+    }
+  } catch (err) {
+    console.error('[ingest] media processing error:', (err as Error).message)
+    return media
+  }
+}
+
 function digits(v: unknown): string | undefined {
   if (v == null) return undefined
   const s = String(v).split('@')[0].replace(/\D/g, '')
@@ -627,13 +678,17 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.error('[ingest] default flow enrollment error (non-fatal):', flowErr.message);
               }
             }
+            const enrichedMedia = await processMediaUpload(
+              e.media as Record<string, unknown> | undefined,
+              session.org_id,
+            )
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,
               wa_message_id: e.waMessageId ?? null,
               direction: e.direction ?? (e.type === 'message-in' ? 'in' : 'out'),
               text: e.text ?? null,
-              media: (e.media as any) ?? null,
+              media: enrichedMedia as any,
               raw: (e.raw as any) ?? null,
               sent_at: e.sentAt ?? new Date().toISOString(),
             })

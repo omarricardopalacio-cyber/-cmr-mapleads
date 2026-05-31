@@ -71,6 +71,8 @@ import {
   Loader2,
   User,
   Bot,
+  Mic,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
@@ -97,6 +99,7 @@ function ThreadPage() {
   const [showQr, setShowQr] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ file: File; preview: string } | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -264,7 +267,7 @@ function ThreadPage() {
         }
       }
 
-      await send({ data: { threadId, text: payloadText || " ", media_url: mediaUrl, mime_type: mimeType } });
+      await send({ data: { threadId, text: payloadText || " ", media_url: mediaUrl, mime_type: mimeType, caption: payloadText || undefined } });
       setText("");
       setShowQr(false);
       toast.success(mediaUrl ? "Multimedia encolada" : "Mensaje encolado");
@@ -443,8 +446,12 @@ function ThreadPage() {
           )}
 
           {mergedMessages.map((m) => {
-            const mediaObj = (m.media as { url?: string; mimeType?: string } | null) ?? null;
-            const isImage = mediaObj?.mimeType?.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
+            const mediaObj = (m.media as { url?: string; mimeType?: string; filename?: string; caption?: string } | null) ?? null;
+            const mime = mediaObj?.mimeType || "";
+            const isImage = mime.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
+            const isVideo = mime.startsWith("video/");
+            const isAudio = mime.startsWith("audio/");
+            const isDoc = !isImage && !isVideo && !isAudio && mediaObj?.url;
             return (
               <div
                 key={m.id}
@@ -458,21 +465,38 @@ function ThreadPage() {
                   {isImage && mediaObj?.url ? (
                     <img
                       src={mediaObj.url}
-                      alt="Media"
-                      className="max-w-[250px] rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                      onClick={() => window.open(mediaObj.url, "_blank")}
+                      alt={mediaObj.caption || "Imagen"}
+                      className="max-w-[250px] rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-slate-800"
+                      onClick={() => setLightboxUrl(mediaObj.url!)}
                       loading="lazy"
                     />
-                  ) : mediaObj?.url ? (
-                    <a
-                      href={mediaObj.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 underline"
-                    >
-                      <FileText className="h-4 w-4" />
-                      <span>Ver archivo</span>
-                    </a>
+                  ) : isVideo && mediaObj?.url ? (
+                    <video
+                      src={mediaObj.url}
+                      controls
+                      className="max-w-[280px] rounded-lg border border-slate-800"
+                      preload="metadata"
+                    />
+                  ) : isAudio && mediaObj?.url ? (
+                    <div className="flex items-center gap-2 bg-black/20 rounded-lg p-2">
+                      <Mic className="h-5 w-5 text-emerald-500 shrink-0" />
+                      <audio src={mediaObj.url} controls className="w-[200px] h-8" />
+                    </div>
+                  ) : isDoc && mediaObj?.url ? (
+                    <div className="flex items-center gap-3 bg-muted rounded-lg p-3 border border-slate-800">
+                      <FileText className="h-8 w-8 text-blue-500 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium truncate">{mediaObj.filename || "Documento.pdf"}</div>
+                        <a
+                          href={mediaObj.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-muted-foreground hover:underline flex items-center gap-1 mt-0.5"
+                        >
+                          <Download className="h-3 w-3" /> Descargar
+                        </a>
+                      </div>
+                    </div>
                   ) : null}
                   {m.text ? <div className={mediaObj?.url ? "mt-2" : ""}>{m.text}</div> : null}
                   {!m.text && !mediaObj?.url && <i className="opacity-60">[mensaje vacío]</i>}
@@ -490,7 +514,7 @@ function ThreadPage() {
             type="file"
             ref={fileInputRef}
             className="hidden"
-            accept="image/*,application/pdf"
+            accept="image/*,video/*,audio/*,application/pdf"
             onChange={handleFileSelect}
           />
           <Popover open={showQr && !!text.startsWith("/") && (qrData?.items?.length ?? 0) > 0} onOpenChange={setShowQr}>
@@ -564,6 +588,18 @@ function ThreadPage() {
           <ContactContextPanel contactId={data.thread.contactId} threadId={data.thread.id} />
         </aside>
       )}
+
+      <Dialog open={!!lightboxUrl} onOpenChange={() => setLightboxUrl(null)}>
+        <DialogContent className="max-w-4xl p-0 bg-black/90 border-none">
+          {lightboxUrl && (
+            <img
+              src={lightboxUrl}
+              alt="Vista previa"
+              className="w-full h-auto max-h-[85vh] object-contain rounded-lg"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
