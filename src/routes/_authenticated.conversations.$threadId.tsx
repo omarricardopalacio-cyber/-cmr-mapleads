@@ -499,7 +499,8 @@ function ThreadPage() {
             
             // Estados de visualización del archivo multimedia
             const hasError = !!(m.media && mediaObj?.error);
-            const hasMediaButNoUrl = !!(m.media && !mediaObj?.url && !hasError);
+            const hasMissingMedia = !!(m.media && mediaObj?.missing_media);
+            const hasMediaButNoUrl = !!(m.media && !mediaObj?.url && !hasError && !hasMissingMedia);
             
             return (
               <div
@@ -546,6 +547,13 @@ function ThreadPage() {
                         </a>
                       </div>
                     </div>
+                  ) : hasMissingMedia ? (
+                    <div className="flex items-center gap-2 bg-slate-500/10 border border-slate-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+                      <span className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+                        <Image className="h-4 w-4 opacity-70" />
+                        Multimedia enviada desde otro dispositivo
+                      </span>
+                    </div>
                   ) : hasMediaButNoUrl ? (
                     <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
                       <span className="text-xs font-medium text-amber-700 animate-pulse flex items-center gap-1.5">
@@ -563,7 +571,7 @@ function ThreadPage() {
                     </div>
                   ) : null}
                   {displayText ? <div className={mediaObj?.url ? "mt-2" : ""}>{displayText}</div> : null}
-                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && !hasError && (
+                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && !hasError && !hasMissingMedia && (
                     <i className="opacity-60 text-xs">[mensaje vacío]</i>
                   )}
                 </div>

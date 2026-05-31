@@ -154,8 +154,8 @@ async function processMediaUpload(
 
   const base64Raw = media.base64 as string | undefined
   if (!base64Raw) {
-    console.error('[ingest] media: no hay base64 en el payload de la extensión');
-    return { ...media, url: null, error: 'La extensión no adjuntó el archivo (sin base64)' };
+    console.log('[ingest] media: no hay base64 en el payload de la extensión (normal en mensajes salientes)');
+    return { ...media, url: null, missing_media: true };
   }
 
   try {
@@ -781,31 +781,58 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
             const direction = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
             if (direction === 'out') {
-              // Buscar mensajes en los últimos 2 minutos en lugar de 15s por si tarda en subir a WA
-              const since = new Date(Date.now() - 120_000).toISOString()
-              let query = supabaseAdmin
-                .from('messages')
-                .select('id, wa_message_id, media')
-                .eq('thread_id', thread.id)
-                .eq('direction', 'out')
-                .gte('sent_at', since)
-              
-              if (e.text) {
-                query = query.eq('text', e.text)
-              }
-              
-              if (e.media) {
-                // Si el evento de la extensión confirma un multimedia, buscar un mensaje pendiente que también tenga multimedia
-                query = query.not('media', 'is', null)
-              } else if (!e.text) {
-                // Si no hay texto ni media, tal vez es un mensaje vacío, no filtramos por media
+              let recentOut = null;
+
+              // 1. Intentar buscar por commandId si la extensión lo envió
+              if (e.commandId) {
+                const { data } = await supabaseAdmin
+                  .from('messages')
+                  .select('id, wa_message_id, media')
+                  .eq('wa_message_id', `pending-${e.commandId}`)
+                  .maybeSingle();
+                recentOut = data;
               }
 
-              const { data: recentOut } = await query
-                .order('sent_at', { ascending: false })
-                .limit(1)
-                .maybeSingle()
-              
+              // 2. Si no hay commandId, buscar el mensaje pendiente más reciente que coincida
+              if (!recentOut) {
+                let pendingQuery = supabaseAdmin
+                  .from('messages')
+                  .select('id, wa_message_id, media')
+                  .eq('thread_id', thread.id)
+                  .eq('direction', 'out')
+                  .like('wa_message_id', 'pending-%')
+                  .order('sent_at', { ascending: false })
+                  .limit(1);
+
+                if (e.text) {
+                  pendingQuery = pendingQuery.eq('text', e.text);
+                }
+                if (e.media) {
+                  pendingQuery = pendingQuery.not('media', 'is', null);
+                }
+                const { data } = await pendingQuery.maybeSingle();
+                recentOut = data;
+              }
+
+              // 3. Fallback: buscar el último mensaje saliente (para evitar duplicados si ya no dice pending-)
+              if (!recentOut) {
+                const since = new Date(Date.now() - 120_000).toISOString();
+                let query = supabaseAdmin
+                  .from('messages')
+                  .select('id, wa_message_id, media')
+                  .eq('thread_id', thread.id)
+                  .eq('direction', 'out')
+                  .gte('sent_at', since)
+                  .order('sent_at', { ascending: false })
+                  .limit(1);
+
+                if (e.text) query = query.eq('text', e.text);
+                if (e.media) query = query.not('media', 'is', null);
+
+                const { data } = await query.maybeSingle();
+                recentOut = data;
+              }
+
               if (recentOut?.wa_message_id?.startsWith('pending-')) {
                 // Prevenir que la extensión borre destructivamente la URL multimedia ya guardada en base de datos
                 const originalMedia = recentOut.media as any;
