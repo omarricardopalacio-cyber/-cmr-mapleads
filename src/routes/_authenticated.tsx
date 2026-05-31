@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -52,6 +52,11 @@ function AppSidebar() {
     { title: "Flujos Automatizados", url: "/flows", icon: GitBranch },
   ];
 
+  const aiConfig = [
+    { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
+    { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
+  ];
+
   const system = [
     { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
     { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
@@ -83,6 +88,12 @@ function AppSidebar() {
           <SidebarGroupLabel>Automatización</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(automate)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Configuración IA</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(aiConfig)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
