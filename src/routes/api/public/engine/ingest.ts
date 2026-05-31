@@ -153,16 +153,42 @@ async function processMediaUpload(
   if (!media) return null
 
   const base64Raw = media.base64 as string | undefined
+  
+  // Si no hay base64, verificar si el objeto media tiene una URL directa (ej: mensajes entrantes de WA)
   if (!base64Raw) {
-    console.log('[ingest] media: no hay base64 en el payload de la extensión (normal en mensajes salientes)');
-    return { ...media, url: null, missing_media: true };
+    const directUrl = (media.url || media.mediaUrl || media.fileUrl) as string | undefined;
+    const rawMime = (media.mimetype || media.mimeType || media.mime_type || '') as string;
+    const normalizedMime = rawMime ? normalizeMimeType(rawMime) : 'application/octet-stream';
+    
+    if (directUrl && directUrl.startsWith('http')) {
+      // Tiene URL directa - usarla tal cual
+      console.log('[ingest] media: usando URL directa del evento (sin base64)', directUrl.substring(0, 80));
+      return {
+        url: directUrl,
+        mimeType: normalizedMime,
+        mime_type: normalizedMime,
+        caption: (media.caption as string) || undefined,
+        filename: (media.filename || media.fileName) as string | undefined,
+      };
+    }
+
+    // No hay base64 ni URL: para mensajes salientes es normal (la extensión no descarga sus propios archivos)
+    // Para mensajes entrantes, la extensión debería enviar el archivo; si no lo hace, marcamos como missing
+    console.log('[ingest] media: no hay base64 ni URL directa en el payload de la extensión');
+    return { 
+      ...media, 
+      url: null, 
+      mimeType: normalizedMime,
+      missing_media: true 
+    };
   }
 
   try {
     const msgType = typeof media.type === 'string' ? media.type : undefined
+    const rawMime = (media.mimetype || media.mimeType || media.mime_type || 'application/octet-stream') as string;
     const { mimeType, base64String } = parseBase64Media(
       base64Raw,
-      (media.mimetype as string) || 'application/octet-stream',
+      rawMime,
     )
 
     if (!base64String) {
@@ -192,6 +218,7 @@ async function processMediaUpload(
     return {
       url: urlData.publicUrl,
       mimeType,
+      mime_type: mimeType,
       caption: (media.caption as string) || undefined,
       filename: fileName,
       size: bytes.length,
