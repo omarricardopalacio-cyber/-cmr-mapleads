@@ -153,7 +153,10 @@ async function processMediaUpload(
   if (!media) return null
 
   const base64Raw = media.base64 as string | undefined
-  if (!base64Raw) return media
+  if (!base64Raw) {
+    console.error('[ingest] media: no hay base64 en el payload de la extensión');
+    return { ...media, url: null, error: 'La extensión no adjuntó el archivo (sin base64)' };
+  }
 
   try {
     const msgType = typeof media.type === 'string' ? media.type : undefined
