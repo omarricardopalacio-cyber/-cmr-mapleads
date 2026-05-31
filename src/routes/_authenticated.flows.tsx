@@ -457,7 +457,21 @@ function StepEditor({ flowId, step, steps, onSave, onCancel }: { flowId: string;
             </Select>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">URL del archivo</Label>
+            <Label className="text-xs">Adjuntar archivo</Label>
+            <Input type="file" accept={mediaType === "image" ? "image/*" : mediaType === "video" ? "video/*" : mediaType === "audio" ? "audio/*" : "*/*"} onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              // Aquí se implementaría la subida a Supabase
+              // Por ahora, creamos una URL local temporal
+              const url = URL.createObjectURL(file);
+              setMediaUrl(url);
+              if (mediaType === "document") {
+                setMimeType(file.name);
+              }
+            }} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">O URL del archivo</Label>
             <Input value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} placeholder="https://..." />
           </div>
           <div className="space-y-1">
