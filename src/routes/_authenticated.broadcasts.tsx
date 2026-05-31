@@ -1,0 +1,193 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { useState } from "react";
+import { toast } from "sonner";
+import {
+  listBroadcasts,
+  createBroadcast,
+  cancelBroadcast,
+  getBroadcastRecipients,
+} from "@/lib/automations.functions";
+import { listTags } from "@/lib/tags.functions";
+import { listSessions } from "@/lib/sessions.functions";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { X, Users, AlertCircle, CheckCircle } from "lucide-react";
+
+export const Route = createFileRoute("/_authenticated/broadcasts")({
+  component: BroadcastsPage,
+});
+
+function BroadcastsPage() {
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold">Campañas Masivas</h1>
+      <BroadcastContent />
+    </div>
+  );
+}
+
+function BroadcastContent() {
+  const qc = useQueryClient();
+  const list = useServerFn(listBroadcasts);
+  const create = useServerFn(createBroadcast);
+  const cancel = useServerFn(cancelBroadcast);
+  const recipientsFn = useServerFn(getBroadcastRecipients);
+  const sess = useServerFn(listSessions);
+  const tagsFn = useServerFn(listTags);
+  const { data } = useQuery({ queryKey: ["broadcasts"], queryFn: () => list({}), refetchInterval: 5000 });
+  const { data: sessions } = useQuery({ queryKey: ["sessions"], queryFn: () => sess({}) });
+  const { data: tagsData } = useQuery({ queryKey: ["tags"], queryFn: () => tagsFn({}) });
+  const tags = tagsData?.tags ?? [];
+  const [form, setForm] = useState({
+    session_id: "", name: "", message_text: "", rate_per_minute: 15, wa_ids_raw: "", scheduled_at: "", tag_id: "", media_url: "", mime_type: "",
+  });
+  const [mode, setMode] = useState<"manual" | "tag">("tag");
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const tagCount = mode === "tag" && form.tag_id
+    ? tags.find((t: any) => t.id === form.tag_id)?.contact_count
+    : null;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const wa_ids = mode === "manual"
+      ? form.wa_ids_raw.split(/[\s,;\n]+/).map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    if (mode === "manual" && (!wa_ids || !wa_ids.length)) { toast.error("Agrega destinatarios"); return; }
+    try {
+      await create({
+        data: {
+          session_id: form.session_id,
+          name: form.name,
+          message_text: form.message_text,
+          rate_per_minute: form.rate_per_minute,
+          tag_id: mode === "tag" ? (form.tag_id || null) : null,
+          wa_ids: wa_ids ?? null,
+          media_url: form.media_url || null,
+          mime_type: form.mime_type || null,
+          scheduled_at: form.scheduled_at ? new Date(form.scheduled_at).toISOString() : null,
+        } as any,
+      });
+      toast.success("Campaña creada");
+      setForm({ session_id: "", name: "", message_text: "", rate_per_minute: 15, wa_ids_raw: "", scheduled_at: "", tag_id: "", media_url: "", mime_type: "" });
+      qc.invalidateQueries({ queryKey: ["broadcasts"] });
+    } catch (e: any) { toast.error(e.message); }
+  };
+
+  return (
+    <div className="grid md:grid-cols-2 gap-4 mt-4">
+      <Card className="p-4 space-y-3">
+        <h3 className="font-medium">Nueva campaña</h3>
+        <form onSubmit={submit} className="space-y-3">
+          <Input placeholder="Nombre de campaña" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          <Select value={form.session_id} onValueChange={(v) => setForm({ ...form, session_id: v })}>
+            <SelectTrigger><SelectValue placeholder="Sesión WhatsApp" /></SelectTrigger>
+            <SelectContent>
+              {sessions?.sessions.map((s: any) => (
+                <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Textarea placeholder="Mensaje de la campaña" value={form.message_text} onChange={(e) => setForm({ ...form, message_text: e.target.value })} required />
+          <div className="grid grid-cols-2 gap-2">
+            <Input placeholder="URL imagen/documento (opcional)" value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
+            <Input placeholder="MIME type (opcional)" value={form.mime_type} onChange={(e) => setForm({ ...form, mime_type: e.target.value })} />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant={mode === "tag" ? "default" : "outline"} size="sm" onClick={() => setMode("tag")}>Por etiqueta</Button>
+            <Button type="button" variant={mode === "manual" ? "default" : "outline"} size="sm" onClick={() => setMode("manual")}>Manual</Button>
+          </div>
+          {mode === "tag" ? (
+            <div className="space-y-1">
+              <Select value={form.tag_id} onValueChange={(v) => setForm({ ...form, tag_id: v })}>
+                <SelectTrigger><SelectValue placeholder="Selecciona etiqueta" /></SelectTrigger>
+                <SelectContent>
+                  {tags.map((t: any) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {form.tag_id && (
+                <p className="text-xs text-muted-foreground">
+                  Impactará a contactos con etiqueta seleccionada.
+                </p>
+              )}
+            </div>
+          ) : (
+            <Textarea placeholder="WA IDs separados por coma, espacio o salto de línea" value={form.wa_ids_raw} onChange={(e) => setForm({ ...form, wa_ids_raw: e.target.value })} rows={3} />
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Velocidad (msg/min)</Label>
+              <Input type="number" min={5} max={30} value={form.rate_per_minute} onChange={(e) => setForm({ ...form, rate_per_minute: +e.target.value })} />
+            </div>
+            <div>
+              <Label className="text-xs">Programar (opcional)</Label>
+              <Input type="datetime-local" value={form.scheduled_at} onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} />
+            </div>
+          </div>
+          <Button type="submit" className="w-full">Crear campaña</Button>
+        </form>
+      </Card>
+      <div className="space-y-2">
+        {data?.items.length === 0 && <Card className="p-6 text-center text-muted-foreground">Sin campañas</Card>}
+        {data?.items.map((b: any) => {
+          const progress = b.total_count ? ((b.sent_count + b.failed_count) / b.total_count) * 100 : 0;
+          const isOpen = expanded === b.id;
+          return (
+            <Card key={b.id} className="p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{b.name}</span>
+                <Badge variant={b.status === "running" ? "default" : b.status === "failed" ? "destructive" : "secondary"}>{b.status}</Badge>
+                {b.tag_id && <Badge variant="outline">etiqueta</Badge>}
+                <span className="text-xs text-muted-foreground ml-auto">{b.sent_count + b.failed_count}/{b.total_count}</span>
+                {["running", "scheduled"].includes(b.status) && (
+                  <Button size="icon" variant="ghost" onClick={async () => { await cancel({ data: { id: b.id } }); qc.invalidateQueries({ queryKey: ["broadcasts"] }); }}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              <div className="text-sm truncate text-muted-foreground">{b.message_text}</div>
+              {b.media_url && <div className="text-xs text-blue-600 truncate">media: {b.media_url}</div>}
+              <Progress value={progress} className="h-2" />
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1 text-green-600"><CheckCircle className="h-3 w-3" /> {b.sent_count}</span>
+                <span className="flex items-center gap-1 text-red-600"><AlertCircle className="h-3 w-3" /> {b.failed_count}</span>
+                <span className="flex items-center gap-1 text-muted-foreground"><Users className="h-3 w-3" /> {b.total_count}</span>
+                <Button variant="ghost" size="sm" className="ml-auto text-xs h-6" onClick={() => setExpanded(isOpen ? null : b.id)}>
+                  {isOpen ? "Ocultar" : "Detalles"}
+                </Button>
+              </div>
+              {isOpen && <BroadcastRecipients broadcastId={b.id} recipientsFn={recipientsFn} />}
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BroadcastRecipients({ broadcastId, recipientsFn }: { broadcastId: string; recipientsFn: (args: { data: { broadcastId: string } }) => Promise<{ items: any[] }> }) {
+  const { data } = useQuery({ queryKey: ["broadcastRecipients", broadcastId], queryFn: () => recipientsFn({ data: { broadcastId } }), enabled: !!broadcastId });
+  if (!data?.items.length) return <p className="text-xs text-muted-foreground">Sin destinatarios</p>;
+  return (
+    <div className="max-h-40 overflow-y-auto space-y-1 border-t pt-2">
+      {data.items.map((r: any) => (
+        <div key={r.id} className="flex items-center justify-between text-xs">
+          <span className="font-mono truncate">{r.wa_id}</span>
+          <Badge variant={r.status === "sent" ? "default" : r.status === "failed" ? "destructive" : "outline"} className="text-[10px] h-5">
+            {r.status}
+          </Badge>
+        </div>
+      ))}
+    </div>
+  );
+}

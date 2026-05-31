@@ -14,13 +14,15 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
+import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
 import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.flows'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
 import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
-import { Route as AuthenticatedAutomationsRouteImport } from './routes/_authenticated.automations'
+import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
+import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenticated.auto-replies'
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
@@ -51,6 +53,12 @@ const AuthenticatedSessionsRoute = AuthenticatedSessionsRouteImport.update({
   path: '/sessions',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedQuickRepliesRoute =
+  AuthenticatedQuickRepliesRouteImport.update({
+    id: '/quick-replies',
+    path: '/quick-replies',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedPipelinesRoute = AuthenticatedPipelinesRouteImport.update({
   id: '/pipelines',
   path: '/pipelines',
@@ -83,10 +91,15 @@ const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
   path: '/contacts',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedAutomationsRoute =
-  AuthenticatedAutomationsRouteImport.update({
-    id: '/automations',
-    path: '/automations',
+const AuthenticatedBroadcastsRoute = AuthenticatedBroadcastsRouteImport.update({
+  id: '/broadcasts',
+  path: '/broadcasts',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedAutoRepliesRoute =
+  AuthenticatedAutoRepliesRouteImport.update({
+    id: '/auto-replies',
+    path: '/auto-replies',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedConversationsIndexRoute =
@@ -121,13 +134,15 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
-  '/automations': typeof AuthenticatedAutomationsRoute
+  '/auto-replies': typeof AuthenticatedAutoRepliesRoute
+  '/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
+  '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
@@ -139,12 +154,14 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
-  '/automations': typeof AuthenticatedAutomationsRoute
+  '/auto-replies': typeof AuthenticatedAutoRepliesRoute
+  '/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
+  '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
@@ -158,13 +175,15 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
-  '/_authenticated/automations': typeof AuthenticatedAutomationsRoute
+  '/_authenticated/auto-replies': typeof AuthenticatedAutoRepliesRoute
+  '/_authenticated/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
   '/_authenticated/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/flows': typeof AuthenticatedFlowsRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
+  '/_authenticated/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
   '/_authenticated/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
@@ -178,13 +197,15 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
-    | '/automations'
+    | '/auto-replies'
+    | '/broadcasts'
     | '/contacts'
     | '/conversations'
     | '/dashboard'
     | '/flows'
     | '/integrations'
     | '/pipelines'
+    | '/quick-replies'
     | '/sessions'
     | '/conversations/$threadId'
     | '/conversations/'
@@ -196,12 +217,14 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
-    | '/automations'
+    | '/auto-replies'
+    | '/broadcasts'
     | '/contacts'
     | '/dashboard'
     | '/flows'
     | '/integrations'
     | '/pipelines'
+    | '/quick-replies'
     | '/sessions'
     | '/conversations/$threadId'
     | '/conversations'
@@ -214,13 +237,15 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/login'
     | '/signup'
-    | '/_authenticated/automations'
+    | '/_authenticated/auto-replies'
+    | '/_authenticated/broadcasts'
     | '/_authenticated/contacts'
     | '/_authenticated/conversations'
     | '/_authenticated/dashboard'
     | '/_authenticated/flows'
     | '/_authenticated/integrations'
     | '/_authenticated/pipelines'
+    | '/_authenticated/quick-replies'
     | '/_authenticated/sessions'
     | '/_authenticated/conversations/$threadId'
     | '/_authenticated/conversations/'
@@ -276,6 +301,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSessionsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/quick-replies': {
+      id: '/_authenticated/quick-replies'
+      path: '/quick-replies'
+      fullPath: '/quick-replies'
+      preLoaderRoute: typeof AuthenticatedQuickRepliesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/pipelines': {
       id: '/_authenticated/pipelines'
       path: '/pipelines'
@@ -318,11 +350,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedContactsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/automations': {
-      id: '/_authenticated/automations'
-      path: '/automations'
-      fullPath: '/automations'
-      preLoaderRoute: typeof AuthenticatedAutomationsRouteImport
+    '/_authenticated/broadcasts': {
+      id: '/_authenticated/broadcasts'
+      path: '/broadcasts'
+      fullPath: '/broadcasts'
+      preLoaderRoute: typeof AuthenticatedBroadcastsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/auto-replies': {
+      id: '/_authenticated/auto-replies'
+      path: '/auto-replies'
+      fullPath: '/auto-replies'
+      preLoaderRoute: typeof AuthenticatedAutoRepliesRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/conversations/': {
@@ -381,24 +420,28 @@ const AuthenticatedConversationsRouteWithChildren =
   )
 
 interface AuthenticatedRouteChildren {
-  AuthenticatedAutomationsRoute: typeof AuthenticatedAutomationsRoute
+  AuthenticatedAutoRepliesRoute: typeof AuthenticatedAutoRepliesRoute
+  AuthenticatedBroadcastsRoute: typeof AuthenticatedBroadcastsRoute
   AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
   AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRouteWithChildren
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedFlowsRoute: typeof AuthenticatedFlowsRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
+  AuthenticatedQuickRepliesRoute: typeof AuthenticatedQuickRepliesRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
-  AuthenticatedAutomationsRoute: AuthenticatedAutomationsRoute,
+  AuthenticatedAutoRepliesRoute: AuthenticatedAutoRepliesRoute,
+  AuthenticatedBroadcastsRoute: AuthenticatedBroadcastsRoute,
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
   AuthenticatedConversationsRoute: AuthenticatedConversationsRouteWithChildren,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedFlowsRoute: AuthenticatedFlowsRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
+  AuthenticatedQuickRepliesRoute: AuthenticatedQuickRepliesRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
 }
 
@@ -418,3 +461,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

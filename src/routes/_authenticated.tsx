@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -46,8 +46,9 @@ function AppSidebar() {
   ];
 
   const automate = [
-    { title: "Respuestas Rápidas", url: "/automations", icon: Zap },
-    { title: "Campañas Masivas", url: "/automations", icon: Megaphone, query: { tab: "broadcast" } },
+    { title: "Auto-respuestas", url: "/auto-replies", icon: MessageSquare },
+    { title: "Respuestas Rápidas", url: "/quick-replies", icon: Zap },
+    { title: "Campañas Masivas", url: "/broadcasts", icon: Megaphone },
     { title: "Flujos Automatizados", url: "/flows", icon: GitBranch },
   ];
 
