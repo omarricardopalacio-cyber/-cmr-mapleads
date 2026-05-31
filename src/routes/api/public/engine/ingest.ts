@@ -84,6 +84,67 @@ function toIso(ts: unknown): string | undefined {
   return undefined
 }
 
+const MIME_TO_EXTENSION: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'audio/ogg': 'ogg',
+  'audio/opus': 'opus',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/amr': 'amr',
+  'audio/webm': 'webm',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/3gpp': '3gp',
+  'application/pdf': 'pdf',
+  'application/octet-stream': 'bin',
+}
+
+function normalizeMimeType(mime: string): string {
+  return mime.split(';')[0].trim().toLowerCase()
+}
+
+function extensionFromMime(mimeType: string, msgType?: string): string {
+  const normalized = normalizeMimeType(mimeType)
+  const mapped = MIME_TO_EXTENSION[normalized]
+  if (mapped) return mapped
+
+  const subtype = normalized.split('/')[1]
+  if (subtype && /^[a-z0-9.+-]+$/i.test(subtype)) {
+    const clean = subtype.replace(/[^a-z0-9]/gi, '').slice(0, 16)
+    if (clean) return clean
+  }
+
+  if (msgType === 'ptt' || msgType === 'audio') return 'ogg'
+  if (msgType === 'image') return 'jpg'
+  if (msgType === 'video') return 'mp4'
+  if (msgType === 'document') return 'pdf'
+  return 'bin'
+}
+
+function parseBase64Media(
+  base64Raw: string,
+  fallbackMime: string,
+): { mimeType: string; base64String: string } {
+  let base64String = base64Raw.trim()
+  let mimeType = normalizeMimeType(fallbackMime || 'application/octet-stream')
+
+  const dataUriMatch = base64String.match(/^data:([^;]+);base64,(.+)$/i)
+  if (dataUriMatch) {
+    mimeType = normalizeMimeType(dataUriMatch[1])
+    base64String = dataUriMatch[2]
+  }
+
+  base64String = base64String.replace(/\s/g, '')
+  return { mimeType, base64String }
+}
+
 async function processMediaUpload(
   media: Record<string, unknown> | null | undefined,
   orgId: string,
@@ -94,23 +155,24 @@ async function processMediaUpload(
   if (!base64Raw) return media
 
   try {
-    let base64String = base64Raw
-    let mimeType = (media.mimetype as string) || 'application/octet-stream'
+    const msgType = typeof media.type === 'string' ? media.type : undefined
+    const { mimeType, base64String } = parseBase64Media(
+      base64Raw,
+      (media.mimetype as string) || 'application/octet-stream',
+    )
 
-    // Strip data URI prefix if present (e.g., data:image/jpeg;base64,...)
-    const dataUriMatch = base64String.match(/^data:([^;]+);base64,(.+)$/)
-    if (dataUriMatch) {
-      mimeType = dataUriMatch[1]
-      base64String = dataUriMatch[2]
+    if (!base64String) {
+      console.error('[ingest] media: payload base64 vacío tras limpiar Data URI')
+      return media
     }
 
-    const binaryString = atob(base64String)
-    const bytes = new Uint8Array(binaryString.length)
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i)
+    const bytes = Buffer.from(base64String, 'base64')
+    if (!bytes.length) {
+      console.error('[ingest] media: decodificación resultó en 0 bytes')
+      return media
     }
 
-    const ext = mimeType.split('/')[1] || 'bin'
+    const ext = extensionFromMime(mimeType, msgType)
     const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
     const path = `${orgId}/${fileName}`
 
@@ -128,6 +190,7 @@ async function processMediaUpload(
       mimeType,
       caption: (media.caption as string) || undefined,
       filename: fileName,
+      size: bytes.length,
     }
   } catch (err) {
     console.error('[ingest] media processing error:', (err as Error).message)
@@ -171,10 +234,20 @@ function extractSessionTelemetry(rawEvent: z.infer<typeof EventSchema>) {
   }
 }
 
+/** Desanida payloads dobles enviados por la extensión ({ payload: { payload: { chatId } } }). */
+function unwrapBridgePayload(e: z.infer<typeof EventSchema>): Record<string, any> {
+  const outer = (e.payload as Record<string, any>) || {}
+  const inner = outer.payload
+  if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+    return { ...outer, ...inner }
+  }
+  return outer
+}
+
 function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null): NormalizedEvent {
   const rawType = String(e.type || '')
   const type: NormalizedEvent['type'] = TYPE_MAP[rawType] ?? 'status'
-  const p: Record<string, any> = (e.payload as any) || {}
+  const p: Record<string, any> = unwrapBridgePayload(e)
 
   const chatId = e.chatId ?? p.chatId ?? p.from ?? p.to
   const waMessageId = e.waMessageId ?? p.waMessageId ?? p.messageId ?? p.message_id ?? p.id
