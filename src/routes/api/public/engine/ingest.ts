@@ -163,14 +163,14 @@ async function processMediaUpload(
     )
 
     if (!base64String) {
-      console.error('[ingest] media: payload base64 vacío tras limpiar Data URI')
-      return media
+      console.error('[ingest] media: payload base64 vacío tras limpiar Data URI');
+      return { ...media, url: null, error: 'Archivo vacío o corrupto' };
     }
 
-    const bytes = Buffer.from(base64String, 'base64')
+    const bytes = Buffer.from(base64String, 'base64');
     if (!bytes.length) {
-      console.error('[ingest] media: decodificación resultó en 0 bytes')
-      return media
+      console.error('[ingest] media: decodificación resultó en 0 bytes');
+      return { ...media, url: null, error: 'Error al decodificar archivo local' };
     }
 
     const ext = extensionFromMime(mimeType, msgType)
@@ -181,8 +181,8 @@ async function processMediaUpload(
       .from('media')
       .upload(path, bytes, { contentType: mimeType, upsert: false })
     if (upErr) {
-      console.error('[ingest] media upload error:', upErr.message)
-      return media
+      console.error('[ingest] media upload error:', upErr.message);
+      return { ...media, url: null, error: `Error en servidor: ${upErr.message}` };
     }
 
     const { data: urlData } = supabaseAdmin.storage.from('media').getPublicUrl(path)
@@ -194,8 +194,8 @@ async function processMediaUpload(
       size: bytes.length,
     }
   } catch (err) {
-    console.error('[ingest] media processing error:', (err as Error).message)
-    return media
+    console.error('[ingest] media processing error:', (err as Error).message);
+    return { ...media, url: null, error: 'Error general procesando media en CRM' };
   }
 }
 
@@ -781,7 +781,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               const since = new Date(Date.now() - 15_000).toISOString()
               const { data: recentOut } = await supabaseAdmin
                 .from('messages')
-                .select('id, wa_message_id')
+                .select('id, wa_message_id, media')
                 .eq('thread_id', thread.id)
                 .eq('direction', 'out')
                 .eq('text', e.text)
@@ -790,11 +790,18 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 .limit(1)
                 .maybeSingle()
               if (recentOut?.wa_message_id?.startsWith('pending-')) {
+                // Prevenir que la extensión borre destructivamente la URL multimedia ya guardada en base de datos
+                const originalMedia = recentOut.media as any;
+                const newMedia = enrichedMedia as any;
+                const finalMedia = newMedia?.url 
+                  ? newMedia 
+                  : (originalMedia?.url ? originalMedia : (newMedia ?? null));
+
                 await supabaseAdmin
                   .from('messages')
                   .update({
                     wa_message_id: e.waMessageId ?? recentOut.wa_message_id,
-                    media: (enrichedMedia as any) ?? undefined,
+                    media: finalMedia,
                   })
                   .eq('id', recentOut.id)
                 continue

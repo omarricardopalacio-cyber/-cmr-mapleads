@@ -490,15 +490,16 @@ function ThreadPage() {
 
           {mergedMessages.map((m) => {
             const displayText = sanitizeMessageText(m.text);
-            const mediaObj = (m.media as { url?: string; mimeType?: string; filename?: string; caption?: string } | null) ?? null;
+            const mediaObj = (m.media as { url?: string; mimeType?: string; filename?: string; caption?: string; error?: string }) ?? null;
             const mime = mediaObj?.mimeType || "";
             const isImage = mime.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
             const isVideo = mime.startsWith("video/");
             const isAudio = mime.startsWith("audio/");
             const isDoc = !isImage && !isVideo && !isAudio && mediaObj?.url;
             
-            // Debug: Si hay media pero no URL, mostrar warning
-            const hasMediaButNoUrl = m.media && !mediaObj?.url;
+            // Estados de visualización del archivo multimedia
+            const hasError = !!(m.media && mediaObj?.error);
+            const hasMediaButNoUrl = !!(m.media && !mediaObj?.url && !hasError);
             
             return (
               <div
@@ -546,13 +547,24 @@ function ThreadPage() {
                       </div>
                     </div>
                   ) : hasMediaButNoUrl ? (
-                    <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-2">
-                      <span className="text-xs text-yellow-600">⚠️ Media sin URL (sincronizando...)</span>
+                    <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+                      <span className="text-xs font-medium text-amber-700 animate-pulse flex items-center gap-1.5">
+                        ⏳ Sincronizando multimedia...
+                      </span>
+                    </div>
+                  ) : hasError ? (
+                    <div className="flex flex-col gap-1.5 bg-rose-500/10 border border-rose-500/35 rounded-lg p-2.5 mt-1.5 max-w-sm">
+                      <span className="text-xs font-semibold text-rose-700 flex items-center gap-1">
+                        ❌ Error al cargar multimedia
+                      </span>
+                      <span className="text-[10px] text-rose-600/90 leading-normal">
+                        {mediaObj?.error || "El archivo es demasiado pesado o está corrupto. Inténtalo de nuevo."}
+                      </span>
                     </div>
                   ) : null}
                   {displayText ? <div className={mediaObj?.url ? "mt-2" : ""}>{displayText}</div> : null}
-                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && (
-                    <i className="opacity-60">[mensaje vacío]</i>
+                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && !hasError && (
+                    <i className="opacity-60 text-xs">[mensaje vacío]</i>
                   )}
                 </div>
                 <div className="text-[10px] opacity-70 mt-1 text-right">
