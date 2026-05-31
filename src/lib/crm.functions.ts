@@ -127,3 +127,45 @@ export const listOrgMembers = createServerFn({ method: "GET" })
     });
     return { members };
   });
+
+export const getContactCrmData = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ contactId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const { data: contact, error } = await supabaseAdmin
+      .from("contacts")
+      .select("origin, entry_date, exit_date, deal_value, company, position, interested_products, observations")
+      .eq("id", data.contactId)
+      .eq("org_id", orgId)
+      .single();
+    if (error) throw new Error(error.message);
+    return { contact };
+  });
+
+export const updateContactCrmData = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      contactId: z.string().uuid(),
+      origin: z.string().nullable().optional(),
+      entry_date: z.string().nullable().optional(),
+      exit_date: z.string().nullable().optional(),
+      deal_value: z.number().nullable().optional(),
+      company: z.string().nullable().optional(),
+      position: z.string().nullable().optional(),
+      interested_products: z.string().nullable().optional(),
+      observations: z.string().nullable().optional(),
+    }).parse(d)
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const { contactId, ...updates } = data;
+    const { error } = await supabaseAdmin
+      .from("contacts")
+      .update(updates)
+      .eq("id", contactId)
+      .eq("org_id", orgId);
+    if (error) throw new Error(error.message);
+    return { success: true };
+  });

@@ -23,7 +23,11 @@ export function getContactDisplayName(contact: ContactLike | null | undefined, i
   }
   // Si tiene un display_name válido, usarlo
   if (contact?.display_name && contact.display_name !== "unknown" && contact.display_name.trim() !== "") {
-    return contact.display_name;
+    let name = contact.display_name.trim();
+    if (name.startsWith('~')) {
+      name = name.substring(1).trim();
+    }
+    return name;
   }
   // Fallback final
   return `Cliente ${indexFallback ?? "Nuevo"}`;

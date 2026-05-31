@@ -3,8 +3,8 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent, syncThreadMessages } from "@/lib/messaging.functions";
-import { listOrgMembers } from "@/lib/crm.functions";
-import { listQuickReplies } from "@/lib/automations.functions";
+import { listOrgMembers, getContactCrmData, updateContactCrmData } from "@/lib/crm.functions";
+import { listQuickReplies, createScheduled } from "@/lib/automations.functions";
 import {
   listTags,
   listContactTags,
@@ -22,6 +22,7 @@ import { listAiActions } from "@/lib/ai.functions";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +74,7 @@ import {
   Bot,
   Mic,
   Download,
+  Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
@@ -91,12 +93,16 @@ function ThreadPage() {
   const clear = useServerFn(clearThreadMessages);
   const toggleAi = useServerFn(toggleAiEnabled);
   const listQr = useServerFn(listQuickReplies);
+  const createSched = useServerFn(createScheduled);
   const upload = useServerFn(uploadMedia);
   const listMembers = useServerFn(listOrgMembers);
   const assignAgent = useServerFn(assignThreadToAgent);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  const [showSched, setShowSched] = useState(false);
+  const [schedDate, setSchedDate] = useState("");
+  const [schedMsg, setSchedMsg] = useState("");
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ file: File; preview: string } | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -549,6 +555,64 @@ function ThreadPage() {
               </ScrollArea>
             </PopoverContent>
           </Popover>
+          <Popover open={showSched} onOpenChange={setShowSched}>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => setShowSched(true)}>
+                    <Calendar className="h-4 w-4 text-blue-500" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Programar un mensaje</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <PopoverContent className="w-80 p-3" align="start">
+              <div className="text-xs font-medium text-muted-foreground mb-2">Mensaje Programado</div>
+              <div className="space-y-3">
+                <Textarea
+                  placeholder="Escribe el mensaje..."
+                  className="text-xs resize-none"
+                  rows={3}
+                  value={schedMsg}
+                  onChange={(e) => setSchedMsg(e.target.value)}
+                />
+                <Input
+                  type="datetime-local"
+                  className="text-xs h-8"
+                  value={schedDate}
+                  onChange={(e) => setSchedDate(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  className="w-full text-xs"
+                  disabled={!schedMsg.trim() || !schedDate || sending}
+                  onClick={async () => {
+                    setSending(true);
+                    try {
+                      const isoDate = new Date(schedDate).toISOString();
+                      const waId = (data as any)?.thread?.contact?.wa_id;
+                      const sessionId = (data as any)?.thread?.session_id;
+                      if (!waId || !sessionId) throw new Error("Faltan datos del cliente o sesión");
+                      await createSched({ data: { session_id: sessionId, wa_id: waId, text: schedMsg, send_at: isoDate } });
+                      toast.success("Mensaje programado con éxito");
+                      setShowSched(false);
+                      setSchedMsg("");
+                      setSchedDate("");
+                    } catch (e: any) {
+                      toast.error(e.message || "Error al programar");
+                    } finally {
+                      setSending(false);
+                    }
+                  }}
+                >
+                  Programar
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           <Button
             type="button"
             variant="ghost"
@@ -559,12 +623,12 @@ function ThreadPage() {
           >
             <Paperclip className="h-4 w-4" />
           </Button>
-          <div className="flex-1 relative">
+          <div className="flex-1 min-w-0 relative">
             {selectedFile && (
-              <div className="absolute -top-12 left-0 flex items-center gap-2 bg-muted rounded-md px-2 py-1 text-xs">
-                <Image className="h-3 w-3" />
-                <span className="max-w-[150px] truncate">{selectedFile.file.name}</span>
-                <button type="button" onClick={() => setSelectedFile(null)} className="hover:text-destructive">
+              <div className="absolute -top-12 left-0 flex items-center gap-2 bg-muted rounded-md px-2 py-1 text-xs max-w-full">
+                <Image className="h-3 w-3 shrink-0" />
+                <span className="truncate">{selectedFile.file.name}</span>
+                <button type="button" onClick={() => setSelectedFile(null)} className="hover:text-destructive shrink-0">
                   <X className="h-3 w-3" />
                 </button>
               </div>
@@ -574,17 +638,18 @@ function ThreadPage() {
               onChange={(e) => { setText(e.target.value); setShowQr(e.target.value.startsWith("/")); }}
               placeholder={selectedFile ? "Añade un mensaje (opcional)..." : "Escribe un mensaje..."}
               disabled={sending || uploading}
+              className="w-full"
               autoFocus
             />
           </div>
-          <Button type="submit" disabled={sending || uploading || (!text.trim() && !selectedFile)}>
+          <Button type="submit" className="shrink-0" disabled={sending || uploading || (!text.trim() && !selectedFile)}>
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </form>
       </div>
 
       {data?.thread?.contactId && data?.thread?.id && (
-        <aside className="w-80 border-l bg-card hidden lg:flex flex-col">
+        <aside className="w-80 border-l bg-card flex-col shrink-0 flex hidden lg:flex overflow-hidden">
           <ContactContextPanel contactId={data.thread.contactId} threadId={data.thread.id} />
         </aside>
       )}
@@ -619,6 +684,22 @@ function ContactContextPanel({ contactId, threadId }: { contactId: string; threa
     queryKey: ["contactTags", contactId],
     queryFn: () => listContactTagsFn({ data: { contactId } }),
     enabled: !!contactId,
+  });
+
+  const getCrmFn = useServerFn(getContactCrmData);
+  const updateCrmFn = useServerFn(updateContactCrmData);
+  const { data: crmData } = useQuery({
+    queryKey: ["crm", contactId],
+    queryFn: () => getCrmFn({ data: { contactId } }),
+    enabled: !!contactId,
+  });
+  const updateCrmMut = useMutation({
+    mutationFn: (vars: any) => updateCrmFn({ data: { contactId, ...vars } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["crm", contactId] });
+      toast.success("Datos CRM guardados");
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const createTagMut = useMutation({
@@ -735,20 +816,24 @@ function ContactContextPanel({ contactId, threadId }: { contactId: string; threa
     <Tabs defaultValue="tags" className="flex flex-col h-full">
       <TabsList className="mx-3 mt-3 grid grid-cols-4">
         <TabsTrigger value="tags" className="text-xs">
-          <Tag className="h-3.5 w-3.5 mr-1" />
-          Etiquetas
+          <Tag className="h-3.5 w-3.5 mr-1 hidden sm:block" />
+          Tags
+        </TabsTrigger>
+        <TabsTrigger value="crm" className="text-xs">
+          <FileText className="h-3.5 w-3.5 mr-1 hidden sm:block" />
+          CRM
         </TabsTrigger>
         <TabsTrigger value="notes" className="text-xs">
-          <StickyNote className="h-3.5 w-3.5 mr-1" />
+          <StickyNote className="h-3.5 w-3.5 mr-1 hidden sm:block" />
           Notas
         </TabsTrigger>
-        <TabsTrigger value="reminders" className="text-xs">
-          <Clock className="h-3.5 w-3.5 mr-1" />
-          Recordatorios
+        <TabsTrigger value="reminders" className="text-xs px-1">
+          <Clock className="h-3.5 w-3.5 mr-1 hidden sm:block" />
+          Record.
         </TabsTrigger>
         <TabsTrigger value="ai" className="text-xs">
-          <Bot className="h-3.5 w-3.5 mr-1" />
-          Asistente
+          <Bot className="h-3.5 w-3.5 mr-1 hidden sm:block" />
+          IA
         </TabsTrigger>
       </TabsList>
 
@@ -832,6 +917,45 @@ function ContactContextPanel({ contactId, threadId }: { contactId: string; threa
             </div>
           </PopoverContent>
         </Popover>
+      </TabsContent>
+
+      <TabsContent value="crm" className="flex-1 flex flex-col m-0 p-3 overflow-y-auto">
+        <div className="space-y-3 pb-6">
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Origen del lead</Label>
+            <Input className="h-8 text-xs" defaultValue={(crmData as any)?.contact?.origin || ""} onBlur={(e) => updateCrmMut.mutate({ origin: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Fecha de entrada</Label>
+              <Input type="date" className="h-8 text-xs" defaultValue={(crmData as any)?.contact?.entry_date?.split('T')[0] || ""} onBlur={(e) => updateCrmMut.mutate({ entry_date: e.target.value ? new Date(e.target.value).toISOString() : null })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Fecha de salida</Label>
+              <Input type="date" className="h-8 text-xs" defaultValue={(crmData as any)?.contact?.exit_date?.split('T')[0] || ""} onBlur={(e) => updateCrmMut.mutate({ exit_date: e.target.value ? new Date(e.target.value).toISOString() : null })} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Valor del negocio (€)</Label>
+            <Input type="number" step="0.01" className="h-8 text-xs" defaultValue={(crmData as any)?.contact?.deal_value || ""} onBlur={(e) => updateCrmMut.mutate({ deal_value: parseFloat(e.target.value) || 0 })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Empresa</Label>
+            <Input className="h-8 text-xs" defaultValue={(crmData as any)?.contact?.company || ""} onBlur={(e) => updateCrmMut.mutate({ company: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Cargo</Label>
+            <Input className="h-8 text-xs" defaultValue={(crmData as any)?.contact?.position || ""} onBlur={(e) => updateCrmMut.mutate({ position: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Productos de interés</Label>
+            <Textarea className="text-xs resize-none" rows={2} defaultValue={(crmData as any)?.contact?.interested_products || ""} onBlur={(e) => updateCrmMut.mutate({ interested_products: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Observaciones</Label>
+            <Textarea className="text-xs resize-none" rows={3} defaultValue={(crmData as any)?.contact?.observations || ""} onBlur={(e) => updateCrmMut.mutate({ observations: e.target.value })} />
+          </div>
+        </div>
       </TabsContent>
 
       <TabsContent value="notes" className="flex-1 flex flex-col m-0 overflow-hidden">
