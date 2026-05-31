@@ -136,7 +136,7 @@ function SessionsPage() {
   const backendBase = "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34-dev.lovable.app";
 
   return (
-    <div className="space-y-6 h-[calc(100vh-6rem)] flex flex-col">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Centro de Mando</h1>
         <p className="text-muted-foreground text-sm">
@@ -144,7 +144,7 @@ function SessionsPage() {
         </p>
       </div>
 
-      <Card className="p-4 flex gap-2 shrink-0">
+      <Card className="p-4 flex gap-2">
         <Input
           placeholder="Nombre (ej: Soporte, Ventas)"
           value={label}
@@ -155,7 +155,7 @@ function SessionsPage() {
         </Button>
       </Card>
 
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 shrink-0">
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
         {isLoading &&
           Array.from({ length: 3 }).map((_, i) => (
             <Card key={i} className="p-4 space-y-3">
@@ -167,15 +167,20 @@ function SessionsPage() {
         {(data?.sessions ?? []).map((s) => (
           <SessionCard key={s.id} session={s as unknown as SessionRow} backendBase={backendBase} />
         ))}
+        {!isLoading && (data?.sessions ?? []).length === 0 && (
+          <div className="col-span-full text-center py-8 text-muted-foreground text-sm">
+            No hay sesiones activas. Crea una nueva sesión para conectar un número de WhatsApp.
+          </div>
+        )}
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <Terminal className="h-4 w-4 text-emerald-500" />
           <span className="text-sm font-medium">Consola de red en vivo</span>
           <Badge variant="outline" className="text-[10px]">{logs.length} eventos</Badge>
         </div>
-        <div className="flex-1 bg-black border border-green-900/50 rounded-lg p-3 overflow-hidden">
+        <div className="h-[320px] bg-black border border-green-900/50 rounded-lg p-3 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="font-mono text-xs space-y-1 text-green-500">
               {logs.length === 0 && (
