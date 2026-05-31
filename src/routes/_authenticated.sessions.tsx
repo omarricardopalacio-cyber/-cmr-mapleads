@@ -141,7 +141,7 @@ function SessionsPage() {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  const backendBase = "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34-dev.lovable.app";
+  const backendBase = "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app";
 
   return (
     <div className="space-y-6">
