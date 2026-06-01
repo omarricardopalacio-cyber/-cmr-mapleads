@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "CRM WhatsApp Bridge Engine",
+  "version": "0.2.0",
+  "description": "Runtime de transporte entre WhatsApp Web y el CRM. Modular, desacoplado, tolerante.",
+  "permissions": ["storage", "scripting", "alarms", "tabs"],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://project--*-dev.lovable.app/*",
+    "https://project--*.lovable.app/*",
+    "https://id-preview--*.lovable.app/*"
+  ],
+  "background": { "service_worker": "background/index.js" },
+  "action": { "default_popup": "popup.html", "default_icon": "icon.png" },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "world": "MAIN",
+      "js": [
+        "content/bridge/page-bridge.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": [
+        "shared/contracts.js",
+        "shared/constants.js",
+        "content/core/event-bus.js",
+        "content/core/selector-engine.js",
+        "content/core/message-detector.js",
+        "content/core/message-parser.js",
+        "content/storage/idb.js",
+        "content/core/observer-manager.js",
+        "content/core/message-sender.js",
+        "content/bridge/bridge.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": { "48": "icon.png", "128": "icon.png" }
+}

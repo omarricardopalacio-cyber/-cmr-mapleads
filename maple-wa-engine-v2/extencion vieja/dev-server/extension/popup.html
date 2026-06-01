@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>CRM WhatsApp Engine</title>
+    <style>
+      body { font-family: system-ui, sans-serif; width: 320px; padding: 14px; margin: 0; background: #0f172a; color: #e2e8f0; }
+      h1 { font-size: 14px; margin: 0 0 12px; letter-spacing: 0.5px; text-transform: uppercase; color: #94a3b8; }
+      label { display: block; font-size: 12px; margin: 8px 0 4px; color: #94a3b8; }
+      input { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #f8fafc; font-size: 13px; }
+      button { width: 100%; margin-top: 12px; padding: 10px; border-radius: 6px; border: 0; background: #22c55e; color: #052e16; font-weight: 600; cursor: pointer; }
+      .status { margin-top: 10px; font-size: 12px; padding: 6px 8px; border-radius: 4px; background: #1e293b; }
+      .ok { color: #4ade80; } .bad { color: #f87171; }
+    </style>
+  </head>
+  <body>
+    <h1>WhatsApp Engine</h1>
+    <label>Backend URL</label>
+    <input id="backendUrl" placeholder="https://api.tu-crm.com" />
+    <label>Session Token</label>
+    <input id="sessionToken" placeholder="token JWT" />
+    <button id="save">Guardar y conectar</button>
+    <div class="status">Estado: <span id="status">—</span></div>
+    <div class="status" style="margin-top:4px;font-size:11px;color:#94a3b8;">Último error: <span id="lastError">—</span></div>
+    <script src="popup.js"></script>
+  </body>
+</html>
