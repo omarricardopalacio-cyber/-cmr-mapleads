@@ -525,10 +525,12 @@ function ThreadPage() {
             
             // Normalizar mime: soportar mimeType, mime_type y mimetype
             const mime = (mediaObj?.mimeType || mediaObj?.mime_type || mediaObj?.mimetype || "")?.toLowerCase();
-            
-            // Si hay URL pero mime vacío, inferir por extensión de URL
+            const msgType = (m.media as any)?.type as string | undefined;
+
+            // Si hay URL pero mime vacío o genérico (application/octet-stream), inferir por extensión de URL o tipo de mensaje
             const urlStr = mediaObj?.url ?? '';
-            const inferredMime = !mime && urlStr
+            const needsInference = !mime || mime === "application/octet-stream";
+            const inferredMime = needsInference && urlStr
               ? urlStr.match(/\.jpe?g$/i) ? 'image/jpeg'
               : urlStr.match(/\.png$/i) ? 'image/png'
               : urlStr.match(/\.gif$/i) ? 'image/gif'
@@ -537,6 +539,9 @@ function ThreadPage() {
               : urlStr.match(/\.webm$/i) ? 'video/webm'
               : urlStr.match(/\.(ogg|opus|mp3|m4a|aac|amr)$/i) ? 'audio/ogg'
               : urlStr.match(/\.pdf$/i) ? 'application/pdf'
+              : urlStr.match(/\.bin$/i) && msgType === 'image' ? 'image/jpeg'
+              : urlStr.match(/\.bin$/i) && msgType === 'video' ? 'video/mp4'
+              : urlStr.match(/\.bin$/i) && (msgType === 'ptt' || msgType === 'audio') ? 'audio/ogg'
               : ''
               : mime;
             const effectiveMime = inferredMime || mime;

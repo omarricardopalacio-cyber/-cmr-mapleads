@@ -127,7 +127,17 @@ export async function enrichMediaForMessage(
   const existingUrl = (media.url || media.mediaUrl || media.fileUrl) as string | undefined;
   if (existingUrl && existingUrl.startsWith("http") && !existingUrl.startsWith("blob:")) {
     const rawMime = (media.mimetype || media.mimeType || media.mime_type || "") as string;
-    const normalizedMime = rawMime ? normalizeMimeType(rawMime) : "application/octet-stream";
+    let normalizedMime = rawMime ? normalizeMimeType(rawMime) : "application/octet-stream";
+
+    // Si el mime sigue siendo genérico, inferir por tipo de mensaje o extensión de URL
+    if (normalizedMime === "application/octet-stream") {
+      const msgType = media.type as string;
+      if (msgType === "image") normalizedMime = "image/jpeg";
+      else if (msgType === "video") normalizedMime = "video/mp4";
+      else if (msgType === "ptt" || msgType === "audio") normalizedMime = "audio/ogg";
+      else if (msgType === "document") normalizedMime = "application/pdf";
+    }
+
     return {
       url: existingUrl,
       mimeType: normalizedMime,
@@ -139,7 +149,21 @@ export async function enrichMediaForMessage(
   }
 
   const base64Raw = (media.base64 || media.body || media.data) as string | undefined;
+  console.log("[engine-media] enrichMediaForMessage input:", {
+    hasBase64: !!media.base64,
+    base64Len: (media.base64 as string)?.length || 0,
+    hasBody: !!media.body,
+    bodyLen: (media.body as string)?.length || 0,
+    hasData: !!media.data,
+    dataLen: (media.data as string)?.length || 0,
+    mimetype: media.mimetype,
+    type: media.type,
+    base64RawFound: !!base64Raw,
+    base64RawLen: base64Raw?.length || 0,
+    base64RawPrefix: base64Raw?.substring(0, 30) || null,
+  });
   if (!base64Raw) {
+    console.log("[engine-media] No base64Raw found, returning missing_media");
     return { ...media, url: null, missing_media: true };
   }
 
@@ -151,8 +175,10 @@ export async function enrichMediaForMessage(
       fileName: (media.filename || media.fileName) as string | undefined,
     });
     if (!uploaded) {
+      console.log("[engine-media] uploadBase64ToStorage returned null");
       return { ...media, url: null, error: "Archivo vacio o corrupto" };
     }
+    console.log("[engine-media] Upload success:", uploaded.url);
     return {
       url: uploaded.url,
       mimeType: uploaded.mimeType,

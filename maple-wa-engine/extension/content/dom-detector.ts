@@ -224,24 +224,15 @@ async function emitFromNode(node: HTMLElement) {
       return;
     }
 
-    // Si tiene media, intentar extraer el base64 usando el message-parser
-    let mediaPayload: any = parsed.media;
-    if (parsed.media.image || parsed.media.video || parsed.media.audio) {
-      try {
-        const parser = (window as any).__engineParser;
-        if (parser && typeof parser.parseMessageNodeAsync === "function") {
-          const asyncParsed = await parser.parseMessageNodeAsync(node);
-          if (asyncParsed?.mediaPayload) {
-            mediaPayload = asyncParsed.mediaPayload;
-            console.log("[DOMDetector] Media extraído con éxito via message-parser:", {
-              hasBase64: !!mediaPayload.body,
-              mimeType: mediaPayload.mimeType,
-            });
-          }
-        }
-      } catch (parserErr) {
-        console.warn("[DOMDetector] Error extrayendo media con parser:", parserErr);
-      }
+    // SOLO emitir mensajes de TEXTO desde DOMDetector.
+    // Los mensajes multimedia (imagen/video/audio) deben ser manejados exclusivamente
+    // por el EventEngine (injected script) que tiene acceso a WPP y puede descargar
+    // el base64 real. El DOMDetector no tiene acceso al base64 y crea duplicados
+    // con "Imagen" como texto plano y media vacía.
+    const hasMedia = parsed.media.image || parsed.media.video || parsed.media.audio || parsed.media.document;
+    if (hasMedia) {
+      console.log("[DOMDetector] Saltando mensaje multimedia (lo manejará EventEngine):", id);
+      return;
     }
 
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
@@ -251,11 +242,10 @@ async function emitFromNode(node: HTMLElement) {
       waMessageId: parsed.id,
       direction: parsed.direction,
       text: parsed.text,
-      media: mediaPayload,
       sentAt: new Date().toISOString(),
     };
 
-    console.log("[DOMDetector] Mensaje detectado:", evtType, parsed.text?.slice(0, 40));
+    console.log("[DOMDetector] Mensaje de texto detectado:", evtType, parsed.text?.slice(0, 40));
 
     sendToBackground("WA_EVENT", {
       event: evtType,
