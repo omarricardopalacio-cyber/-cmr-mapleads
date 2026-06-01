@@ -234,7 +234,7 @@ async function dispatchCommand(cmd: BackendCommand): Promise<void> {
       payload: payload,
     });
 
-    console.log("[ServiceWorker] Comando ejecutado:", cmd.id, "respuesta:", response);
+    console.log("[ServiceWorker] Comando ejecutado:", cmd.id, "respuesta:", JSON.stringify(response));
 
     // Enviar ACK al backend como evento de ingest
     await sendCommandAck(cmd, response);
