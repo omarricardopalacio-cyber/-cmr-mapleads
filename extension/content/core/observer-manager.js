@@ -19,25 +19,57 @@
     const id = node.getAttribute?.("data-id") || node.id;
     if (!id || SEEN.has(id)) return;
     SEEN.set(id, Date.now());
-    try {
-      const parsed = parser().parseMessageNode(node);
-      if (!parsed || (!parsed.text && !parsed.media)) return;
-      const evtType = parsed.direction === "out" ? "message-out" : "message-in";
-      const payload = {
-        type: evtType,
-        chatId: parsed.chatId,
-        waMessageId: parsed.id || id,
-        direction: parsed.direction,
-        text: parsed.text,
-        media: parsed.media,
-        sentAt: new Date().toISOString(),
-      };
-      bus().emit(evtType, payload);
-      bus().sendToBackend(payload);
-    } catch (e) {
-      console.warn("[observer] parse fail", e);
-    }
+
+    // Usar versión asíncrona para intentar descargar media real
+    (async () => {
+      try {
+        const parsed = await parser().parseMessageNodeAsync(node);
+        if (!parsed || (!parsed.text && !parsed.hasMedia)) return;
+        const evtType = parsed.direction === "out" ? "message-out" : "message-in";
+
+        // Construir el campo media con el base64 real (o null si no se pudo)
+        let mediaPayload = null;
+        if (parsed.hasMedia) {
+          if (parsed.mediaPayload?.body) {
+            // Tenemos base64 — esto es lo que el backend subirá a Storage
+            mediaPayload = {
+              body: parsed.mediaPayload.body,
+              mimetype: parsed.mediaPayload.mimetype || parsed.mediaPayload.mimeType || "",
+              mimeType: parsed.mediaPayload.mimeType || parsed.mediaPayload.mimetype || "",
+              size: parsed.mediaPayload.size || 0,
+              caption: parsed.mediaPayload.caption || "",
+              filename: parsed.mediaPayload.filename || "",
+            };
+          } else {
+            // Sin base64 — enviar metadata para que el backend marque como missing_media
+            mediaPayload = {
+              body: null,
+              mimetype: parsed.mediaPayload?.mimetype || parsed.domMime || "",
+              mimeType: parsed.mediaPayload?.mimeType || parsed.domMime || "",
+              size: parsed.mediaPayload?.size || 0,
+              filehash: parsed.mediaPayload?.filehash || "",
+              mediaKey: parsed.mediaPayload?.mediaKey || "",
+            };
+          }
+        }
+
+        const payload = {
+          type: evtType,
+          chatId: parsed.chatId,
+          waMessageId: parsed.id || id,
+          direction: parsed.direction,
+          text: parsed.text,
+          media: mediaPayload,
+          sentAt: new Date().toISOString(),
+        };
+        bus().emit(evtType, payload);
+        bus().sendToBackend(payload);
+      } catch (e) {
+        console.warn("[observer] parse fail", e);
+      }
+    })();
   }
+
 
   function scanAll() {
     const nodes = sel().findAll("messageNode");
