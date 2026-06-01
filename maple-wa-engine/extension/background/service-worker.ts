@@ -142,8 +142,66 @@ async function pollCommands(): Promise<void> {
   }
 }
 
+async function blobToDataUri(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function resolveMediaInServiceWorker(
+  payload: Record<string, unknown>
+): Promise<{ payload: Record<string, unknown>; error?: string }> {
+  const url = (payload.mediaUrl || payload.media_url) as string | undefined;
+  if (!url || !url.startsWith("http")) {
+    return { payload };
+  }
+
+  try {
+    console.log("[ServiceWorker] Descargando media desde Service Worker (bypass CSP):", url);
+    const response = await fetch(url, { method: "GET" });
+    if (!response.ok) {
+      const err = `No se pudo descargar el archivo (${response.status})`;
+      console.warn("[ServiceWorker] Fallo descarga de media:", err);
+      return { payload, error: err };
+    }
+    const blob = await response.blob();
+    const dataUri = await blobToDataUri(blob);
+
+    const newPayload = { ...payload };
+    newPayload.media = dataUri;
+    newPayload.mimeType =
+      (payload.mimeType as string) ||
+      (payload.mime_type as string) ||
+      (payload.mimetype as string) ||
+      blob.type ||
+      "application/octet-stream";
+    delete newPayload.mediaUrl;
+    delete newPayload.media_url;
+    console.log("[ServiceWorker] Media convertida a base64, tamaño:", dataUri.length);
+    return { payload: newPayload };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[ServiceWorker] Error descargando media:", msg);
+    return { payload, error: msg };
+  }
+}
+
 async function dispatchCommand(cmd: BackendCommand): Promise<void> {
   console.log("[ServiceWorker] Comando recibido:", cmd.type, cmd.id);
+
+  let payload = cmd.payload;
+  if (cmd.type === "SEND_MESSAGE" && (payload.mediaUrl || payload.media_url)) {
+    const resolved = await resolveMediaInServiceWorker(payload);
+    if (resolved.error) {
+      console.error("[ServiceWorker] Abortando comando por fallo de descarga de media:", resolved.error);
+      await sendCommandAck(cmd, { error: resolved.error });
+      return;
+    }
+    payload = resolved.payload;
+  }
 
   // Enviar comando a la tab de WhatsApp Web correspondiente
   const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
@@ -173,7 +231,7 @@ async function dispatchCommand(cmd: BackendCommand): Promise<void> {
       channel: "WA_COMMAND",
       id: cmd.id,
       event: cmd.type,
-      payload: cmd.payload,
+      payload: payload,
     });
 
     console.log("[ServiceWorker] Comando ejecutado:", cmd.id, "respuesta:", response);
