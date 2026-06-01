@@ -112,19 +112,24 @@ export const listOrgMembers = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await ensureUserOrg(context.userId);
-    const { data } = await supabaseAdmin
+    const { data: roles } = await supabaseAdmin
       .from("user_roles")
-      .select("user_id, role, profiles:user_id(display_name, email)")
+      .select("user_id, role")
       .eq("org_id", orgId);
-    const members = (data ?? []).map((m: unknown) => {
-      const raw = m as Record<string, unknown>;
-      const profile = Array.isArray(raw.profiles) ? raw.profiles[0] : (raw.profiles as Record<string, unknown> | undefined);
-      return {
-        id: raw.user_id as string,
-        role: raw.role as string,
-        displayName: (profile?.display_name as string) || (profile?.email as string) || "Usuario",
-      };
-    });
+    const userIds = (roles ?? []).map((r) => r.user_id);
+    let profilesById = new Map<string, { display_name: string | null }>();
+    if (userIds.length) {
+      const { data: profs } = await supabaseAdmin
+        .from("profiles")
+        .select("id, display_name")
+        .in("id", userIds);
+      profilesById = new Map((profs ?? []).map((p) => [p.id, { display_name: p.display_name }]));
+    }
+    const members = (roles ?? []).map((r) => ({
+      id: r.user_id,
+      role: r.role as string,
+      displayName: profilesById.get(r.user_id)?.display_name || "Usuario",
+    }));
     return { members };
   });
 
