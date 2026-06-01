@@ -355,96 +355,6 @@
     return { ok: true, activeChatId: ready.activeChatId || getActiveChatId() };
   }
 
-  /**
-   * Descarga el media de un mensaje por su data-id.
-   * Busca el mensaje en el Store y devuelve { body, mimeType, size } o null.
-   */
-  async function downloadMediaFromStore(dataId) {
-    try {
-      if (!ensureStore()) return null;
-      const Store = window.Store;
-      if (!Store) return null;
-
-      // Buscar el mensaje en el Store
-      let msgModel = null;
-      const msgStore = Store.Msg || Store.Message || Store.Messages;
-      if (msgStore?.get) {
-        msgModel = msgStore.get(dataId);
-      }
-      if (!msgModel && msgStore?.getModelsArray) {
-        const arr = msgStore.getModelsArray();
-        msgModel = arr.find((m) => m?.id?._serialized === dataId || m?.id === dataId);
-      }
-      if (!msgModel && Store.Chat?.getModelsArray) {
-        for (const chat of Store.Chat.getModelsArray()) {
-          const msgs = chat.msgs?.getModelsArray?.() || [];
-          for (const msg of msgs) {
-            if (msg?.id?._serialized === dataId || msg?.id === dataId) {
-              msgModel = msg;
-              break;
-            }
-          }
-          if (msgModel) break;
-        }
-      }
-
-      if (!msgModel) return null;
-
-      // Si ya tiene el body descargado
-      if (msgModel.body && msgModel.body.length > 100) {
-        return {
-          body: msgModel.body,
-          mimeType: msgModel.mimetype || msgModel.mimeType || "",
-          size: msgModel.size || 0,
-          caption: msgModel.caption || "",
-          filename: msgModel.filename || "",
-        };
-      }
-
-      // Intentar descargar
-      if (msgModel.mediaKey || msgModel.filehash) {
-        if (typeof msgModel.downloadMedia === "function") {
-          const result = await msgModel.downloadMedia();
-          if (result?.body || result?.data) {
-            return {
-              body: result.body || result.data,
-              mimeType: result.mimetype || msgModel.mimetype || "",
-              size: msgModel.size || 0,
-              caption: msgModel.caption || "",
-              filename: msgModel.filename || "",
-            };
-          }
-        }
-
-        const downloadFn = Store?.downloadMedia || Store?.MediaCollection?.downloadMedia;
-        if (typeof downloadFn === "function") {
-          const result = await downloadFn(msgModel);
-          if (result?.body || result?.data) {
-            return {
-              body: result.body || result.data,
-              mimeType: result.mimetype || msgModel.mimetype || "",
-              size: msgModel.size || 0,
-              caption: msgModel.caption || "",
-              filename: msgModel.filename || "",
-            };
-          }
-        }
-      }
-
-      // Fallback: devolver metadata sin body
-      return {
-        body: null,
-        mimeType: msgModel.mimetype || msgModel.mimeType || "",
-        size: msgModel.size || 0,
-        caption: msgModel.caption || "",
-        filename: msgModel.filename || "",
-      };
-    } catch (e) {
-      console.warn("[bridge] downloadMedia error:", e);
-      return null;
-    }
-  }
-
   window.addEventListener("message", async (event) => {
     if (event.source !== window) return;
     const data = event.data;
@@ -469,8 +379,6 @@
       result = await openViaUrl(data.chatId);
     } else if (data.action === "wait_for_target_chat") {
       result = await waitForTargetChat(data.chatId, data.options || {});
-    } else if (data.action === "download_media") {
-      result = await downloadMediaFromStore(data.dataId);
     }
 
     window.postMessage({ type: RESPONSE, id: data.id, result }, "*");

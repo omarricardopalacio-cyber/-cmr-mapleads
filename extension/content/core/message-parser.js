@@ -7,44 +7,138 @@
     return header?.getAttribute("data-id") || location.hash || "unknown";
   }
 
-  const REQUEST = "ENGINE_PAGE_REQUEST";
-  const RESPONSE = "ENGINE_PAGE_RESPONSE";
-  let reqId = 0;
-  const pending = new Map();
+  /**
+   * Busca el modelo de mensaje en el Store de WhatsApp por data-id del nodo DOM.
+   * El data-id es algo como: "false_5491112223333@c.us_3EB0AF6E7E00A2EB8FBE53"
+   */
+  function findMsgModelInStore(dataId) {
+    try {
+      const Store = window.Store;
+      if (!Store) return null;
 
-  // Escuchar respuestas del bridge (MAIN world)
-  window.addEventListener("message", (event) => {
-    if (event.source !== window) return;
-    const data = event.data;
-    if (!data || data.type !== RESPONSE || !data.id) return;
-    const cb = pending.get(data.id);
-    if (cb) {
-      pending.delete(data.id);
-      cb(data.result);
-    }
-  });
+      // Intentar con MsgCollection o Msg store
+      const msgStore = Store.Msg || Store.Message || Store.Messages;
+      if (msgStore?.get) {
+        const m = msgStore.get(dataId);
+        if (m) return m;
+      }
+      if (msgStore?.getModelsArray) {
+        const arr = msgStore.getModelsArray();
+        const found = arr.find((m) => m?.id?._serialized === dataId || m?.id === dataId);
+        if (found) return found;
+      }
 
-  function callBridge(action, payload) {
-    return new Promise((resolve) => {
-      const id = ++reqId;
-      pending.set(id, resolve);
-      window.postMessage({ type: REQUEST, id, action, ...payload }, "*");
-      // Timeout de seguridad
-      setTimeout(() => {
-        if (pending.has(id)) {
-          pending.delete(id);
-          resolve(null);
+      // Intentar a través del chat activo
+      const chatStore = Store.Chat;
+      if (chatStore?.getModelsArray) {
+        for (const chat of chatStore.getModelsArray()) {
+          const msgs = chat.msgs?.getModelsArray?.() || [];
+          for (const msg of msgs) {
+            if (msg?.id?._serialized === dataId || msg?.id === dataId) return msg;
+          }
         }
-      }, 5000);
-    });
+      }
+
+      // Búsqueda por el ID final (parte después del último _)
+      const parts = String(dataId).split("_");
+      const msgKey = parts[parts.length - 1];
+      if (msgKey && msgKey.length > 10) {
+        const chatActive = chatStore?.getActive?.();
+        const msgs = chatActive?.msgs?.getModelsArray?.() || [];
+        for (const msg of msgs) {
+          const serial = msg?.id?._serialized || "";
+          if (serial.endsWith(msgKey)) return msg;
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**
-   * Descarga el media del mensaje usando el bridge que corre en MAIN world.
-   * Devuelve { body, mimeType, size, caption, filename } o null.
+   * Descarga el media del mensaje usando el Store de WhatsApp.
+   * Devuelve { body, mimetype, size, filehash, mediaKey, url } o null.
    */
-  async function downloadMediaFromStore(dataId) {
-    return await callBridge("download_media", { dataId });
+  async function downloadMediaFromStore(msgModel) {
+    if (!msgModel) return null;
+    try {
+      // El modelo ya tiene el base64 en 'body' si ya fue descargado
+      if (msgModel.body && msgModel.body.length > 100) {
+        return {
+          body: msgModel.body,
+          mimetype: msgModel.mimetype || msgModel.mimeType || "",
+          mimeType: msgModel.mimetype || msgModel.mimeType || "",
+          size: msgModel.size || 0,
+          filehash: msgModel.filehash || "",
+          mediaKey: msgModel.mediaKey || "",
+          url: msgModel.mediaUrl || msgModel.url || null,
+          caption: msgModel.caption || "",
+          filename: msgModel.filename || "",
+        };
+      }
+
+      // Intentar descargar si tiene mediaKey (la mayoría de las imágenes recibidas)
+      if (msgModel.mediaKey || msgModel.filehash) {
+        // Método 1: downloadMedia() disponible en algunas versiones
+        if (typeof msgModel.downloadMedia === "function") {
+          const result = await msgModel.downloadMedia();
+          if (result?.body || result?.data) {
+            return {
+              body: result.body || result.data,
+              mimetype: result.mimetype || msgModel.mimetype || "",
+              mimeType: result.mimetype || msgModel.mimetype || "",
+              size: msgModel.size || 0,
+              filehash: msgModel.filehash || "",
+              mediaKey: msgModel.mediaKey || "",
+              url: result.url || msgModel.mediaUrl || null,
+              caption: msgModel.caption || "",
+              filename: msgModel.filename || "",
+            };
+          }
+        }
+
+        // Método 2: usar Store.downloadMedia
+        const Store = window.Store;
+        const downloadFn = Store?.downloadMedia || Store?.MediaCollection?.downloadMedia;
+        if (typeof downloadFn === "function") {
+          const result = await downloadFn(msgModel);
+          if (result?.body || result?.data) {
+            return {
+              body: result.body || result.data,
+              mimetype: result.mimetype || msgModel.mimetype || "",
+              mimeType: result.mimetype || msgModel.mimetype || "",
+              size: msgModel.size || 0,
+              filehash: msgModel.filehash || "",
+              mediaKey: msgModel.mediaKey || "",
+              url: result.url || null,
+              caption: msgModel.caption || "",
+              filename: msgModel.filename || "",
+            };
+          }
+        }
+
+        // Método 3: intentar obtener de blob URL en el DOM
+        // Si ya está en pantalla, hay una blob URL en img src
+      }
+
+      // Fallback: retornar metadata sin body (se mostrará como "missing_media")
+      return {
+        body: null,
+        mimetype: msgModel.mimetype || msgModel.mimeType || "",
+        mimeType: msgModel.mimetype || msgModel.mimeType || "",
+        size: msgModel.size || 0,
+        filehash: msgModel.filehash || "",
+        mediaKey: msgModel.mediaKey || "",
+        url: msgModel.mediaUrl || msgModel.url || null,
+        caption: msgModel.caption || "",
+        filename: msgModel.filename || "",
+      };
+    } catch (e) {
+      console.warn("[parser] downloadMedia error:", e);
+      return null;
+    }
   }
 
   /**
@@ -129,10 +223,13 @@
 
     const dataId = basic.id;
 
-    // 1. Intentar via Bridge (MAIN world tiene acceso al Store)
-    const mediaData = await downloadMediaFromStore(dataId);
-    if (mediaData && mediaData.body) {
-      return { ...basic, mediaPayload: mediaData };
+    // 1. Intentar via Store
+    const msgModel = findMsgModelInStore(dataId);
+    if (msgModel) {
+      const mediaData = await downloadMediaFromStore(msgModel);
+      if (mediaData) {
+        return { ...basic, mediaPayload: mediaData };
+      }
     }
 
     // 2. Fallback: convertir blob URL del DOM a base64

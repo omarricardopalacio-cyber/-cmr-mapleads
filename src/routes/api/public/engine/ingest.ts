@@ -153,16 +153,6 @@ async function processMediaUpload(
 ): Promise<Record<string, unknown> | null> {
   if (!media) return null
 
-  // Si la extensión reportó que el archivo es demasiado grande
-  if (media.error && !media.base64 && !media.body && !media.data) {
-    console.log('[ingest] media: extensión reportó archivo muy grande:', media.error);
-    return {
-      ...media,
-      url: null,
-      error: String(media.error),
-    };
-  }
-
   // WhatsApp Web / la extensión puede enviar el base64 en distintos campos:
   // - 'base64': campo explícito usado por comandos del CRM
   // - 'body': campo nativo de whatsapp-web.js para mensajes recibidos (contiene data URI o base64 crudo)
