@@ -152,7 +152,11 @@ async function processMediaUpload(
 ): Promise<Record<string, unknown> | null> {
   if (!media) return null
 
-  const base64Raw = media.base64 as string | undefined
+  // WhatsApp Web / la extensión puede enviar el base64 en distintos campos:
+  // - 'base64': campo explícito usado por comandos del CRM
+  // - 'body': campo nativo de whatsapp-web.js para mensajes recibidos (contiene data URI o base64 crudo)
+  // - 'data': variante usada por algunas versiones de la extensión
+  const base64Raw = (media.base64 || media.body || media.data) as string | undefined
   
   // Si no hay base64, verificar si el objeto media tiene una URL directa (ej: mensajes entrantes de WA)
   if (!base64Raw) {
@@ -786,6 +790,24 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.error('[ingest] default flow enrollment error (non-fatal):', flowErr.message);
               }
             }
+            // DIAGNÓSTICO: Loguear estructura completa del media para mensajes entrantes
+            if (e.media && (e.direction === 'in' || e.type === 'message-in')) {
+              const mediaKeys = Object.keys(e.media as object);
+              const mediaSample = {
+                keys: mediaKeys,
+                hasBase64: !!(e.media as any).base64,
+                base64Len: ((e.media as any).base64 || '').length,
+                hasBody: !!(e.media as any).body,
+                bodyLen: ((e.media as any).body || '').length,
+                hasData: !!(e.media as any).data,
+                hasUrl: !!(e.media as any).url,
+                hasMediaUrl: !!(e.media as any).mediaUrl,
+                mimetype: (e.media as any).mimetype,
+                type: (e.media as any).type,
+              };
+              console.log('[ingest] 🔍 RAW MEDIA INCOMING:', JSON.stringify(mediaSample));
+            }
+
             const enrichedMedia = await processMediaUpload(
               e.media as Record<string, unknown> | undefined,
               session.org_id,
