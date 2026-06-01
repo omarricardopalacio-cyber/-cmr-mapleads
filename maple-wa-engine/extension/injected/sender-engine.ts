@@ -139,10 +139,8 @@ class SenderEngine {
       ]);
 
       if (!result) {
-        return {
-          success: false,
-          error: LID_RESOLVE_ERROR,
-        };
+        console.warn("[MAPLE SENDER] queryExists retornó null para:", normalizedChatId, "- usando fallback");
+        return { success: true, verifiedChatId: normalizedChatId };
       }
 
       const verifiedChatId = this.extractVerifiedChatId(result, normalizedChatId);
