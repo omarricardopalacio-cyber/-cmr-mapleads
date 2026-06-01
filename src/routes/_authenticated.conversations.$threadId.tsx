@@ -2,7 +2,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent, syncThreadMessages } from "@/lib/messaging.functions";
 import { listOrgMembers, getContactCrmData, updateContactCrmData } from "@/lib/crm.functions";
 import { listQuickReplies, createScheduled } from "@/lib/automations.functions";
@@ -85,6 +85,132 @@ import { sanitizeMessageText, isBase64Thumbnail } from "@/lib/message-text";
 export const Route = createFileRoute("/_authenticated/conversations/$threadId")({
   component: ThreadPage,
 });
+
+type MediaPayload = { url?: string; mimeType?: string; mime_type?: string; mimetype?: string; filename?: string; caption?: string; error?: string; missing_media?: boolean } | null;
+
+function MediaRenderer({ media, onImageClick }: { media: MediaPayload; onImageClick?: (url: string) => void }) {
+  if (!media) return null;
+
+  const mime = (media.mimeType || media.mime_type || media.mimetype || "")?.toLowerCase();
+  const urlStr = media.url ?? "";
+  // Extraer extensión ignorando query params y hash
+  const urlPath = urlStr.split("?")[0].split("#")[0];
+  const extMatch = urlPath.match(/\.([a-z0-9]+)$/i);
+  const ext = extMatch ? extMatch[1].toLowerCase() : "";
+
+  const inferredMime = !mime && ext
+    ? ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+    : ext === "png" ? "image/png"
+    : ext === "gif" ? "image/gif"
+    : ext === "webp" ? "image/webp"
+    : ext === "mp4" ? "video/mp4"
+    : ext === "webm" ? "video/webm"
+    : ext === "mov" ? "video/quicktime"
+    : ext === "3gp" ? "video/3gpp"
+    : ["ogg", "opus", "mp3", "m4a", "aac", "amr"].includes(ext) ? "audio/ogg"
+    : ext === "pdf" ? "application/pdf"
+    : ""
+    : mime;
+  const effectiveMime = inferredMime || mime;
+
+  const isImage = effectiveMime.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp"].includes(ext);
+  const isVideo = effectiveMime.startsWith("video/");
+  const isAudio = effectiveMime.startsWith("audio/");
+  const isDoc = !isImage && !isVideo && !isAudio && !!urlStr;
+
+  const hasError = !!media.error;
+  const hasMissingMedia = !!media.missing_media;
+  const hasMediaButNoUrl = !!(!media.url && !hasError && !hasMissingMedia);
+
+  if (isImage && media.url) {
+    return (
+      <img
+        src={media.url}
+        alt={media.caption || "Imagen"}
+        className="max-w-[250px] rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-slate-800"
+        onClick={() => onImageClick?.(media.url!)}
+        loading="lazy"
+      />
+    );
+  }
+
+  if (isVideo && media.url) {
+    return (
+      <video
+        src={media.url}
+        controls
+        className="max-w-[280px] rounded-lg border border-slate-800"
+        preload="metadata"
+      />
+    );
+  }
+
+  if (isAudio && media.url) {
+    return (
+      <div className="flex items-center gap-2 bg-black/20 rounded-lg p-2">
+        <Mic className="h-5 w-5 text-emerald-500 shrink-0" />
+        <audio src={media.url} controls className="w-[200px] h-8" />
+      </div>
+    );
+  }
+
+  if (isDoc && media.url) {
+    return (
+      <div className="flex items-center gap-3 bg-muted rounded-lg p-3 border border-slate-800">
+        <FileText className="h-8 w-8 text-blue-500 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-medium truncate">{media.filename || "Documento.pdf"}</div>
+          <a
+            href={media.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] text-muted-foreground hover:underline flex items-center gap-1 mt-0.5"
+          >
+            <Download className="h-3 w-3" /> Descargar
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (hasMissingMedia) {
+    return (
+      <div className="flex items-center gap-2 bg-slate-500/10 border border-slate-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+        <span className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+          <Image className="h-4 w-4 opacity-70" />
+          Multimedia enviada desde otro dispositivo
+        </span>
+      </div>
+    );
+  }
+
+  if (hasMediaButNoUrl) {
+    return (
+      <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+        <span className="text-xs font-medium text-amber-700 animate-pulse flex items-center gap-1.5">
+          ⏳ Sincronizando multimedia...
+        </span>
+      </div>
+    );
+  }
+
+  if (hasError) {
+    return (
+      <div className="flex flex-col gap-1.5 bg-rose-500/10 border border-rose-500/35 rounded-lg p-2.5 mt-1.5 max-w-sm">
+        <span className="text-xs font-semibold text-rose-700 flex items-center gap-1">
+          ❌ Error al cargar multimedia
+        </span>
+        <span className="text-[10px] text-rose-600/90 leading-normal">
+          {media.error || "El archivo es demasiado pesado o está corrupto. Inténtalo de nuevo."}
+        </span>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+const MemoizedMediaRenderer = memo(MediaRenderer);
 
 function ThreadPage() {
   const { threadId } = Route.useParams();
@@ -546,64 +672,10 @@ function ThreadPage() {
                 }`}
               >
                 <div className="whitespace-pre-wrap break-words">
-                  {isImage && mediaObj?.url ? (
-                    <img
-                      src={mediaObj.url}
-                      alt={mediaObj.caption || "Imagen"}
-                      className="max-w-[250px] rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-slate-800"
-                      onClick={() => setLightboxUrl(mediaObj.url!)}
-                      loading="lazy"
-                    />
-                  ) : isVideo && mediaObj?.url ? (
-                    <video
-                      src={mediaObj.url}
-                      controls
-                      className="max-w-[280px] rounded-lg border border-slate-800"
-                      preload="metadata"
-                    />
-                  ) : isAudio && mediaObj?.url ? (
-                    <div className="flex items-center gap-2 bg-black/20 rounded-lg p-2">
-                      <Mic className="h-5 w-5 text-emerald-500 shrink-0" />
-                      <audio src={mediaObj.url} controls className="w-[200px] h-8" />
-                    </div>
-                  ) : isDoc && mediaObj?.url ? (
-                    <div className="flex items-center gap-3 bg-muted rounded-lg p-3 border border-slate-800">
-                      <FileText className="h-8 w-8 text-blue-500 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium truncate">{mediaObj.filename || "Documento.pdf"}</div>
-                        <a
-                          href={mediaObj.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[10px] text-muted-foreground hover:underline flex items-center gap-1 mt-0.5"
-                        >
-                          <Download className="h-3 w-3" /> Descargar
-                        </a>
-                      </div>
-                    </div>
-                  ) : hasMissingMedia ? (
-                    <div className="flex items-center gap-2 bg-slate-500/10 border border-slate-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
-                      <span className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
-                        <Image className="h-4 w-4 opacity-70" />
-                        Multimedia enviada desde otro dispositivo
-                      </span>
-                    </div>
-                  ) : hasMediaButNoUrl ? (
-                    <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
-                      <span className="text-xs font-medium text-amber-700 animate-pulse flex items-center gap-1.5">
-                        ⏳ Sincronizando multimedia...
-                      </span>
-                    </div>
-                  ) : hasError ? (
-                    <div className="flex flex-col gap-1.5 bg-rose-500/10 border border-rose-500/35 rounded-lg p-2.5 mt-1.5 max-w-sm">
-                      <span className="text-xs font-semibold text-rose-700 flex items-center gap-1">
-                        ❌ Error al cargar multimedia
-                      </span>
-                      <span className="text-[10px] text-rose-600/90 leading-normal">
-                        {mediaObj?.error || "El archivo es demasiado pesado o está corrupto. Inténtalo de nuevo."}
-                      </span>
-                    </div>
-                  ) : null}
+                  <MemoizedMediaRenderer
+                    media={mediaObj}
+                    onImageClick={(url) => setLightboxUrl(url)}
+                  />
                   {displayText ? <div className={mediaObj?.url ? "mt-2" : ""}>{displayText}</div> : null}
                   {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && !hasError && !hasMissingMedia && (
                     <i className="opacity-60 text-xs">[mensaje vacío]</i>

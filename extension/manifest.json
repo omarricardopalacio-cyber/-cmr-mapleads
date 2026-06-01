@@ -8,7 +8,9 @@
     "https://web.whatsapp.com/*",
     "https://project--*-dev.lovable.app/*",
     "https://project--*.lovable.app/*",
-    "https://id-preview--*.lovable.app/*"
+    "https://id-preview--*.lovable.app/*",
+    "https://plan-maestro-bridge.lovable.app/*",
+    "https://*.lovable.app/*"
   ],
   "background": { "service_worker": "background/index.js" },
   "action": { "default_popup": "popup.html", "default_icon": "icon.png" },

@@ -400,6 +400,17 @@ export const clearAllChats = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+function sanitizeFileName(name: string): string {
+  // Eliminar acentos y caracteres especiales, reemplazar espacios por guiones bajos
+  const normalized = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "")
+    .replace(/_{2,}/g, "_");
+  return normalized || "file";
+}
+
 export const uploadMedia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) =>
@@ -411,7 +422,8 @@ export const uploadMedia = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
-    const path = `${orgId}/${Date.now()}_${data.fileName}`;
+    const safeName = sanitizeFileName(data.fileName);
+    const path = `${orgId}/${Date.now()}_${safeName}`;
     try {
       const binaryString = atob(data.base64);
       const bytes = new Uint8Array(binaryString.length);
