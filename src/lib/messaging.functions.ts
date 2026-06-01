@@ -65,6 +65,13 @@ async function signMessageMedia(
   if (!media || typeof media !== "object") return media;
   const url = typeof media.url === "string" ? media.url : null;
   if (!url) return media;
+
+  // Si la URL ya es pública, no necesitamos firmarla. Esto previene que cambie la firma cada 3 segundos,
+  // deteniendo el parpadeo/titileo de videos/imágenes y eliminando los timeouts en la base de datos.
+  if (url.includes("/storage/v1/object/public/")) {
+    return media;
+  }
+
   const path = storagePathFromMediaUrl(url);
   if (!path) return media;
   const { data, error } = await supabaseAdmin.storage.from("media").createSignedUrl(path, 3600);
