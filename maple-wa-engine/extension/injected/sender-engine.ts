@@ -189,16 +189,23 @@ class SenderEngine {
     const timeoutMs = task.media ? SEND_TIMEOUT_MEDIA : SEND_TIMEOUT;
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+    console.log(`[MAPLE SENDER] executeTaskWithWpp started. chatId=${task.chatId}, normalized=${normalizedChatId}, hasMedia=${!!task.media}`);
+
     try {
+      console.log(`[MAPLE SENDER] Calling ensureContactLid with: ${normalizedChatId}`);
       const lidCheck = await this.ensureContactLid(WPP, normalizedChatId);
+      console.log(`[MAPLE SENDER] ensureContactLid result:`, JSON.stringify(lidCheck));
+
       if (!lidCheck.success) {
+        console.error(`[MAPLE SENDER] LID check failed:`, lidCheck.error);
         return { success: false, error: lidCheck.error };
       }
 
       const targetChatId = lidCheck.verifiedChatId || normalizedChatId;
       const sendOptions = this.buildSendOptions(task);
 
-      console.log(`[MAPLE SENDER] Iniciando transmisión hacia destinatario final: ${targetChatId}`);
+      console.log(`[MAPLE SENDER] About to send. targetChatId=${targetChatId}, isText=${!task.media}, text="${task.text || ""}"`);
+      console.log(`[MAPLE SENDER] WPP.chat available:`, !!WPP.chat, `sendTextMessage:`, typeof WPP.chat?.sendTextMessage, `sendFileMessage:`, typeof WPP.chat?.sendFileMessage);
 
       let result: any;
 
@@ -207,14 +214,18 @@ class SenderEngine {
           (task.options?.mimeType as string) ||
           (task.options?.mimetype as string) ||
           "application/octet-stream";
+        console.log(`[MAPLE SENDER] Calling sendFileMessage, type=${fileType}`);
         result = await WPP.chat.sendFileMessage(targetChatId, task.media, {
           type: fileType,
           caption: task.caption || task.text,
           ...sendOptions,
         });
       } else {
+        console.log(`[MAPLE SENDER] Calling sendTextMessage with text="${task.text || ""}"`);
         result = await WPP.chat.sendTextMessage(targetChatId, task.text || "", sendOptions);
       }
+
+      console.log(`[MAPLE SENDER] WPP result:`, JSON.stringify(result));
 
       if (controller.signal.aborted) {
         throw new Error("SEND_ABORTED");
@@ -236,8 +247,10 @@ class SenderEngine {
   private async executeTask(task: SendTask): Promise<{ success: boolean; messageId?: string; error?: string }> {
     const WPP = getWPP();
     if (!WPP) {
+      console.error("[MAPLE SENDER] WPP not available - cannot send message");
       return { success: false, error: "WPP no disponible" };
     }
+    console.log("[MAPLE SENDER] WPP available, proceeding with send");
 
     const controller = new AbortController();
     this.activeTasks.set(task.taskId, controller);

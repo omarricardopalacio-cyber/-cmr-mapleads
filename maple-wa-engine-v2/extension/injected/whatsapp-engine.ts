@@ -61,13 +61,16 @@ async function init(): Promise<void> {
 }
 
 async function handleCommands(event: MessageEvent): Promise<void> {
-  if (event.source !== window.parent && event.source !== window) return;
+  // Chrome MV3: content script (isolated world) and injected script (main world)
+  // do NOT share the same window object. Remove event.source check.
   const msg = event.data;
   if (msg?.source !== "MAPLE_WA_CONTENT") return;
   if (msg?.channel !== "WA_COMMAND") return;
 
   const { id, event: rawCmdEvent, payload } = msg;
   const cmdEvent = (rawCmdEvent || "").toUpperCase().replace(/-/g, "_");
+  console.log(`[WhatsAppEngine] Executing command: ${cmdEvent}, id: ${id}`);
+
   let response: any = null;
   let error: string | null = null;
 
@@ -75,12 +78,19 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     switch (cmdEvent) {
       case "SEND_MESSAGE": {
         const cmdPayload = (payload ?? {}) as Record<string, unknown>;
+        console.log("[WhatsAppEngine] SEND_MESSAGE payload:", JSON.stringify({
+          chatId: cmdPayload.chatId,
+          text: cmdPayload.text,
+          hasMedia: !!cmdPayload.media,
+        }));
+
         const resolved = await resolveCommandMedia(cmdPayload);
         const mimeType =
           resolved.mimeType ||
           (cmdPayload.mimeType as string) ||
           (cmdPayload.mime_type as string);
 
+        console.log("[WhatsAppEngine] Calling senderEngine.send with chatId:", cmdPayload.chatId);
         const sendResult = await senderEngine.send({
           chatId: cmdPayload.chatId as string,
           text: cmdPayload.text as string | undefined,
@@ -93,6 +103,8 @@ async function handleCommands(event: MessageEvent): Promise<void> {
             mimetype: mimeType,
           },
         });
+        console.log("[WhatsAppEngine] senderEngine.send result:", JSON.stringify(sendResult));
+
         if (!sendResult.success) {
           error = sendResult.error || "SEND_FAILED";
         } else {
@@ -152,9 +164,10 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     console.error(`[WhatsAppEngine] Error ejecutando ${cmdEvent}:`, err);
   }
 
-  // Responder al Content Script
+  const responsePayload = error ? { error } : response;
+  console.log(`[WhatsAppEngine] Sending response for ${cmdEvent}:`, JSON.stringify(responsePayload));
   postFromInjected("WA_RESPONSE", {
     id,
-    payload: error ? { error } : response,
+    payload: responsePayload,
   });
 }

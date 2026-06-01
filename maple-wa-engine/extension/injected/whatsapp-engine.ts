@@ -61,13 +61,30 @@ async function init(): Promise<void> {
 }
 
 async function handleCommands(event: MessageEvent): Promise<void> {
-  if (event.source !== window.parent && event.source !== window) return;
+  // DEBUG: Log every message event to diagnose filtering issues
+  console.log("[WhatsAppEngine] Message received:", {
+    source: event.source,
+    sourceIsWindow: event.source === window,
+    sourceIsParent: event.source === window.parent,
+    dataSource: event.data?.source,
+    channel: event.data?.channel,
+    id: event.data?.id,
+  });
+
+  // Chrome MV3: content script (isolated world) and injected script (main world)
+  // do NOT share the same window object. event.source from content script postMessage
+  // will NOT equal window. We remove this check to allow commands through.
+  // Security note: we still verify msg.source === "MAPLE_WA_CONTENT" below.
+  // if (event.source !== window.parent && event.source !== window) return;
+
   const msg = event.data;
   if (msg?.source !== "MAPLE_WA_CONTENT") return;
   if (msg?.channel !== "WA_COMMAND") return;
 
   const { id, event: rawCmdEvent, payload } = msg;
   const cmdEvent = (rawCmdEvent || "").toUpperCase().replace(/-/g, "_");
+  console.log(`[WhatsAppEngine] Executing command: ${cmdEvent}, id: ${id}`);
+
   let response: any = null;
   let error: string | null = null;
 
@@ -75,12 +92,25 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     switch (cmdEvent) {
       case "SEND_MESSAGE": {
         const cmdPayload = (payload ?? {}) as Record<string, unknown>;
+        console.log("[WhatsAppEngine] SEND_MESSAGE payload:", JSON.stringify({
+          chatId: cmdPayload.chatId,
+          text: cmdPayload.text,
+          hasMedia: !!cmdPayload.media,
+          mimeType: cmdPayload.mimeType || cmdPayload.mime_type,
+        }));
+
         const resolved = await resolveCommandMedia(cmdPayload);
+        console.log("[WhatsAppEngine] resolveCommandMedia result:", JSON.stringify({
+          hasDataUri: !!resolved.dataUri,
+          mimeType: resolved.mimeType,
+        }));
+
         const mimeType =
           resolved.mimeType ||
           (cmdPayload.mimeType as string) ||
           (cmdPayload.mime_type as string);
 
+        console.log("[WhatsAppEngine] Calling senderEngine.send with chatId:", cmdPayload.chatId);
         const sendResult = await senderEngine.send({
           chatId: cmdPayload.chatId as string,
           text: cmdPayload.text as string | undefined,
@@ -93,6 +123,8 @@ async function handleCommands(event: MessageEvent): Promise<void> {
             mimetype: mimeType,
           },
         });
+        console.log("[WhatsAppEngine] senderEngine.send result:", JSON.stringify(sendResult));
+
         if (!sendResult.success) {
           error = sendResult.error || "SEND_FAILED";
         } else {
@@ -153,8 +185,10 @@ async function handleCommands(event: MessageEvent): Promise<void> {
   }
 
   // Responder al Content Script
+  const responsePayload = error ? { error } : response;
+  console.log(`[WhatsAppEngine] Sending response for ${cmdEvent}:`, JSON.stringify(responsePayload));
   postFromInjected("WA_RESPONSE", {
     id,
-    payload: error ? { error } : response,
+    payload: responsePayload,
   });
 }
