@@ -10,11 +10,11 @@ export async function getUserOrg(userId: string): Promise<string | null> {
   return data?.org_id ?? null;
 }
 
-async function fetchOrphanIds(table: string, orgId: string): Promise<string[]> {
-  const nullRes = await supabaseAdmin.from(table).select("id").is("org_id", null);
-  const diffRes = await supabaseAdmin.from(table).select("id").neq("org_id", orgId);
-  const nullIds = (nullRes.data ?? []).map((r: { id: string }) => r.id);
-  const diffIds = (diffRes.data ?? []).map((r: { id: string }) => r.id);
+async function fetchOrphanIds(table: "wa_sessions" | "threads" | "contacts", orgId: string): Promise<string[]> {
+  const nullRes: any = await (supabaseAdmin as any).from(table).select("id").is("org_id", null);
+  const diffRes: any = await (supabaseAdmin as any).from(table).select("id").neq("org_id", orgId);
+  const nullIds = ((nullRes.data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const diffIds = ((diffRes.data ?? []) as Array<{ id: string }>).map((r) => r.id);
   return Array.from(new Set([...nullIds, ...diffIds]));
 }
 
