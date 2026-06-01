@@ -24,6 +24,7 @@ interface SendTask {
 
 const RATE_LIMIT_PER_MINUTE = 30;
 const SEND_TIMEOUT = 30000;
+const SEND_TIMEOUT_MEDIA = 120000;
 const SEND_RETRY_MAX = 3;
 const SEND_RETRY_DELAY = 2000;
 const LID_RESOLVE_ERROR =
@@ -177,7 +178,8 @@ class SenderEngine {
     controller: AbortController
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     const normalizedChatId = this.normalizeChatId(task.chatId);
-    const timeout = setTimeout(() => controller.abort(), SEND_TIMEOUT);
+    const timeoutMs = task.media ? SEND_TIMEOUT_MEDIA : SEND_TIMEOUT;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const lidCheck = await this.ensureContactLid(WPP, normalizedChatId);
@@ -193,8 +195,12 @@ class SenderEngine {
       let result: any;
 
       if (task.media) {
+        const fileType =
+          (task.options?.mimeType as string) ||
+          (task.options?.mimetype as string) ||
+          "application/octet-stream";
         result = await WPP.chat.sendFileMessage(targetChatId, task.media, {
-          type: task.options?.mimetype || "application/octet-stream",
+          type: fileType,
           caption: task.caption || task.text,
           ...sendOptions,
         });

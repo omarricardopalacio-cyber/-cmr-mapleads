@@ -211,24 +211,35 @@ export const sendMessage = createServerFn({ method: "POST" })
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
-    const payload: Record<string, unknown> = { chatId, text: data.text.trim() || data.caption || "" };
+    const payload: Record<string, unknown> = {
+      chatId,
+      text: data.text.trim() || data.caption || "",
+    };
 
-    try {
-      const mediaFields = await resolveMediaForCommand({
-        media_url: data.media_url,
-        media_base64: data.media_base64,
-        media_storage_path: data.media_storage_path,
-        mime_type: data.mime_type,
-        caption: data.caption,
-        text: data.text,
-      });
-      if (mediaFields.media) {
-        payload.media = mediaFields.media;
-        payload.caption = mediaFields.caption;
+    if (data.media_url || data.media_storage_path) {
+      payload.mediaUrl = data.media_url;
+      payload.storagePath = data.media_storage_path;
+      payload.mimeType = data.mime_type;
+      payload.caption = data.caption || data.text || undefined;
+    } else if (data.media_base64) {
+      const raw = data.media_base64.trim();
+      const smallEnough = raw.length <= 48_000;
+      if (smallEnough) {
+        payload.media = raw.startsWith("data:")
+          ? raw
+          : `data:${data.mime_type || "application/octet-stream"};base64,${raw}`;
+        payload.mimeType = data.mime_type;
+        payload.caption = data.caption || data.text || undefined;
+      } else if (data.media_storage_path && data.media_url) {
+        payload.mediaUrl = data.media_url;
+        payload.storagePath = data.media_storage_path;
+        payload.mimeType = data.mime_type;
+        payload.caption = data.caption || data.text || undefined;
+      } else {
+        throw new Error(
+          "El archivo es demasiado grande. Vuelve a adjuntarlo o espera a que termine la subida."
+        );
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(msg.includes("fetch") ? "Failed to convert media URL to base64" : msg);
     }
 
     const displayText = sanitizeMessageText(

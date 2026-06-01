@@ -953,7 +953,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           payload: stripHeavyFieldsForDb(parsed.data.events[i]) as never,
         }))
         if (eventRows.length) {
-          await supabaseAdmin.from('events').insert(eventRows)
+          try {
+            await supabaseAdmin.from('events').insert(eventRows)
+          } catch (eventsErr: unknown) {
+            console.error(
+              '[ingest] events audit insert failed (non-fatal):',
+              eventsErr instanceof Error ? eventsErr.message : eventsErr
+            )
+          }
         }
 
         return json(200, { ok: true, processed: parsed.data.events.length })

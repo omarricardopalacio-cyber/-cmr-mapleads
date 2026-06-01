@@ -172,7 +172,8 @@ async function normalizeMessage(msg: any): Promise<any> {
     try {
       const WPP = getWPP();
       let base64Data: string | null = null;
-      let retries = 6; // 6 intentos (15 segundos en total)
+      const isVideo = msg.type === "video";
+      let retries = isVideo ? 12 : 6;
 
       while (!base64Data && retries > 0) {
         // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador (Evita 403 Forbidden)
@@ -233,7 +234,7 @@ async function normalizeMessage(msg: any): Promise<any> {
         retries--;
         if (retries > 0) {
           console.log(`[MAPLE MULTIMEDIA] Archivo no listo aún. Esperando 2.5s antes del reintento... (${retries} intentos restantes)`);
-          await new Promise((r) => setTimeout(r, 2500));
+          await new Promise((r) => setTimeout(r, isVideo ? 3000 : 2500));
         }
       }
 

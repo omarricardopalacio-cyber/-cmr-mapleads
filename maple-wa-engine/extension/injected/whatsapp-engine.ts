@@ -6,6 +6,7 @@
 import { waitForWPP, isWPPReady } from "./wpp-bootstrap";
 import { initEventEngine } from "./event-engine";
 import { senderEngine } from "./sender-engine";
+import { resolveCommandMedia } from "./command-media";
 import { postFromInjected } from "../bridge/postmessage";
 import * as chatDetector from "./chat-detector";
 import * as contactDetector from "./contact-detector";
@@ -73,13 +74,24 @@ async function handleCommands(event: MessageEvent): Promise<void> {
   try {
     switch (cmdEvent) {
       case "SEND_MESSAGE": {
+        const cmdPayload = (payload ?? {}) as Record<string, unknown>;
+        const resolved = await resolveCommandMedia(cmdPayload);
+        const mimeType =
+          resolved.mimeType ||
+          (cmdPayload.mimeType as string) ||
+          (cmdPayload.mime_type as string);
+
         const sendResult = await senderEngine.send({
-          chatId: payload.chatId,
-          text: payload.text,
-          media: payload.media,
-          caption: payload.caption,
-          quotedMsgId: payload.quotedMsgId,
-          options: payload.options,
+          chatId: cmdPayload.chatId as string,
+          text: cmdPayload.text as string | undefined,
+          media: resolved.dataUri,
+          caption: cmdPayload.caption as string | undefined,
+          quotedMsgId: cmdPayload.quotedMsgId as string | undefined,
+          options: {
+            ...(cmdPayload.options as Record<string, unknown> | undefined),
+            mimeType,
+            mimetype: mimeType,
+          },
         });
         if (!sendResult.success) {
           error = sendResult.error || "SEND_FAILED";

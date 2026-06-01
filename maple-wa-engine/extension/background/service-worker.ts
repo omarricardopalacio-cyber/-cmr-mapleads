@@ -314,7 +314,7 @@ async function flushIngestQueue(): Promise<void> {
         waMessageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
         direction: flat.direction as "in" | "out" | undefined,
         text: (flat.text ?? flat.body) as string | undefined,
-        media: flat.media as Record<string, unknown> | undefined,
+        media: slimMediaForIngest(flat.media as Record<string, unknown> | undefined),
         contact: flat.contact as { waId: string; displayName?: string; phone?: string } | undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
         payload: {
@@ -401,6 +401,29 @@ function eventPayloadRecord(event: WAEvent): Record<string, unknown> {
     return p as Record<string, unknown>;
   }
   return {};
+}
+
+function slimMediaForIngest(
+  media: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!media) return undefined;
+  const out = { ...media };
+  const url = out.url as string | undefined;
+  const hasHttpUrl = typeof url === "string" && url.startsWith("http") && !url.startsWith("blob:");
+  if (hasHttpUrl) {
+    delete out.base64;
+    delete out.body;
+    delete out.data;
+    return out;
+  }
+  const b64 = (out.base64 || out.body || out.data) as unknown;
+  if (typeof b64 === "string" && b64.length > CONSTANTS.MEDIA_INLINE_MAX_LEN) {
+    delete out.base64;
+    delete out.body;
+    delete out.data;
+    out.missing_media = true;
+  }
+  return out;
 }
 
 function eventHasHeavyMedia(event: WAEvent): boolean {
