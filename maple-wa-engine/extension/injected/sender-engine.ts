@@ -131,7 +131,12 @@ class SenderEngine {
     console.log(`[MAPLE SENDER] Resolviendo LID de usuario para: ${normalizedChatId}`);
 
     try {
-      const result = await queryExists.call(WPP.contact, normalizedChatId);
+      const result = await Promise.race([
+        queryExists.call(WPP.contact, normalizedChatId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("LID_RESOLVE_TIMEOUT")), 10000)
+        ),
+      ]);
 
       if (!result) {
         return {
@@ -147,7 +152,12 @@ class SenderEngine {
 
       return { success: true, verifiedChatId };
     } catch (lidErr: unknown) {
-      console.error("[MAPLE SENDER] Error consultando queryExists, aplicando fallback:", lidErr);
+      const errMsg = lidErr instanceof Error ? lidErr.message : String(lidErr);
+      if (errMsg.includes("LID_RESOLVE_TIMEOUT")) {
+        console.warn("[MAPLE SENDER] Timeout resolviendo LID, usando fallback:", normalizedChatId);
+      } else {
+        console.error("[MAPLE SENDER] Error consultando queryExists, aplicando fallback:", lidErr);
+      }
       return { success: true, verifiedChatId: normalizedChatId };
     }
   }
