@@ -546,9 +546,9 @@ function ThreadPage() {
               : mime;
             const effectiveMime = inferredMime || mime;
             
-            const isImage = effectiveMime.startsWith("image/") || !!(mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i));
-            const isVideo = effectiveMime.startsWith("video/") || !!(mediaObj?.url?.match(/\.(mp4|webm|mov|mkv)$/i));
-            const isAudio = effectiveMime.startsWith("audio/") || !!(mediaObj?.url?.match(/\.(ogg|opus|mp3|m4a|aac|wav|amr)$/i));
+            const isImage = effectiveMime.startsWith("image/") || !!(mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i)) || msgType === "image";
+            const isVideo = effectiveMime.startsWith("video/") || !!(mediaObj?.url?.match(/\.(mp4|webm|mov|mkv)$/i)) || msgType === "video";
+            const isAudio = effectiveMime.startsWith("audio/") || !!(mediaObj?.url?.match(/\.(ogg|opus|mp3|m4a|aac|wav|amr)$/i)) || msgType === "ptt" || msgType === "audio";
             const isDoc = !isImage && !isVideo && !isAudio && !!mediaObj?.url;
             
             // Estados de visualización del archivo multimedia
