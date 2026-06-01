@@ -3,7 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState, memo } from "react";
-import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent, syncThreadMessages } from "@/lib/messaging.functions";
+import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent, syncThreadMessages, getMyOrgId } from "@/lib/messaging.functions";
 import { listOrgMembers, getContactCrmData, updateContactCrmData } from "@/lib/crm.functions";
 import { listQuickReplies, createScheduled } from "@/lib/automations.functions";
 import {
@@ -111,6 +111,7 @@ function ThreadPage() {
   const upload = useServerFn(uploadMedia);
   const listMembers = useServerFn(listOrgMembers);
   const assignAgent = useServerFn(assignThreadToAgent);
+  const getOrgId = useServerFn(getMyOrgId);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showQr, setShowQr] = useState(false);
@@ -149,18 +150,8 @@ function ThreadPage() {
 
     async function fetchDirect() {
       try {
-        // Obtener org_id del usuario autenticado
-        const { data: sessionData } = await supabase.auth.getSession();
-        let currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string | undefined;
-        
-        if (!currentOrgId) {
-          const { data: memberData } = await supabase
-            .from("organization_members")
-            .select("org_id")
-            .limit(1)
-            .maybeSingle();
-          currentOrgId = memberData?.org_id;
-        }
+        // Obtener org_id del usuario autenticado usando server function
+        const currentOrgId = await getOrgId({});
         
         if (currentOrgId && !cancelled) setUserOrgId(currentOrgId);
 
@@ -289,20 +280,7 @@ function ThreadPage() {
         setUploading(true);
         mimeType = selectedFile.file.type;
         
-        let currentOrgId = userOrgId;
-        if (!currentOrgId) {
-          const { data: sessionData } = await supabase.auth.getSession();
-          currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string | undefined;
-          
-          if (!currentOrgId) {
-            const { data: memberData } = await supabase
-              .from("organization_members")
-              .select("org_id")
-              .limit(1)
-              .maybeSingle();
-            currentOrgId = memberData?.org_id;
-          }
-        }
+        const currentOrgId = await getOrgId({});
         
         if (!currentOrgId) {
           throw new Error("No se pudo determinar la organización del usuario");

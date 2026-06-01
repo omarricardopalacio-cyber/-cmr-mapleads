@@ -577,6 +577,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             let contactId: string | null = null
             let phone = e.contact?.phone ?? null
 
+            // Extraer número de teléfono del waId (tanto LID como JID normal)
+            const userPart = waId.split('@')[0];
+            const cleanPhone = userPart.replace(/\D/g, '');
+
+            // Si no tenemos phone pero el waId contiene dígitos (LID o teléfono), usarlo como phone
+            if (!phone && cleanPhone && !waId.endsWith('@g.us')) {
+              phone = cleanPhone;
+            }
+
             if (!phone && isLidKey(waId)) {
               const resolved = await resolvePhoneForLidMessage({
                 orgId: session.org_id,

@@ -463,6 +463,12 @@ export const assignThreadToAgent = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+export const getMyOrgId = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    return await ensureUserOrg(context.userId);
+  });
+
 export const syncThreadMessages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ threadId: z.string().uuid() }).parse(d))
