@@ -240,9 +240,13 @@ async function normalizeMessage(msg: any): Promise<any> {
 
       if (!base64Data) {
         console.warn("[MAPLE MULTIMEDIA] No se pudo obtener la multimedia tras 15 segundos para el mensaje:", msg.id?._serialized);
+        media.missing_media = true;
+        media.extraction_error = "timeout_after_retries";
       }
     } catch (err) {
       console.error("[MAPLE MULTIMEDIA] Error general descargando media:", err);
+      media.missing_media = true;
+      media.extraction_error = "exception_during_download";
     }
   }
 
