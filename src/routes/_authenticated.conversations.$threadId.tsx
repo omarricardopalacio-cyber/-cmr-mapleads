@@ -151,7 +151,17 @@ function ThreadPage() {
       try {
         // Obtener org_id del usuario autenticado
         const { data: sessionData } = await supabase.auth.getSession();
-        const currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string | undefined;
+        let currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string | undefined;
+        
+        if (!currentOrgId) {
+          const { data: memberData } = await supabase
+            .from("organization_members")
+            .select("org_id")
+            .limit(1)
+            .maybeSingle();
+          currentOrgId = memberData?.org_id;
+        }
+        
         if (currentOrgId && !cancelled) setUserOrgId(currentOrgId);
 
         const { data: directMsgs, error: directErr } = await supabase
@@ -279,8 +289,21 @@ function ThreadPage() {
         setUploading(true);
         mimeType = selectedFile.file.type;
         
-        const { data: sessionData } = await supabase.auth.getSession();
-        const currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string;
+        let currentOrgId = userOrgId;
+        if (!currentOrgId) {
+          const { data: sessionData } = await supabase.auth.getSession();
+          currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string | undefined;
+          
+          if (!currentOrgId) {
+            const { data: memberData } = await supabase
+              .from("organization_members")
+              .select("org_id")
+              .limit(1)
+              .maybeSingle();
+            currentOrgId = memberData?.org_id;
+          }
+        }
+        
         if (!currentOrgId) {
           throw new Error("No se pudo determinar la organización del usuario");
         }
