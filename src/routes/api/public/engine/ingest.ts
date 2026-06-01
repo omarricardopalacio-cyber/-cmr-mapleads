@@ -983,7 +983,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           org_id: session.org_id,
           session_id: session.id,
           type: e.type,
-          payload: stripHeavyFieldsForDb(parsed.data.events[i]) as never,
+          payload: stripHeavyFieldsForDb(events[i]) as never,
         }))
         if (eventRows.length) {
           try {
@@ -996,7 +996,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           }
         }
 
-        return json(200, { ok: true, processed: parsed.data.events.length })
+        return json(200, { ok: true, processed: events.length })
       },
     },
   },
