@@ -508,8 +508,37 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
         } catch {
           return json(400, { error: 'Invalid JSON' })
         }
-        const parsed = PayloadSchema.safeParse(body)
-        if (!parsed.success) return json(400, { error: 'Invalid payload', issues: parsed.error.issues })
+        let events: any[] = []
+        if (body && typeof body === 'object' && 'eventId' in body) {
+          const v2 = body as any
+          const direction = v2.direction === 'OUTGOING' ? 'out' : 'in'
+          const type = direction === 'out' ? 'message-out' : 'message-in'
+          
+          events = [{
+            type,
+            chatId: v2.chat?.whatsappId,
+            waMessageId: v2.eventId,
+            direction,
+            text: v2.content?.body,
+            sentAt: v2.timestamp,
+            contact: v2.contact ? {
+              waId: v2.contact.whatsappId,
+              displayName: v2.contact.pushName,
+              phone: v2.contact.phoneNumber,
+            } : undefined,
+            media: v2.content?.media ? {
+              base64: v2.content.media.base64Data,
+              filename: v2.content.media.fileName,
+              mimetype: v2.content.media.mimeType,
+              type: v2.content.type,
+            } : undefined,
+            raw: v2,
+          }]
+        } else {
+          const parsed = PayloadSchema.safeParse(body)
+          if (!parsed.success) return json(400, { error: 'Invalid payload', issues: parsed.error.issues })
+          events = parsed.data.events
+        }
 
         const { data: session, error: sErr } = await supabaseAdmin
           .from('wa_sessions')
@@ -519,7 +548,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
         if (sErr || !session) return json(401, { error: 'Invalid session token' })
 
         // Extract telemetry from the first heartbeat/session_ready event
-        const telemetryEvent = parsed.data.events.find(
+        const telemetryEvent = events.find(
           (ev) => ev.type === 'HEARTBEAT' || ev.type === 'SESSION_READY',
         )
         const telemetry = telemetryEvent ? extractSessionTelemetry(telemetryEvent) : null
@@ -537,7 +566,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           .eq('id', session.id)
 
         const meWaId = session.me_wa_id ?? null
-        const normalized = parsed.data.events.map((ev) => normalizeEvent(ev, meWaId))
+        const normalized = events.map((ev) => normalizeEvent(ev, meWaId))
 
         for (const e of normalized) {
           try {
