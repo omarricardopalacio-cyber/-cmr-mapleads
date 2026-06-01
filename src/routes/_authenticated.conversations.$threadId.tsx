@@ -2,7 +2,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { clearThreadMessages, listMessages, sendMessage, toggleAiEnabled, uploadMedia, assignThreadToAgent, syncThreadMessages } from "@/lib/messaging.functions";
 import { listOrgMembers, getContactCrmData, updateContactCrmData } from "@/lib/crm.functions";
 import { listQuickReplies, createScheduled } from "@/lib/automations.functions";
@@ -84,6 +84,18 @@ import { sanitizeMessageText, isBase64Thumbnail } from "@/lib/message-text";
 
 export const Route = createFileRoute("/_authenticated/conversations/$threadId")({
   component: ThreadPage,
+});
+
+// Componente memoizado: si la URL no cambia, React no toca el elemento <video> del DOM
+const StableVideo = memo(function StableVideo({ src }: { src: string }) {
+  return (
+    <video
+      src={src}
+      controls
+      className="max-w-[280px] rounded-lg border border-slate-800"
+      preload="metadata"
+    />
+  );
 });
 
 function ThreadPage() {
@@ -555,12 +567,7 @@ function ThreadPage() {
                       loading="lazy"
                     />
                   ) : isVideo && mediaObj?.url ? (
-                    <video
-                      src={mediaObj.url}
-                      controls
-                      className="max-w-[280px] rounded-lg border border-slate-800"
-                      preload="metadata"
-                    />
+                    <StableVideo src={mediaObj.url} />
                   ) : isAudio && mediaObj?.url ? (
                     <div className="flex items-center gap-2 bg-black/20 rounded-lg p-2">
                       <Mic className="h-5 w-5 text-emerald-500 shrink-0" />
