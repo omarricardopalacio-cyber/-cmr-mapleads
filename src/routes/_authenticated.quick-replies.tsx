@@ -12,7 +12,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Trash2, Zap } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Trash2, Zap, Image, Video, FileText, Music } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/quick-replies")({
   component: QuickRepliesPage,
@@ -33,14 +35,14 @@ function QuickRepliesContent() {
   const upsert = useServerFn(upsertQuickReply);
   const del = useServerFn(deleteQuickReply);
   const { data } = useQuery({ queryKey: ["quickReplies"], queryFn: () => list({}) });
-  const [form, setForm] = useState({ shortcut: "", text_content: "", media_url: "", mime_type: "" });
+  const [form, setForm] = useState({ shortcut: "", text_content: "", media_url: "", mime_type: "", media_type: "image" });
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await upsert({ data: { ...form, media_url: form.media_url || null, mime_type: form.mime_type || null } as any });
+      await upsert({ data: { ...form, media_url: form.media_url || null, mime_type: form.mime_type || null, media_type: form.media_type } as any });
       toast.success("Guardado");
-      setForm({ shortcut: "", text_content: "", media_url: "", mime_type: "" });
+      setForm({ shortcut: "", text_content: "", media_url: "", mime_type: "", media_type: "image" });
       qc.invalidateQueries({ queryKey: ["quickReplies"] });
     } catch (e: any) { toast.error(e.message); }
   };
@@ -55,8 +57,35 @@ function QuickRepliesContent() {
             <Input placeholder="shortcut" value={form.shortcut} onChange={(e) => setForm({ ...form, shortcut: e.target.value })} required className="flex-1" />
           </div>
           <Textarea placeholder="Contenido del mensaje" value={form.text_content} onChange={(e) => setForm({ ...form, text_content: e.target.value })} required />
-          <Input placeholder="URL media (opcional)" value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
-          <Input placeholder="MIME type (opcional)" value={form.mime_type} onChange={(e) => setForm({ ...form, mime_type: e.target.value })} />
+          
+          <div className="space-y-2">
+            <Label className="text-xs">Tipo de media (opcional)</Label>
+            <Select value={form.media_type} onValueChange={(v) => setForm({ ...form, media_type: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="image">Imagen</SelectItem>
+                <SelectItem value="video">Video</SelectItem>
+                <SelectItem value="document">Documento</SelectItem>
+                <SelectItem value="audio">Audio</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="space-y-2">
+            <Label className="text-xs">Adjuntar archivo</Label>
+            <Input type="file" accept={form.media_type === "image" ? "image/*" : form.media_type === "video" ? "video/*" : form.media_type === "audio" ? "audio/*" : "*/*"} onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const url = URL.createObjectURL(file);
+              setForm({ ...form, media_url: url, mime_type: file.type });
+            }} />
+          </div>
+          
+          <div className="space-y-2">
+            <Label className="text-xs">O URL media (opcional)</Label>
+            <Input placeholder="https://..." value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
+          </div>
+          
           <Button type="submit" className="w-full">Guardar</Button>
         </form>
       </Card>
