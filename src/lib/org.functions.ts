@@ -106,18 +106,18 @@ export const getOrgStats = createServerFn({ method: "GET" })
     };
   });
 
-async function fetchOrphanIds(table: string, orgId: string): Promise<string[]> {
-  const nullRes = await supabaseAdmin.from(table).select("id").is("org_id", null);
-  const diffRes = await supabaseAdmin.from(table).select("id").neq("org_id", orgId);
-  const nullIds = (nullRes.data ?? []).map((r: { id: string }) => r.id);
-  const diffIds = (diffRes.data ?? []).map((r: { id: string }) => r.id);
+async function fetchOrphanIds(table: "wa_sessions" | "threads" | "contacts", orgId: string): Promise<string[]> {
+  const nullRes: any = await (supabaseAdmin as any).from(table).select("id").is("org_id", null);
+  const diffRes: any = await (supabaseAdmin as any).from(table).select("id").neq("org_id", orgId);
+  const nullIds = ((nullRes.data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const diffIds = ((diffRes.data ?? []) as Array<{ id: string }>).map((r) => r.id);
   return Array.from(new Set([...nullIds, ...diffIds]));
 }
 
-async function syncTableToOrg(table: string, orgId: string): Promise<number> {
+async function syncTableToOrg(table: "wa_sessions" | "threads" | "contacts", orgId: string): Promise<number> {
   const ids = await fetchOrphanIds(table, orgId);
   if (ids.length === 0) return 0;
-  const { error } = await supabaseAdmin.from(table).update({ org_id: orgId }).in("id", ids);
+  const { error } = await (supabaseAdmin as any).from(table).update({ org_id: orgId }).in("id", ids);
   if (error) throw new Error(`${table}: ${error.message}`);
   return ids.length;
 }
