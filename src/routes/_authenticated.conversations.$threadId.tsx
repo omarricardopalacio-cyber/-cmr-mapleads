@@ -592,10 +592,17 @@ function ThreadPage() {
                       </div>
                     </div>
                   ) : hasMissingMedia ? (
-                    <div className="flex items-center gap-2 bg-slate-500/10 border border-slate-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+                    <div className="flex flex-col gap-1.5 bg-slate-500/10 border border-slate-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
                       <span className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
                         <Image className="h-4 w-4 opacity-70" />
-                        Multimedia enviada desde otro dispositivo
+                        Multimedia no disponible
+                      </span>
+                      <span className="text-[10px] text-slate-400/90 leading-normal">
+                        {mediaObj?.extraction_error === 'timeout_after_retries' 
+                          ? 'El archivo no se pudo descargar a tiempo. Puede estar disponible en WhatsApp Web.'
+                          : mediaObj?.extraction_error === 'exception_during_download'
+                          ? 'Error al intentar descargar el archivo.'
+                          : 'Multimedia enviada desde otro dispositivo o no disponible.'}
                       </span>
                     </div>
                   ) : hasMediaButNoUrl ? (
