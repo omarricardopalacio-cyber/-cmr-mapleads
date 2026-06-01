@@ -277,23 +277,25 @@ function ThreadPage() {
 
       if (selectedFile) {
         setUploading(true);
-        const reader = new FileReader();
-        const base64 = await new Promise<string>((resolve, reject) => {
-          reader.onload = () => {
-            const result = reader.result as string;
-            const base64Data = result.split(",")[1];
-            resolve(base64Data);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(selectedFile.file);
-        });
-        mediaBase64 = base64;
         mimeType = selectedFile.file.type;
-        const uploaded = await upload({
-          data: { base64, fileName: selectedFile.file.name, mimeType: selectedFile.file.type },
-        });
-        mediaUrl = uploaded.url;
-        mediaStoragePath = uploaded.storagePath ?? null;
+        
+        const { data: sessionData } = await supabase.auth.getSession();
+        const currentOrgId = (sessionData?.session?.user?.user_metadata as Record<string, unknown>)?.org_id as string;
+        if (!currentOrgId) {
+          throw new Error("No se pudo determinar la organización del usuario");
+        }
+        
+        const path = `${currentOrgId}/${Date.now()}_${selectedFile.file.name}`;
+        const { error: upErr } = await supabase.storage
+          .from("media")
+          .upload(path, selectedFile.file, { contentType: selectedFile.file.type, upsert: false });
+          
+        if (upErr) throw upErr;
+        
+        const { data: urlData } = supabase.storage.from("media").getPublicUrl(path);
+        mediaUrl = urlData.publicUrl;
+        mediaStoragePath = path;
+        
         setUploading(false);
         setSelectedFile(null);
       }
