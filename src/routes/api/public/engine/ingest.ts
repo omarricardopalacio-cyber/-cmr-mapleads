@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import { generateReply } from '@/lib/ai.server'
 import { sanitizeMessageText } from '@/lib/message-text'
+import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
 import { z } from 'zod'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
@@ -84,154 +85,6 @@ function toIso(ts: unknown): string | undefined {
     return isNaN(d.getTime()) ? undefined : d.toISOString()
   }
   return undefined
-}
-
-const MIME_TO_EXTENSION: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-  'image/heic': 'heic',
-  'image/heif': 'heif',
-  'audio/ogg': 'ogg',
-  'audio/opus': 'opus',
-  'audio/mpeg': 'mp3',
-  'audio/mp4': 'm4a',
-  'audio/aac': 'aac',
-  'audio/amr': 'amr',
-  'audio/webm': 'webm',
-  'video/mp4': 'mp4',
-  'video/webm': 'webm',
-  'video/3gpp': '3gp',
-  'application/pdf': 'pdf',
-  'application/octet-stream': 'bin',
-}
-
-function normalizeMimeType(mime: string): string {
-  return mime.split(';')[0].trim().toLowerCase()
-}
-
-function extensionFromMime(mimeType: string, msgType?: string): string {
-  const normalized = normalizeMimeType(mimeType)
-  const mapped = MIME_TO_EXTENSION[normalized]
-  if (mapped) return mapped
-
-  const subtype = normalized.split('/')[1]
-  if (subtype && /^[a-z0-9.+-]+$/i.test(subtype)) {
-    const clean = subtype.replace(/[^a-z0-9]/gi, '').slice(0, 16)
-    if (clean) return clean
-  }
-
-  if (msgType === 'ptt' || msgType === 'audio') return 'ogg'
-  if (msgType === 'image') return 'jpg'
-  if (msgType === 'video') return 'mp4'
-  if (msgType === 'document') return 'pdf'
-  return 'bin'
-}
-
-function parseBase64Media(
-  base64Raw: string,
-  fallbackMime: string,
-): { mimeType: string; base64String: string } {
-  let base64String = base64Raw.trim()
-  let mimeType = normalizeMimeType(fallbackMime || 'application/octet-stream')
-
-  const dataUriMatch = base64String.match(/^data:([^;]+);base64,(.+)$/i)
-  if (dataUriMatch) {
-    mimeType = normalizeMimeType(dataUriMatch[1])
-    base64String = dataUriMatch[2]
-  }
-
-  base64String = base64String.replace(/\s/g, '')
-  return { mimeType, base64String }
-}
-
-async function processMediaUpload(
-  media: Record<string, unknown> | null | undefined,
-  orgId: string,
-): Promise<Record<string, unknown> | null> {
-  if (!media) return null
-
-  // WhatsApp Web / la extensión puede enviar el base64 en distintos campos:
-  // - 'base64': campo explícito usado por comandos del CRM
-  // - 'body': campo nativo de whatsapp-web.js para mensajes recibidos (contiene data URI o base64 crudo)
-  // - 'data': variante usada por algunas versiones de la extensión
-  const base64Raw = (media.base64 || media.body || media.data) as string | undefined
-  
-  // Si no hay base64, verificar si el objeto media tiene una URL directa (ej: mensajes entrantes de WA)
-  if (!base64Raw) {
-    const directUrl = (media.url || media.mediaUrl || media.fileUrl) as string | undefined;
-    const rawMime = (media.mimetype || media.mimeType || media.mime_type || '') as string;
-    const normalizedMime = rawMime ? normalizeMimeType(rawMime) : 'application/octet-stream';
-    
-    if (directUrl && directUrl.startsWith('http')) {
-      // Tiene URL directa - usarla tal cual
-      console.log('[ingest] media: usando URL directa del evento (sin base64)', directUrl.substring(0, 80));
-      return {
-        url: directUrl,
-        mimeType: normalizedMime,
-        mime_type: normalizedMime,
-        caption: (media.caption as string) || undefined,
-        filename: (media.filename || media.fileName) as string | undefined,
-      };
-    }
-
-    // No hay base64 ni URL: para mensajes salientes es normal (la extensión no descarga sus propios archivos)
-    // Para mensajes entrantes, la extensión debería enviar el archivo; si no lo hace, marcamos como missing
-    console.log('[ingest] media: no hay base64 ni URL directa en el payload de la extensión');
-    return { 
-      ...media, 
-      url: null, 
-      mimeType: normalizedMime,
-      missing_media: true 
-    };
-  }
-
-  try {
-    const msgType = typeof media.type === 'string' ? media.type : undefined
-    const rawMime = (media.mimetype || media.mimeType || media.mime_type || 'application/octet-stream') as string;
-    const { mimeType, base64String } = parseBase64Media(
-      base64Raw,
-      rawMime,
-    )
-
-    if (!base64String) {
-      console.error('[ingest] media: payload base64 vacío tras limpiar Data URI');
-      return { ...media, url: null, error: 'Archivo vacío o corrupto' };
-    }
-
-    const bytes = Buffer.from(base64String, 'base64');
-    if (!bytes.length) {
-      console.error('[ingest] media: decodificación resultó en 0 bytes');
-      return { ...media, url: null, error: 'Error al decodificar archivo local' };
-    }
-
-    const ext = extensionFromMime(mimeType, msgType)
-    const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
-    const path = `${orgId}/${fileName}`
-
-    const { error: upErr } = await supabaseAdmin.storage
-      .from('media')
-      .upload(path, bytes, { contentType: mimeType, upsert: false })
-    if (upErr) {
-      console.error('[ingest] media upload error:', upErr.message);
-      return { ...media, url: null, error: `Error en servidor: ${upErr.message}` };
-    }
-
-    const { data: urlData } = supabaseAdmin.storage.from('media').getPublicUrl(path)
-    return {
-      url: urlData.publicUrl,
-      mimeType,
-      mime_type: mimeType,
-      caption: (media.caption as string) || undefined,
-      filename: fileName,
-      size: bytes.length,
-    }
-  } catch (err) {
-    console.error('[ingest] media processing error:', (err as Error).message);
-    return { ...media, url: null, error: 'Error general procesando media en CRM' };
-  }
 }
 
 function digits(v: unknown): string | undefined {
@@ -686,14 +539,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
         const meWaId = session.me_wa_id ?? null
         const normalized = parsed.data.events.map((ev) => normalizeEvent(ev, meWaId))
 
-        const eventRows = normalized.map((e, i) => ({
-          org_id: session.org_id,
-          session_id: session.id,
-          type: e.type,
-          payload: parsed.data.events[i] as unknown as never,
-        }))
-        await supabaseAdmin.from('events').insert(eventRows)
-
         for (const e of normalized) {
           if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
             const waId = e.contact?.waId ?? normalizeWaKey(e.chatId)
@@ -860,13 +705,13 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               console.log('[ingest] 🔍 RAW MEDIA INCOMING:', JSON.stringify(mediaSample));
             }
 
-            const enrichedMedia = await processMediaUpload(
+            const enrichedMedia = await enrichMediaForMessage(
               e.media as Record<string, unknown> | undefined,
               session.org_id,
             )
 
             if (e.media && !enrichedMedia) {
-              console.warn('[ingest] ⚠️ Media PERDIDA en processMediaUpload. Input:', {
+              console.warn('[ingest] ⚠️ Media PERDIDA en enrichMediaForMessage. Input:', {
                 mediaType: (e.media as any)?.type,
                 hasBase64: !!(e.media as any)?.base64,
                 base64Len: ((e.media as any)?.base64 || '').length,
@@ -1007,7 +852,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               direction: e.direction ?? (e.type === 'message-in' ? 'in' : 'out'),
               text: e.text ?? null,
               media: enrichedMedia as any,
-              raw: (e.raw as any) ?? null,
+              raw: stripHeavyFieldsForDb((e.raw as any) ?? null),
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
@@ -1101,7 +946,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           }
         }
 
-
+        const eventRows = normalized.map((e, i) => ({
+          org_id: session.org_id,
+          session_id: session.id,
+          type: e.type,
+          payload: stripHeavyFieldsForDb(parsed.data.events[i]) as never,
+        }))
+        if (eventRows.length) {
+          await supabaseAdmin.from('events').insert(eventRows)
+        }
 
         return json(200, { ok: true, processed: parsed.data.events.length })
       },

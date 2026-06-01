@@ -19,6 +19,8 @@ export const CONSTANTS = {
   // Batch
   BATCH_MAX_SIZE: 50,
   BATCH_FLUSH_INTERVAL_MS: 5000,
+  /** Above this base64 length, upload to Storage before queuing (avoids DB timeout). */
+  MEDIA_INLINE_MAX_LEN: 48_000,
 
   // Storage
   DB_NAME: "MapleWAEngineDB",
@@ -34,6 +36,7 @@ export const CONSTANTS = {
 export const API_ENDPOINTS = {
   GET_COMMANDS: "/api/public/engine/commands",
   POST_INGEST: "/api/public/engine/ingest",
+  POST_UPLOAD_MEDIA: "/api/public/engine/upload-media",
   POST_HEARTBEAT: "/api/public/engine/heartbeat",
 } as const;
 

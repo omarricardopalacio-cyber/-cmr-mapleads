@@ -28,6 +28,7 @@ import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenti
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
 import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
+import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/public/engine/upload-media'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
@@ -133,6 +134,12 @@ const AuthenticatedConversationsThreadIdRoute =
     path: '/$threadId',
     getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
+const ApiPublicEngineUploadMediaRoute =
+  ApiPublicEngineUploadMediaRouteImport.update({
+    id: '/api/public/engine/upload-media',
+    path: '/api/public/engine/upload-media',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
   id: '/api/public/engine/ingest',
   path: '/api/public/engine/ingest',
@@ -171,6 +178,7 @@ export interface FileRoutesByFullPath {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -193,6 +201,7 @@ export interface FileRoutesByTo {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -218,6 +227,7 @@ export interface FileRoutesById {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -243,6 +253,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/public/engine/upload-media'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -265,6 +276,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/public/engine/upload-media'
   id:
     | '__root__'
     | '/'
@@ -289,6 +301,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/public/engine/upload-media'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -300,6 +313,7 @@ export interface RootRouteChildren {
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
+  ApiPublicEngineUploadMediaRoute: typeof ApiPublicEngineUploadMediaRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -437,6 +451,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConversationsThreadIdRouteImport
       parentRoute: typeof AuthenticatedConversationsRoute
     }
+    '/api/public/engine/upload-media': {
+      id: '/api/public/engine/upload-media'
+      path: '/api/public/engine/upload-media'
+      fullPath: '/api/public/engine/upload-media'
+      preLoaderRoute: typeof ApiPublicEngineUploadMediaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/engine/ingest': {
       id: '/api/public/engine/ingest'
       path: '/api/public/engine/ingest'
@@ -521,7 +542,18 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
+  ApiPublicEngineUploadMediaRoute: ApiPublicEngineUploadMediaRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

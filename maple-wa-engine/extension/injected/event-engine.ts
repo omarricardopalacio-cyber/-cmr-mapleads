@@ -218,7 +218,15 @@ async function normalizeMessage(msg: any): Promise<any> {
         }
 
         if (base64Data) {
-          media.base64 = base64Data;
+          const approxBytes = Math.ceil(base64Data.length * 0.75);
+          if (approxBytes > 20 * 1024 * 1024) {
+            console.warn(
+              "[MAPLE MULTIMEDIA] Archivo > 20MB; se enviará solo metadata (evita timeout en servidor)"
+            );
+          } else {
+            media.base64 = base64Data;
+            media.type = msg.type;
+          }
           break;
         }
 
@@ -346,6 +354,7 @@ function extractMediaData(msg: any): any {
     return undefined;
   }
   return {
+    type: msg.type,
     mimetype: msg.mimetype,
     filehash: msg.filehash,
     mediaKey: msg.mediaKey,

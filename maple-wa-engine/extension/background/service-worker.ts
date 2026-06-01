@@ -278,7 +278,11 @@ async function flushIngestQueue(): Promise<void> {
   const queue: any[] = stored.eventQueue || [];
   if (queue.length === 0) return;
 
-  const batch = queue.slice(0, CONSTANTS.BATCH_MAX_SIZE);
+  let batch = queue.slice(0, CONSTANTS.BATCH_MAX_SIZE) as WAEvent[];
+  const heavyIdx = batch.findIndex((ev) => eventHasHeavyMedia(ev));
+  if (heavyIdx >= 0) {
+    batch = [batch[heavyIdx]];
+  }
 
   function mapEventType(t: string): string {
     switch (t) {
@@ -314,8 +318,9 @@ async function flushIngestQueue(): Promise<void> {
         contact: flat.contact as { waId: string; displayName?: string; phone?: string } | undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
         payload: {
-          ...flat,
           phoneNumber: (flat.phoneNumber as string) || phoneNumber,
+          messageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
+          type: flat.type as string | undefined,
         },
         timestamp: e.timestamp,
       };
@@ -401,16 +406,79 @@ function eventPayloadRecord(event: WAEvent): Record<string, unknown> {
 function eventHasHeavyMedia(event: WAEvent): boolean {
   const p = eventPayloadRecord(event);
   const media = p.media as Record<string, unknown> | undefined;
-  const base64 = media?.base64;
-  return typeof base64 === "string" && base64.length > 2048;
+  if (!media) return false;
+  const b64 = (media.base64 || media.body || media.data) as unknown;
+  return typeof b64 === "string" && b64.length > CONSTANTS.MEDIA_INLINE_MAX_LEN;
+}
+
+async function uploadMediaToBackend(
+  base64OrDataUri: string,
+  mimeType: string,
+  msgType?: string
+): Promise<{ url: string; storagePath: string; mimeType: string } | null> {
+  if (!backendUrl || !sessionToken) return null;
+  try {
+    const response = await fetch(`${backendUrl}${API_ENDPOINTS.POST_UPLOAD_MEDIA}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Session-Token": sessionToken,
+      },
+      body: JSON.stringify({ data: base64OrDataUri, mimeType, msgType }),
+    });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      console.warn("[MAPLE MULTIMEDIA] upload-media", response.status, errText.slice(0, 200));
+      return null;
+    }
+    return (await response.json()) as { url: string; storagePath: string; mimeType: string };
+  } catch (err) {
+    console.warn("[MAPLE MULTIMEDIA] upload-media error:", err);
+    return null;
+  }
+}
+
+async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
+  const p = eventPayloadRecord(event);
+  const media = p.media as Record<string, unknown> | undefined;
+  if (!media) return event;
+
+  const b64 = (media.base64 || media.body || media.data) as string | undefined;
+  if (typeof b64 !== "string" || b64.length <= CONSTANTS.MEDIA_INLINE_MAX_LEN) return event;
+
+  const mime = String(
+    media.mimetype || media.mimeType || media.mime_type || "application/octet-stream"
+  );
+  const msgType = typeof media.type === "string" ? media.type : undefined;
+  const uploaded = await uploadMediaToBackend(b64, mime, msgType);
+  if (!uploaded?.url) return event;
+
+  const slimMedia: Record<string, unknown> = {
+    ...media,
+    url: uploaded.url,
+    storagePath: uploaded.storagePath,
+    mimeType: uploaded.mimeType,
+    mime_type: uploaded.mimeType,
+  };
+  delete slimMedia.base64;
+  delete slimMedia.body;
+  delete slimMedia.data;
+
+  return { ...event, payload: { ...p, media: slimMedia } };
 }
 
 async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSender): Promise<void> {
   // Guardar en cola local (chrome.storage.local)
   try {
+    let stored = event;
+    if (eventHasHeavyMedia(event)) {
+      console.log("[MAPLE MULTIMEDIA] Subiendo archivo a Storage antes de encolar...");
+      stored = await offloadHeavyMediaFromEvent(event);
+    }
+
     const result = await chrome.storage.local.get("eventQueue");
     const queue: any[] = result.eventQueue || [];
-    queue.push(event);
+    queue.push(stored);
     if (queue.length > 500) queue.splice(0, queue.length - 500);
     await chrome.storage.local.set({ eventQueue: queue });
 
