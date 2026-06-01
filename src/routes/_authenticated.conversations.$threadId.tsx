@@ -490,12 +490,45 @@ function ThreadPage() {
 
           {mergedMessages.map((m) => {
             const displayText = sanitizeMessageText(m.text);
-            const mediaObj = (m.media as { url?: string; mimeType?: string; filename?: string; caption?: string; error?: string }) ?? null;
-            const mime = (mediaObj?.mimeType || (mediaObj as any)?.mime_type || (mediaObj as any)?.mimetype || "")?.toLowerCase();
-            const isImage = mime.startsWith("image/") || mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i);
-            const isVideo = mime.startsWith("video/");
-            const isAudio = mime.startsWith("audio/");
-            const isDoc = !isImage && !isVideo && !isAudio && mediaObj?.url;
+            const mediaObj = (m.media as { url?: string; mimeType?: string; mime_type?: string; mimetype?: string; filename?: string; caption?: string; error?: string; missing_media?: boolean }) ?? null;
+            
+            // Log para diagnosticar mensajes entrantes con media
+            if (m.media && m.direction === 'in') {
+              console.log('[MEDIA-DEBUG] Mensaje entrante con media:', {
+                id: m.id,
+                media: m.media,
+                url: (m.media as any)?.url,
+                mimeType: (m.media as any)?.mimeType,
+                mime_type: (m.media as any)?.mime_type,
+                mimetype: (m.media as any)?.mimetype,
+                missing_media: (m.media as any)?.missing_media,
+                error: (m.media as any)?.error,
+                keys: Object.keys(m.media as object),
+              });
+            }
+            
+            // Normalizar mime: soportar mimeType, mime_type y mimetype
+            const mime = (mediaObj?.mimeType || mediaObj?.mime_type || mediaObj?.mimetype || "")?.toLowerCase();
+            
+            // Si hay URL pero mime vacío, inferir por extensión de URL
+            const urlStr = mediaObj?.url ?? '';
+            const inferredMime = !mime && urlStr
+              ? urlStr.match(/\.jpe?g$/i) ? 'image/jpeg'
+              : urlStr.match(/\.png$/i) ? 'image/png'
+              : urlStr.match(/\.gif$/i) ? 'image/gif'
+              : urlStr.match(/\.webp$/i) ? 'image/webp'
+              : urlStr.match(/\.mp4$/i) ? 'video/mp4'
+              : urlStr.match(/\.webm$/i) ? 'video/webm'
+              : urlStr.match(/\.(ogg|opus|mp3|m4a|aac|amr)$/i) ? 'audio/ogg'
+              : urlStr.match(/\.pdf$/i) ? 'application/pdf'
+              : ''
+              : mime;
+            const effectiveMime = inferredMime || mime;
+            
+            const isImage = effectiveMime.startsWith("image/") || !!(mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i));
+            const isVideo = effectiveMime.startsWith("video/");
+            const isAudio = effectiveMime.startsWith("audio/");
+            const isDoc = !isImage && !isVideo && !isAudio && !!mediaObj?.url;
             
             // Estados de visualización del archivo multimedia
             const hasError = !!(m.media && mediaObj?.error);
