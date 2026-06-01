@@ -167,8 +167,8 @@ async function normalizeMessage(msg: any): Promise<any> {
 
   const media = extractMediaData(msg);
 
-  // Descargar media binaria para mensajes entrantes multimedia con reintentos para esperar a que WhatsApp termine su descarga local
-  if (msg.isMedia && !msg.id?.fromMe && media) {
+  // Descargar media binaria para mensajes multimedia (entrantes y salientes) con reintentos
+  if (msg.isMedia && media) {
     try {
       const WPP = getWPP();
       let base64Data: string | null = null;

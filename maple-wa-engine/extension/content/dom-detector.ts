@@ -212,7 +212,7 @@ function parseMessageNode(node: HTMLElement): any {
   };
 }
 
-function emitFromNode(node: HTMLElement) {
+async function emitFromNode(node: HTMLElement) {
   const id = node.getAttribute?.("data-id");
   if (!id || SEEN.has(id)) return;
   SEEN.set(id, Date.now());
@@ -224,6 +224,26 @@ function emitFromNode(node: HTMLElement) {
       return;
     }
 
+    // Si tiene media, intentar extraer el base64 usando el message-parser
+    let mediaPayload: any = parsed.media;
+    if (parsed.media.image || parsed.media.video || parsed.media.audio) {
+      try {
+        const parser = (window as any).__engineParser;
+        if (parser && typeof parser.parseMessageNodeAsync === "function") {
+          const asyncParsed = await parser.parseMessageNodeAsync(node);
+          if (asyncParsed?.mediaPayload) {
+            mediaPayload = asyncParsed.mediaPayload;
+            console.log("[DOMDetector] Media extraído con éxito via message-parser:", {
+              hasBase64: !!mediaPayload.body,
+              mimeType: mediaPayload.mimeType,
+            });
+          }
+        }
+      } catch (parserErr) {
+        console.warn("[DOMDetector] Error extrayendo media con parser:", parserErr);
+      }
+    }
+
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
     const payload = {
       type: parsed.direction === "out" ? "message-out" : "message-in",
@@ -231,7 +251,7 @@ function emitFromNode(node: HTMLElement) {
       waMessageId: parsed.id,
       direction: parsed.direction,
       text: parsed.text,
-      media: parsed.media,
+      media: mediaPayload,
       sentAt: new Date().toISOString(),
     };
 

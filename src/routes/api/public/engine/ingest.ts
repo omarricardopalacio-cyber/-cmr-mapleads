@@ -965,6 +965,41 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
+            // Evitar violaciones de clave única si el mensaje ya existe (ej. detectado primero por DOM-detector y luego procesado con media por el EventEngine)
+            let existingMessage = null;
+            if (e.waMessageId) {
+              const { data } = await supabaseAdmin
+                .from('messages')
+                .select('id, media, text')
+                .eq('thread_id', thread.id)
+                .eq('wa_message_id', e.waMessageId)
+                .maybeSingle();
+              existingMessage = data;
+            }
+
+            if (existingMessage) {
+              let existingMediaObj = existingMessage.media as any;
+              if (typeof existingMediaObj === 'string') {
+                try { existingMediaObj = JSON.parse(existingMediaObj); } catch {}
+              }
+              const existingMissing = !existingMediaObj || !existingMediaObj.url || existingMediaObj.missing_media;
+              const newHasUrl = enrichedMedia && !!enrichedMedia.url;
+
+              if (existingMissing && newHasUrl) {
+                console.log('[ingest] Actualizando mensaje existente con media recuperada:', e.waMessageId);
+                await supabaseAdmin
+                  .from('messages')
+                  .update({
+                    media: enrichedMedia as any,
+                    text: e.text ?? existingMessage.text,
+                  })
+                  .eq('id', existingMessage.id);
+              } else {
+                console.log('[ingest] Mensaje duplicado recibido, ignorando inserción:', e.waMessageId);
+              }
+              continue;
+            }
+
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,

@@ -6,6 +6,7 @@
 import { ContentBridge } from "../bridge/bridge";
 import { eventBus } from "../bridge/event-bus";
 import { startDomDetector } from "./dom-detector";
+import "./message-parser"; // Cargar el parser para que esté disponible globalmente
 
 // === PROTOCOLO DE KEEP-ALIVE MV3 ===
 const KEEP_ALIVE_PING_MS = 20_000;

@@ -267,6 +267,12 @@ class SenderEngine {
         waMessageId: messageId,
         error,
         timestamp: Date.now(),
+        // Incluir media en el payload para que el backend pueda actualizar el mensaje
+        media: task.media ? {
+          base64: task.media,
+          mimetype: task.options?.mimetype,
+          caption: task.caption,
+        } : undefined,
       },
     });
   }
