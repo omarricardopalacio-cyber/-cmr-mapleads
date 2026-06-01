@@ -177,11 +177,63 @@ async function normalizeMessage(msg: any): Promise<any> {
     );
   }
 
+  const WPP = getWPP();
+  let realChatId = msg.id?.remote?._serialized;
+  let realFrom = msg.from?._serialized || msg.id?.remote?._serialized;
+  let realTo = msg.to?._serialized;
+
+  // Si son JIDs de tipo LID, resolver su número telefónico real (@c.us) para evitar duplicación y chats "sin número"
+  if (WPP) {
+    if (realChatId && realChatId.endsWith("@lid")) {
+      try {
+        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(realChatId);
+        if (numObj && numObj._serialized) {
+          realChatId = numObj._serialized;
+        }
+      } catch (err) {
+        console.warn("[EventEngine] Error al obtener número para LID chatId:", realChatId, err);
+      }
+    }
+    if (realFrom && realFrom.endsWith("@lid")) {
+      try {
+        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(realFrom);
+        if (numObj && numObj._serialized) {
+          realFrom = numObj._serialized;
+        }
+      } catch (err) {}
+    }
+    if (realTo && realTo.endsWith("@lid")) {
+      try {
+        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(realTo);
+        if (numObj && numObj._serialized) {
+          realTo = numObj._serialized;
+        }
+      } catch (err) {}
+    }
+  }
+
+  // Extraer información de contacto/nombre del remitente si está disponible
+  let pushname = msg.pushname || msg.sender?.pushname || undefined;
+  let notifyName = msg.sender?.pushname || msg.pushname || undefined;
+  let displayName = msg.sender?.displayName || msg.sender?.name || msg.sender?.formattedName || pushname || undefined;
+
+  // Si no hay nombre y tenemos el contacto de WPP, cargarlo
+  if (!displayName && WPP && realFrom) {
+    try {
+      const contactObj = await WPP.contact.get(realFrom);
+      if (contactObj) {
+        pushname = contactObj.pushname || pushname;
+        notifyName = contactObj.pushname || notifyName;
+        displayName = contactObj.name || contactObj.displayName || contactObj.pushname || contactObj.formattedName || undefined;
+      }
+    } catch (err) {}
+  }
+
   return {
     messageId: msg.id?._serialized,
-    chatId: msg.id?.remote?._serialized,
-    from: msg.from?._serialized || msg.id?.remote?._serialized,
-    to: msg.to?._serialized,
+    chatId: realChatId,
+    from: realFrom,
+    to: realTo,
     body: cleanBody,
     text: cleanBody,
     type: msg.type,
@@ -191,6 +243,9 @@ async function normalizeMessage(msg: any): Promise<any> {
     media,
     ack: msg.ack,
     phoneNumber,
+    pushname,
+    notifyName,
+    displayName,
   };
 }
 
