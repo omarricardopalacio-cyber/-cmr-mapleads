@@ -252,7 +252,7 @@ export const sendMessage = createServerFn({ method: "POST" })
       throw new Error(`Error al guardar mensaje pendiente: ${insertErr.message}`);
     }
 
-    const { data: cmd, error } = await supabaseAdmin
+    const { data: cmd, error } = await (supabaseAdmin as any)
       .from("engine_commands")
       .insert({
         id: cmdId,
