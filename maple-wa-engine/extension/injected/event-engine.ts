@@ -134,6 +134,24 @@ function getMyPhoneNumber(): string | undefined {
 // Normalizadores
 // ============================================================
 
+async function blobUrlToBase64(blobUrl: string): Promise<string | null> {
+  try {
+    const resp = await fetch(blobUrl);
+    const blob = await resp.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve(reader.result as string);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn("[MAPLE MULTIMEDIA] Error convirtiendo blob URL a base64:", err);
+    return null;
+  }
+}
+
 async function normalizeMessage(msg: any): Promise<any> {
   let author: any = undefined;
   if (msg.__x_author) {
@@ -153,14 +171,53 @@ async function normalizeMessage(msg: any): Promise<any> {
   if (msg.isMedia && !msg.id?.fromMe && media) {
     try {
       const WPP = getWPP();
-      if (WPP) {
-        const base64Data = await WPP.chat.downloadMedia(msg.id);
+      let base64Data: string | null = null;
+
+      // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador (Evita 403 Forbidden)
+      const possibleBlobUrls = [
+        msg.clientUrl,
+        msg.mediaData?.clientUrl,
+        msg.mediaData?.renderableUrl,
+        msg.mediaData?.previewUrl,
+        msg.deprecatedMms3Url
+      ].filter((u): u is string => typeof u === "string" && u.startsWith("blob:"));
+
+      for (const blobUrl of possibleBlobUrls) {
+        console.log("[MAPLE MULTIMEDIA] Intentando extraer desde blob URL local:", blobUrl);
+        base64Data = await blobUrlToBase64(blobUrl);
         if (base64Data) {
-          media.base64 = base64Data;
+          console.log("[MAPLE MULTIMEDIA] Sincronización exitosa desde blob local!");
+          break;
         }
       }
+
+      // Método 2: Usar API nativa de descarga de WPP
+      if (!base64Data && WPP) {
+        console.log("[MAPLE MULTIMEDIA] Intentando descargar vía WPP...");
+        const res = await WPP.chat.downloadMedia(msg.id);
+        if (res) {
+          base64Data = res;
+        }
+      }
+
+      // Método 3: Descarga directa desde el modelo de mensaje si está disponible
+      if (!base64Data && typeof msg.downloadMedia === "function") {
+        console.log("[MAPLE MULTIMEDIA] Intentando descargar vía msg.downloadMedia()...");
+        const res = await msg.downloadMedia();
+        if (typeof res === "string") {
+          base64Data = res;
+        } else if (res && (res.body || res.data)) {
+          base64Data = res.body || res.data;
+        }
+      }
+
+      if (base64Data) {
+        media.base64 = base64Data;
+      } else {
+        console.warn("[MAPLE MULTIMEDIA] No se pudo obtener la multimedia para el mensaje:", msg.id?._serialized);
+      }
     } catch (err) {
-      console.error("[MAPLE MULTIMEDIA] Error al descargar media de WhatsApp:", err);
+      console.error("[MAPLE MULTIMEDIA] Error general descargando media:", err);
     }
   }
 
