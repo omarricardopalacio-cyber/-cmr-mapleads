@@ -28,6 +28,7 @@ import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
+import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -129,6 +130,11 @@ const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
   path: '/api/public/cron/dispatch',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDebugMediaDiagRoute = ApiDebugMediaDiagRouteImport.update({
+  id: '/api/debug/media-diag',
+  path: '/api/debug/media-diag',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -149,6 +155,7 @@ export interface FileRoutesByFullPath {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -168,6 +175,7 @@ export interface FileRoutesByTo {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -190,6 +198,7 @@ export interface FileRoutesById {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -212,6 +221,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/debug/media-diag'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -231,6 +241,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/debug/media-diag'
   id:
     | '__root__'
     | '/'
@@ -262,6 +273,7 @@ export interface RootRouteChildren {
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
+  ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -399,6 +411,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCronDispatchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/debug/media-diag': {
+      id: '/api/debug/media-diag'
+      path: '/api/debug/media-diag'
+      fullPath: '/api/debug/media-diag'
+      preLoaderRoute: typeof ApiDebugMediaDiagRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -457,6 +476,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
+  ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
