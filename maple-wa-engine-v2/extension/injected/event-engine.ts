@@ -130,6 +130,18 @@ function getMyPhoneNumber(): string | undefined {
   }
 }
 
+function createWidSafely(WPP: any, jid: string): any {
+  try {
+    if (WPP.whatsapp?.createWid) return WPP.whatsapp.createWid(jid);
+    if (WPP.whatsapp?.WidFactory?.createWid) return WPP.whatsapp.WidFactory.createWid(jid);
+    if (WPP.whatsapp?.Wid?.create) return WPP.whatsapp.Wid.create(jid);
+    const [user, server] = jid.split("@");
+    return { user, server, _serialized: jid };
+  } catch (e) {
+    return null;
+  }
+}
+
 // ============================================================
 // Normalizadores
 // ============================================================
@@ -153,6 +165,18 @@ async function blobUrlToBase64(blobUrl: string): Promise<string | null> {
 }
 
 async function normalizeMessage(msg: any): Promise<any> {
+  console.log("[MAPLE EVENT ENGINE] normalizeMessage llamado:", {
+    id: msg.id?._serialized,
+    type: msg.type,
+    isMedia: msg.isMedia,
+    hasMediaKey: !!msg.mediaKey,
+    hasClientUrl: !!msg.clientUrl,
+    hasDeprecatedMms3Url: !!msg.deprecatedMms3Url,
+    hasBody: !!msg.body,
+    bodyPreview: msg.body ? String(msg.body).substring(0, 60) : null,
+    keys: Object.keys(msg).filter(k => k.includes("media") || k.includes("url") || k.includes("blob")),
+  });
+
   let author: any = undefined;
   if (msg.__x_author) {
     author = {
@@ -167,8 +191,17 @@ async function normalizeMessage(msg: any): Promise<any> {
 
   const media = extractMediaData(msg);
 
-  // Descargar media binaria para mensajes multimedia (entrantes y salientes) con reintentos
-  if (msg.isMedia && media) {
+  const hasMediaIndicators = msg.isMedia || msg.mediaKey || msg.clientUrl || msg.deprecatedMms3Url || msg.mediaData;
+  const shouldDownloadMedia = hasMediaIndicators && media;
+
+  console.log("[MAPLE EVENT ENGINE] Decisión media:", {
+    hasMediaIndicators,
+    shouldDownloadMedia,
+    mediaExtracted: !!media,
+    msgType: msg.type,
+  });
+
+  if (shouldDownloadMedia) {
     // DIAGNÓSTICO: Loguear estado inicial del media
     console.log("[MAPLE MULTIMEDIA] Mensaje multimedia detectado:", {
       type: msg.type,
@@ -334,10 +367,14 @@ async function normalizeMessage(msg: any): Promise<any> {
   if (WPP) {
     if (realChatId && realChatId.endsWith("@lid")) {
       try {
-        const wid = WPP.whatsapp.createWid(realChatId);
-        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-        if (numObj && numObj._serialized) {
-          realChatId = numObj._serialized;
+        const wid = createWidSafely(WPP, realChatId);
+        if (!wid) {
+          console.warn("[EventEngine] No se pudo crear Wid para:", realChatId);
+        } else {
+          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
+          if (numObj && numObj._serialized) {
+            realChatId = numObj._serialized;
+          }
         }
       } catch (err) {
         console.warn("[EventEngine] Error al obtener número para LID chatId:", realChatId, err);
@@ -345,19 +382,27 @@ async function normalizeMessage(msg: any): Promise<any> {
     }
     if (realFrom && realFrom.endsWith("@lid")) {
       try {
-        const wid = WPP.whatsapp.createWid(realFrom);
-        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-        if (numObj && numObj._serialized) {
-          realFrom = numObj._serialized;
+        const wid = createWidSafely(WPP, realFrom);
+        if (!wid) {
+          console.warn("[EventEngine] No se pudo crear Wid para:", realFrom);
+        } else {
+          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
+          if (numObj && numObj._serialized) {
+            realFrom = numObj._serialized;
+          }
         }
       } catch (err) {}
     }
     if (realTo && realTo.endsWith("@lid")) {
       try {
-        const wid = WPP.whatsapp.createWid(realTo);
-        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-        if (numObj && numObj._serialized) {
-          realTo = numObj._serialized;
+        const wid = createWidSafely(WPP, realTo);
+        if (!wid) {
+          console.warn("[EventEngine] No se pudo crear Wid para:", realTo);
+        } else {
+          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
+          if (numObj && numObj._serialized) {
+            realTo = numObj._serialized;
+          }
         }
       } catch (err) {}
     }
