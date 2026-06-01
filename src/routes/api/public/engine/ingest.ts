@@ -242,11 +242,21 @@ function digits(v: unknown): string | undefined {
 
 function normalizeWaKey(v: unknown): string | undefined {
   if (v == null) return undefined
-  const raw = String(v).trim()
+  const raw = String(v).trim().toLowerCase()
   if (!raw) return undefined
-  const base = raw.split('@')[0].replace(/\D/g, '')
+  const parts = raw.split('@')
+  const user = parts[0]
+  const domain = parts[1] || ''
+
+  // Para LIDs, mantener el JID completo tal cual (alfanumérico y con guiones), ya que no son números de teléfono
+  if (domain === 'lid' || raw.includes('@lid')) {
+    return `${user}@lid`
+  }
+
+  // Para números de teléfono normales, quitar todo lo que no sean dígitos
+  const base = user.replace(/\D/g, '')
   if (!base) return undefined
-  return raw.includes('@lid') ? `${base}@lid` : base
+  return base
 }
 
 function isLidKey(v?: string | null): boolean {
@@ -707,18 +717,29 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (phone) {
               const { data: byPhone } = await supabaseAdmin
                 .from('contacts')
-                .select('id, wa_id')
+                .select('id, wa_id, display_name')
                 .eq('org_id', session.org_id)
                 .eq('phone', phone)
                 .maybeSingle()
               if (byPhone) {
                 contactId = byPhone.id
-                if (byPhone.wa_id !== waId || !e.contact?.displayName) {
+                
+                const currentIsAnonymous = !byPhone.display_name || 
+                  byPhone.display_name.startsWith('Cliente') || 
+                  byPhone.display_name.toLowerCase() === 'unknown' ||
+                  byPhone.display_name === phone;
+                  
+                const hasNewRealName = e.contact?.displayName && 
+                  !e.contact.displayName.startsWith('Cliente') && 
+                  e.contact.displayName.toLowerCase() !== 'unknown' &&
+                  e.contact.displayName !== phone;
+
+                if (byPhone.wa_id !== waId || (currentIsAnonymous && hasNewRealName)) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
                       wa_id: waId,
-                      display_name: e.contact?.displayName ?? phone,
+                      display_name: hasNewRealName ? e.contact.displayName : (byPhone.display_name ?? phone),
                       phone,
                     })
                     .eq('id', byPhone.id)
@@ -741,6 +762,36 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 .select('id')
                 .single()
               contactId = byWa?.id ?? null
+            }
+
+            if (contactId) {
+              const { data: cont } = await supabaseAdmin
+                .from('contacts')
+                .select('display_name, wa_id')
+                .eq('id', contactId)
+                .maybeSingle()
+              if (cont) {
+                const currentIsAnonymous = !cont.display_name || 
+                  cont.display_name.startsWith('Cliente') || 
+                  cont.display_name.toLowerCase() === 'unknown' ||
+                  cont.display_name === phone ||
+                  cont.display_name === waId.replace(/@lid$/, '');
+                  
+                const hasNewRealName = e.contact?.displayName && 
+                  !e.contact.displayName.startsWith('Cliente') && 
+                  e.contact.displayName.toLowerCase() !== 'unknown' &&
+                  e.contact.displayName !== phone &&
+                  e.contact.displayName !== waId.replace(/@lid$/, '');
+
+                if (currentIsAnonymous && hasNewRealName) {
+                  await supabaseAdmin
+                    .from('contacts')
+                    .update({
+                      display_name: e.contact.displayName,
+                    })
+                    .eq('id', contactId)
+                }
+              }
             }
 
             if (!contactId) continue
