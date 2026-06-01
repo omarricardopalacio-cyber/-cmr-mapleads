@@ -81,15 +81,21 @@ function FlowCard({ flow, onEdit }: { flow: Flow; onEdit: () => void }) {
   const qc = useQueryClient();
   const setActiveFn = useServerFn(setFlowActive);
   const deleteFn = useServerFn(deleteFlow);
+  const listStepsFn = useServerFn(listFlowSteps);
   const [active, setActive] = useState(flow.is_active);
+  const { data: stepsData } = useQuery({
+    queryKey: ["flowSteps", flow.id],
+    queryFn: () => listStepsFn({ data: { flowId: flow.id } }),
+  });
+  const steps = (stepsData as { steps?: FlowStepItem[] })?.steps ?? [];
 
   return (
     <Card className="p-4 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="p-2 rounded-md bg-muted">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="p-2 rounded-md bg-muted shrink-0">
           <GitBranch className="h-4 w-4 text-muted-foreground" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium truncate">{flow.name}</p>
             <Badge variant={active ? "default" : "secondary"} className="text-[10px]">
@@ -99,6 +105,20 @@ function FlowCard({ flow, onEdit }: { flow: Flow; onEdit: () => void }) {
           <p className="text-xs text-muted-foreground truncate">
             {flow.trigger_type === "keyword" ? `Palabra clave: ${flow.trigger_value ?? "-"}` : flow.trigger_type === "new_contact" ? "Nuevo contacto" : flow.trigger_type === "tag_added" ? `Etiqueta: ${flow.trigger_value ?? "-"}` : "Manual"}
           </p>
+          {steps.length > 0 && (
+            <div className="flex items-center gap-1 mt-1 flex-wrap">
+              {steps.slice(0, 4).map((s) => (
+                <Badge key={s.id} variant="outline" className="text-[10px]">
+                  {stepLabels[s.step_type] ?? s.step_type}
+                </Badge>
+              ))}
+              {steps.length > 4 && (
+                <Badge variant="outline" className="text-[10px]">
+                  +{steps.length - 4}
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
