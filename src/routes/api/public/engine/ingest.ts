@@ -203,7 +203,7 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
      }
   }
 
-  const commandId = e.commandId ?? p.commandId
+  const commandId = e.commandId ?? p.commandId ?? p.taskId
   const ackStatus = e.ackStatus ?? p.status ?? p.ackStatus
 
   return {
@@ -540,7 +540,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
         const normalized = parsed.data.events.map((ev) => normalizeEvent(ev, meWaId))
 
         for (const e of normalized) {
-          if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
+          try {
+            if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
             const waId = e.contact?.waId ?? normalizeWaKey(e.chatId)
             if (!waId) continue
 
@@ -943,6 +944,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 await supabaseAdmin.rpc('increment_broadcast_sent', { p_broadcast_id: br.broadcast_id });
               }
             }
+          }
+          } catch (eventErr: any) {
+            console.error('[ingest] Non-fatal error processing event in loop:', eventErr.message || eventErr, e);
           }
         }
 
