@@ -581,8 +581,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             const userPart = waId.split('@')[0];
             const cleanPhone = userPart.replace(/\D/g, '');
 
-            // Si no tenemos phone pero el waId contiene dígitos (LID o teléfono), usarlo como phone
-            if (!phone && cleanPhone && !waId.endsWith('@g.us')) {
+            // Si no tenemos phone pero el waId contiene dígitos (solo JID normal, NUNCA LID), usarlo como phone
+            if (!phone && cleanPhone && !waId.endsWith('@g.us') && !isLidKey(waId)) {
               phone = cleanPhone;
             }
 

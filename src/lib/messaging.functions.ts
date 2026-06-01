@@ -207,7 +207,11 @@ export const sendMessage = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
-    const target = contact?.phone ?? contact?.wa_id;
+    // Preferir wa_id (puede ser LID como 123@lid) porque WhatsApp Web puede enviar usando LIDs.
+    // Solo usar phone si wa_id no es un JID válido.
+    const target = contact?.wa_id && contact.wa_id.includes('@')
+      ? contact.wa_id
+      : contact?.phone ?? contact?.wa_id;
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
