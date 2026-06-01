@@ -268,7 +268,8 @@ async function normalizeMessage(msg: any): Promise<any> {
   if (WPP) {
     if (realChatId && realChatId.endsWith("@lid")) {
       try {
-        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(realChatId);
+        const wid = WPP.whatsapp.createWid(realChatId);
+        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
         if (numObj && numObj._serialized) {
           realChatId = numObj._serialized;
         }
@@ -278,7 +279,8 @@ async function normalizeMessage(msg: any): Promise<any> {
     }
     if (realFrom && realFrom.endsWith("@lid")) {
       try {
-        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(realFrom);
+        const wid = WPP.whatsapp.createWid(realFrom);
+        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
         if (numObj && numObj._serialized) {
           realFrom = numObj._serialized;
         }
@@ -286,7 +288,8 @@ async function normalizeMessage(msg: any): Promise<any> {
     }
     if (realTo && realTo.endsWith("@lid")) {
       try {
-        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(realTo);
+        const wid = WPP.whatsapp.createWid(realTo);
+        const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
         if (numObj && numObj._serialized) {
           realTo = numObj._serialized;
         }
