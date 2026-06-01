@@ -226,8 +226,7 @@ async function normalizeMessage(msg: any): Promise<any> {
       let retries = isVideo ? 12 : 6;
 
       while (!base64Data && retries > 0) {
-        // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador (Evita 403 Forbidden)
-        // Ahora también incluimos URLs HTTPS directas de WhatsApp (deprecatedMms3Url, etc.)
+        // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador
         const possibleUrls = [
           msg.clientUrl,
           msg.mediaData?.clientUrl,
@@ -242,8 +241,8 @@ async function normalizeMessage(msg: any): Promise<any> {
             if (url.startsWith("blob:")) {
               base64Data = await blobUrlToBase64(url);
             } else {
-              // Intentar fetch directo a URL de WhatsApp (mismo origen, mismas cookies)
-              const resp = await fetch(url, { credentials: "include" });
+              // Sin credentials explícito para evitar CORS wildcard + credentials:include rejection
+              const resp = await fetch(url);
               if (resp.ok) {
                 const blob = await resp.blob();
                 base64Data = await new Promise<string | null>((resolve, reject) => {
@@ -268,18 +267,34 @@ async function normalizeMessage(msg: any): Promise<any> {
           console.log("[MAPLE MULTIMEDIA] Intentando descargar vía msg.downloadMediaCrypted()...");
           try {
             const res = await msg.downloadMediaCrypted();
-            console.log("[MAPLE MULTIMEDIA] downloadMediaCrypted result type:", typeof res, !!res);
+            console.log("[MAPLE MULTIMEDIA] downloadMediaCrypted result:", typeof res, res?.constructor?.name, Object.keys(res || {}));
             if (typeof res === "string") {
               base64Data = res;
-            } else if (res && (res.body || res.data)) {
-              base64Data = res.body || res.data;
+            } else if (res && res.data) {
+              base64Data = res.data;
             }
           } catch (e: any) {
             console.warn("[MAPLE MULTIMEDIA] downloadMediaCrypted failed:", e?.message || e);
           }
         }
 
-        // Método 3: Usar API nativa de descarga de WPP (con ID serializado como string)
+        // Método 3: Descarga directa desde el modelo de mensaje
+        if (!base64Data && typeof msg.downloadMedia === "function") {
+          console.log("[MAPLE MULTIMEDIA] Intentando descargar vía msg.downloadMedia()...");
+          try {
+            const res = await msg.downloadMedia();
+            console.log("[MAPLE MULTIMEDIA] msg.downloadMedia result:", typeof res, res?.constructor?.name, Object.keys(res || {}));
+            if (typeof res === "string") {
+              base64Data = res;
+            } else if (res && res.data) {
+              base64Data = res.data;
+            }
+          } catch (e: any) {
+            console.warn("[MAPLE MULTIMEDIA] msg.downloadMedia failed:", e?.message || e);
+          }
+        }
+
+        // Método 4: Usar API nativa de descarga de WPP (con ID serializado como string)
         if (!base64Data && WPP && WPP.chat) {
           const wppMethod = WPP.chat.downloadMediaMessage || WPP.chat.downloadMedia;
           if (typeof wppMethod === "function") {
@@ -287,33 +302,33 @@ async function normalizeMessage(msg: any): Promise<any> {
             try {
               const msgId = msg.id?._serialized || msg.id;
               const res = await wppMethod(msgId);
-              console.log("[MAPLE MULTIMEDIA] WPP result type:", typeof res, !!res);
+              console.log("[MAPLE MULTIMEDIA] WPP result:", typeof res, res?.constructor?.name, Object.keys(res || {}), JSON.stringify(res)?.substring(0, 200));
               if (typeof res === "string") {
                 base64Data = res;
-              } else if (res && (res.body || res.data)) {
-                base64Data = res.body || res.data;
+              } else if (res) {
+                if (res.body) base64Data = res.body;
+                else if (res.data) base64Data = res.data;
+                else if (res.base64) base64Data = res.base64;
+                else if (res._blob) {
+                  const blob = res._blob;
+                  base64Data = await new Promise<string | null>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result as string);
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsDataURL(blob);
+                  });
+                } else if (res._arrayBuffer) {
+                  const bytes = new Uint8Array(res._arrayBuffer);
+                  let binary = "";
+                  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+                  base64Data = "data:" + (msg.mimetype || "application/octet-stream") + ";base64," + btoa(binary);
+                }
               }
             } catch (e: any) {
               console.warn("[MAPLE MULTIMEDIA] WPP download failed:", e?.message || e);
             }
           } else {
             console.warn("[MAPLE MULTIMEDIA] WPP.chat.downloadMediaMessage/downloadMedia no disponible");
-          }
-        }
-
-        // Método 4: Descarga directa desde el modelo de mensaje
-        if (!base64Data && typeof msg.downloadMedia === "function") {
-          console.log("[MAPLE MULTIMEDIA] Intentando descargar vía msg.downloadMedia()...");
-          try {
-            const res = await msg.downloadMedia();
-            console.log("[MAPLE MULTIMEDIA] msg.downloadMedia result type:", typeof res, !!res);
-            if (typeof res === "string") {
-              base64Data = res;
-            } else if (res && (res.body || res.data)) {
-              base64Data = res.body || res.data;
-            }
-          } catch (e: any) {
-            console.warn("[MAPLE MULTIMEDIA] msg.downloadMedia failed:", e?.message || e);
           }
         }
 
