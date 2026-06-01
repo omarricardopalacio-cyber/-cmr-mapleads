@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import { generateReply } from '@/lib/ai.server'

@@ -11,39 +11,46 @@ interface ContactLike {
   wa_id?: string | null;
 }
 
+function isAnonymousName(name?: string | null, waId?: string | null): boolean {
+  if (!name) return true;
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.toLowerCase() === "unknown") return true;
+  // display_name puramente numérico = es el JID, no un nombre real
+  if (/^\+?\d{6,}$/.test(trimmed)) return true;
+  if (waId && trimmed === waId) return true;
+  if (waId && trimmed === waId.split("@")[0]) return true;
+  return false;
+}
+
+function isLidWaId(waId?: string | null): boolean {
+  return !!waId && waId.endsWith("@lid");
+}
+
 export function getContactDisplayName(contact: ContactLike | null | undefined, indexFallback?: number): string {
-  // Si display_name es nulo, vacío, 'unknown' o igual al wa_id, usar teléfono formateado
-  if (!contact?.display_name || contact.display_name === "unknown" || contact.display_name.trim() === "" || contact.display_name === contact.wa_id) {
+  if (isAnonymousName(contact?.display_name, contact?.wa_id)) {
     const formattedPhone = formatPhoneOrWaId(contact);
-    if (formattedPhone !== 'Sin Número') {
-      const cleanPhone = formattedPhone.replace(/\D/g, ''); // Solo dígitos
+    if (formattedPhone !== "Sin Número") {
+      const cleanPhone = formattedPhone.replace(/\D/g, "");
       const last4 = cleanPhone.slice(-4);
       return `Cliente ${last4}`;
     }
+    return `Cliente ${indexFallback ?? "Nuevo"}`;
   }
-  // Si tiene un display_name válido, usarlo
-  if (contact?.display_name && contact.display_name !== "unknown" && contact.display_name.trim() !== "") {
-    let name = contact.display_name.trim();
-    if (name.startsWith('~')) {
-      name = name.substring(1).trim();
-    }
-    return name;
-  }
-  // Fallback final
-  return `Cliente ${indexFallback ?? "Nuevo"}`;
+  let name = (contact!.display_name as string).trim();
+  if (name.startsWith("~")) name = name.substring(1).trim();
+  return name;
 }
 
 export function formatPhoneOrWaId(contact: ContactLike | null | undefined): string {
-  if (!contact) return 'Sin Número';
-  // 1. Prioridad: Si tiene teléfono real, muéstralo con un '+' elegante
-  if (contact.phone && contact.phone.trim() !== '') {
-    const cleanPhone = contact.phone.replace(/\D/g, ''); // Solo dígitos
+  if (!contact) return "Sin Número";
+  if (contact.phone && contact.phone.trim() !== "") {
+    const cleanPhone = contact.phone.replace(/\D/g, "");
     return `+${cleanPhone}`;
   }
-  // 2. Si es un JID (@lid o @c.us), límpialo de raíz
-  if (contact.wa_id) {
-    const cleanId = contact.wa_id.split('@')[0]; // Toma solo los números antes del arroba
-    return `+${cleanId}`;
+  // Los @lid no son números de teléfono reales; no los mostramos como tales
+  if (contact.wa_id && !isLidWaId(contact.wa_id)) {
+    const cleanId = contact.wa_id.split("@")[0];
+    if (/^\d{6,}$/.test(cleanId)) return `+${cleanId}`;
   }
-  return 'Sin Número';
+  return "Sin Número";
 }

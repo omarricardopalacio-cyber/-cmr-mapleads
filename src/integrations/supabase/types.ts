@@ -14,45 +14,99 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_actions_log: {
+        Row: {
+          action_details: string
+          action_name: string
+          created_at: string | null
+          id: string
+          org_id: string
+          thread_id: string
+        }
+        Insert: {
+          action_details: string
+          action_name: string
+          created_at?: string | null
+          id?: string
+          org_id: string
+          thread_id: string
+        }
+        Update: {
+          action_details?: string
+          action_name?: string
+          created_at?: string | null
+          id?: string
+          org_id?: string
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_actions_log_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_actions_log_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_configs: {
         Row: {
           enabled: boolean
+          grok_api_key: string | null
           knowledge_base: string
           model: string
+          openai_api_key: string | null
           org_id: string
           provider: string
           respond_to: string
+          selected_provider: string | null
           system_prompt: string
           updated_at: string
           vertex_location: string | null
           vertex_model: string | null
           vertex_project: string | null
+          vertex_service_account_json: string | null
         }
         Insert: {
           enabled?: boolean
+          grok_api_key?: string | null
           knowledge_base?: string
           model?: string
+          openai_api_key?: string | null
           org_id: string
           provider?: string
           respond_to?: string
+          selected_provider?: string | null
           system_prompt?: string
           updated_at?: string
           vertex_location?: string | null
           vertex_model?: string | null
           vertex_project?: string | null
+          vertex_service_account_json?: string | null
         }
         Update: {
           enabled?: boolean
+          grok_api_key?: string | null
           knowledge_base?: string
           model?: string
+          openai_api_key?: string | null
           org_id?: string
           provider?: string
           respond_to?: string
+          selected_provider?: string | null
           system_prompt?: string
           updated_at?: string
           vertex_location?: string | null
           vertex_model?: string | null
           vertex_project?: string | null
+          vertex_service_account_json?: string | null
         }
         Relationships: [
           {
@@ -66,6 +120,9 @@ export type Database = {
       }
       auto_replies: {
         Row: {
+          action_add_tags: string[] | null
+          action_ai_behavior: string | null
+          action_remove_tags: string[] | null
           cooldown_seconds: number
           created_at: string
           created_by: string | null
@@ -74,13 +131,19 @@ export type Database = {
           last_triggered_at: string | null
           match_type: string
           match_value: string
+          media_url: string | null
+          mime_type: string | null
           name: string
           org_id: string
           reply_text: string
           session_id: string | null
+          trigger_type: string | null
           updated_at: string
         }
         Insert: {
+          action_add_tags?: string[] | null
+          action_ai_behavior?: string | null
+          action_remove_tags?: string[] | null
           cooldown_seconds?: number
           created_at?: string
           created_by?: string | null
@@ -89,13 +152,19 @@ export type Database = {
           last_triggered_at?: string | null
           match_type?: string
           match_value: string
+          media_url?: string | null
+          mime_type?: string | null
           name: string
           org_id: string
           reply_text: string
           session_id?: string | null
+          trigger_type?: string | null
           updated_at?: string
         }
         Update: {
+          action_add_tags?: string[] | null
+          action_ai_behavior?: string | null
+          action_remove_tags?: string[] | null
           cooldown_seconds?: number
           created_at?: string
           created_by?: string | null
@@ -104,10 +173,13 @@ export type Database = {
           last_triggered_at?: string | null
           match_type?: string
           match_value?: string
+          media_url?: string | null
+          mime_type?: string | null
           name?: string
           org_id?: string
           reply_text?: string
           session_id?: string | null
+          trigger_type?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -215,6 +287,39 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      contact_tags: {
+        Row: {
+          assigned_at: string | null
+          contact_id: string
+          tag_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          contact_id: string
+          tag_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          contact_id?: string
+          tag_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_tags_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_tags_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "tags"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       contacts: {
         Row: {
@@ -363,6 +468,243 @@ export type Database = {
           },
         ]
       }
+      flow_runs: {
+        Row: {
+          contact_id: string
+          created_at: string | null
+          current_step_id: string | null
+          flow_id: string
+          id: string
+          last_interaction_at: string | null
+          next_execution_at: string | null
+          org_id: string
+          status: string
+          updated_at: string | null
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string | null
+          current_step_id?: string | null
+          flow_id: string
+          id?: string
+          last_interaction_at?: string | null
+          next_execution_at?: string | null
+          org_id: string
+          status?: string
+          updated_at?: string | null
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string | null
+          current_step_id?: string | null
+          flow_id?: string
+          id?: string
+          last_interaction_at?: string | null
+          next_execution_at?: string | null
+          org_id?: string
+          status?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flow_runs_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "flow_runs_current_step_id_fkey"
+            columns: ["current_step_id"]
+            isOneToOne: false
+            referencedRelation: "flow_steps"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "flow_runs_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "flows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "flow_runs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      flow_steps: {
+        Row: {
+          branch: string | null
+          created_at: string | null
+          flow_id: string
+          id: string
+          parent_step_id: string | null
+          step_data: Json
+          step_order: number
+          step_type: string
+        }
+        Insert: {
+          branch?: string | null
+          created_at?: string | null
+          flow_id: string
+          id?: string
+          parent_step_id?: string | null
+          step_data?: Json
+          step_order: number
+          step_type: string
+        }
+        Update: {
+          branch?: string | null
+          created_at?: string | null
+          flow_id?: string
+          id?: string
+          parent_step_id?: string | null
+          step_data?: Json
+          step_order?: number
+          step_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flow_steps_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "flows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "flow_steps_parent_step_id_fkey"
+            columns: ["parent_step_id"]
+            isOneToOne: false
+            referencedRelation: "flow_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      flows: {
+        Row: {
+          ai_can_access_crm: boolean | null
+          ai_can_access_tags: boolean | null
+          ai_custom_system_prompt: string | null
+          ai_enabled_after_flow: boolean | null
+          ai_enabled_during_flow: boolean | null
+          ai_fallback_enabled: boolean | null
+          ai_knowledge_sources: Json | null
+          ai_maintain_context: boolean | null
+          ai_mode: string | null
+          ai_time_limit_minutes: number | null
+          ai_transfer_on_failure: boolean | null
+          ai_transfer_rules: Json | null
+          created_at: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          org_id: string
+          trigger_type: string
+          trigger_value: string | null
+        }
+        Insert: {
+          ai_can_access_crm?: boolean | null
+          ai_can_access_tags?: boolean | null
+          ai_custom_system_prompt?: string | null
+          ai_enabled_after_flow?: boolean | null
+          ai_enabled_during_flow?: boolean | null
+          ai_fallback_enabled?: boolean | null
+          ai_knowledge_sources?: Json | null
+          ai_maintain_context?: boolean | null
+          ai_mode?: string | null
+          ai_time_limit_minutes?: number | null
+          ai_transfer_on_failure?: boolean | null
+          ai_transfer_rules?: Json | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          org_id: string
+          trigger_type: string
+          trigger_value?: string | null
+        }
+        Update: {
+          ai_can_access_crm?: boolean | null
+          ai_can_access_tags?: boolean | null
+          ai_custom_system_prompt?: string | null
+          ai_enabled_after_flow?: boolean | null
+          ai_enabled_during_flow?: boolean | null
+          ai_fallback_enabled?: boolean | null
+          ai_knowledge_sources?: Json | null
+          ai_maintain_context?: boolean | null
+          ai_mode?: string | null
+          ai_time_limit_minutes?: number | null
+          ai_transfer_on_failure?: boolean | null
+          ai_transfer_rules?: Json | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          org_id?: string
+          trigger_type?: string
+          trigger_value?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flows_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      knowledge_sources: {
+        Row: {
+          content: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          metadata: Json | null
+          name: string
+          org_id: string
+          source_type: string
+          updated_at: string | null
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          metadata?: Json | null
+          name: string
+          org_id: string
+          source_type: string
+          updated_at?: string | null
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          metadata?: Json | null
+          name?: string
+          org_id?: string
+          source_type?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_sources_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       messages: {
         Row: {
           created_at: string
@@ -413,6 +755,48 @@ export type Database = {
             columns: ["thread_id"]
             isOneToOne: false
             referencedRelation: "threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notes: {
+        Row: {
+          contact_id: string
+          content: string
+          created_at: string | null
+          id: string
+          org_id: string
+          user_id: string | null
+        }
+        Insert: {
+          contact_id: string
+          content: string
+          created_at?: string | null
+          id?: string
+          org_id: string
+          user_id?: string | null
+        }
+        Update: {
+          contact_id?: string
+          content?: string
+          created_at?: string | null
+          id?: string
+          org_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notes_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notes_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -494,6 +878,54 @@ export type Database = {
         }
         Relationships: []
       }
+      reminders: {
+        Row: {
+          contact_id: string
+          created_at: string | null
+          id: string
+          is_completed: boolean | null
+          note: string
+          org_id: string
+          reminder_at: string
+          user_id: string | null
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string | null
+          id?: string
+          is_completed?: boolean | null
+          note: string
+          org_id: string
+          reminder_at: string
+          user_id?: string | null
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string | null
+          id?: string
+          is_completed?: boolean | null
+          note?: string
+          org_id?: string
+          reminder_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reminders_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminders_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scheduled_messages: {
         Row: {
           command_id: string | null
@@ -544,6 +976,38 @@ export type Database = {
           wa_id?: string
         }
         Relationships: []
+      }
+      tags: {
+        Row: {
+          color: string
+          created_at: string | null
+          id: string
+          name: string
+          org_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string | null
+          id?: string
+          name: string
+          org_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string | null
+          id?: string
+          name?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tags_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       threads: {
         Row: {
@@ -600,6 +1064,44 @@ export type Database = {
           },
         ]
       }
+      transfer_rules: {
+        Row: {
+          condition_config: Json | null
+          condition_type: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          org_id: string
+        }
+        Insert: {
+          condition_config?: Json | null
+          condition_type: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          org_id: string
+        }
+        Update: {
+          condition_config?: Json | null
+          condition_type?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transfer_rules_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -634,35 +1136,56 @@ export type Database = {
       }
       wa_sessions: {
         Row: {
+          battery_level: number | null
           created_at: string
           created_by: string | null
+          default_agent_id: string | null
+          default_flow_id: string | null
+          device_name: string | null
           id: string
           label: string
           last_heartbeat_at: string | null
+          last_sync_at: string | null
           me_wa_id: string | null
           org_id: string
+          phone_number: string | null
+          platform: string | null
           session_token: string
           status: Database["public"]["Enums"]["wa_session_status"]
         }
         Insert: {
+          battery_level?: number | null
           created_at?: string
           created_by?: string | null
+          default_agent_id?: string | null
+          default_flow_id?: string | null
+          device_name?: string | null
           id?: string
           label?: string
           last_heartbeat_at?: string | null
+          last_sync_at?: string | null
           me_wa_id?: string | null
           org_id: string
+          phone_number?: string | null
+          platform?: string | null
           session_token: string
           status?: Database["public"]["Enums"]["wa_session_status"]
         }
         Update: {
+          battery_level?: number | null
           created_at?: string
           created_by?: string | null
+          default_agent_id?: string | null
+          default_flow_id?: string | null
+          device_name?: string | null
           id?: string
           label?: string
           last_heartbeat_at?: string | null
+          last_sync_at?: string | null
           me_wa_id?: string | null
           org_id?: string
+          phone_number?: string | null
+          platform?: string | null
           session_token?: string
           status?: Database["public"]["Enums"]["wa_session_status"]
         }
@@ -681,6 +1204,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      delete_flow_step_safe: {
+        Args: { p_org_id: string; p_step_id: string }
+        Returns: undefined
+      }
       has_role: {
         Args: {
           _org_id: string

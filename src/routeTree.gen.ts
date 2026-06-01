@@ -13,9 +13,11 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedTransferRulesRouteImport } from './routes/_authenticated.transfer-rules'
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
 import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
+import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated.knowledge'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
 import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.flows'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
@@ -24,11 +26,11 @@ import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
 import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenticated.auto-replies'
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
+import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
-import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -49,6 +51,12 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedTransferRulesRoute =
+  AuthenticatedTransferRulesRouteImport.update({
+    id: '/transfer-rules',
+    path: '/transfer-rules',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedSessionsRoute = AuthenticatedSessionsRouteImport.update({
   id: '/sessions',
   path: '/sessions',
@@ -63,6 +71,11 @@ const AuthenticatedQuickRepliesRoute =
 const AuthenticatedPipelinesRoute = AuthenticatedPipelinesRouteImport.update({
   id: '/pipelines',
   path: '/pipelines',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedKnowledgeRoute = AuthenticatedKnowledgeRouteImport.update({
+  id: '/knowledge',
+  path: '/knowledge',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedIntegrationsRoute =
@@ -109,6 +122,11 @@ const AuthenticatedConversationsIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
+const ApiDebugMediaDiagRoute = ApiDebugMediaDiagRouteImport.update({
+  id: '/api/debug/media-diag',
+  path: '/api/debug/media-diag',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedConversationsThreadIdRoute =
   AuthenticatedConversationsThreadIdRouteImport.update({
     id: '/$threadId',
@@ -130,11 +148,6 @@ const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
   path: '/api/public/cron/dispatch',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiDebugMediaDiagRoute = ApiDebugMediaDiagRouteImport.update({
-  id: '/api/debug/media-diag',
-  path: '/api/debug/media-diag',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -147,15 +160,17 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
+  '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
+  '/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
+  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
-  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -167,15 +182,17 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
+  '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
+  '/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
+  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
-  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -190,15 +207,17 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/flows': typeof AuthenticatedFlowsRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
+  '/_authenticated/knowledge': typeof AuthenticatedKnowledgeRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
+  '/_authenticated/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/_authenticated/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
+  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
-  '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -213,15 +232,17 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/flows'
     | '/integrations'
+    | '/knowledge'
     | '/pipelines'
     | '/quick-replies'
     | '/sessions'
+    | '/transfer-rules'
     | '/conversations/$threadId'
+    | '/api/debug/media-diag'
     | '/conversations/'
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
-    | '/api/debug/media-diag'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -233,15 +254,17 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/flows'
     | '/integrations'
+    | '/knowledge'
     | '/pipelines'
     | '/quick-replies'
     | '/sessions'
+    | '/transfer-rules'
     | '/conversations/$threadId'
+    | '/api/debug/media-diag'
     | '/conversations'
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
-    | '/api/debug/media-diag'
   id:
     | '__root__'
     | '/'
@@ -255,10 +278,13 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/flows'
     | '/_authenticated/integrations'
+    | '/_authenticated/knowledge'
     | '/_authenticated/pipelines'
     | '/_authenticated/quick-replies'
     | '/_authenticated/sessions'
+    | '/_authenticated/transfer-rules'
     | '/_authenticated/conversations/$threadId'
+    | '/api/debug/media-diag'
     | '/_authenticated/conversations/'
     | '/api/public/cron/dispatch'
     | '/api/public/engine/commands'
@@ -270,10 +296,10 @@ export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
-  ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -306,6 +332,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/transfer-rules': {
+      id: '/_authenticated/transfer-rules'
+      path: '/transfer-rules'
+      fullPath: '/transfer-rules'
+      preLoaderRoute: typeof AuthenticatedTransferRulesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/sessions': {
       id: '/_authenticated/sessions'
       path: '/sessions'
@@ -325,6 +358,13 @@ declare module '@tanstack/react-router' {
       path: '/pipelines'
       fullPath: '/pipelines'
       preLoaderRoute: typeof AuthenticatedPipelinesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/knowledge': {
+      id: '/_authenticated/knowledge'
+      path: '/knowledge'
+      fullPath: '/knowledge'
+      preLoaderRoute: typeof AuthenticatedKnowledgeRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/integrations': {
@@ -383,6 +423,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConversationsIndexRouteImport
       parentRoute: typeof AuthenticatedConversationsRoute
     }
+    '/api/debug/media-diag': {
+      id: '/api/debug/media-diag'
+      path: '/api/debug/media-diag'
+      fullPath: '/api/debug/media-diag'
+      preLoaderRoute: typeof ApiDebugMediaDiagRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/conversations/$threadId': {
       id: '/_authenticated/conversations/$threadId'
       path: '/$threadId'
@@ -409,13 +456,6 @@ declare module '@tanstack/react-router' {
       path: '/api/public/cron/dispatch'
       fullPath: '/api/public/cron/dispatch'
       preLoaderRoute: typeof ApiPublicCronDispatchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/debug/media-diag': {
-      id: '/api/debug/media-diag'
-      path: '/api/debug/media-diag'
-      fullPath: '/api/debug/media-diag'
-      preLoaderRoute: typeof ApiDebugMediaDiagRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -446,9 +486,11 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedFlowsRoute: typeof AuthenticatedFlowsRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
+  AuthenticatedKnowledgeRoute: typeof AuthenticatedKnowledgeRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
   AuthenticatedQuickRepliesRoute: typeof AuthenticatedQuickRepliesRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
+  AuthenticatedTransferRulesRoute: typeof AuthenticatedTransferRulesRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -459,9 +501,11 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedFlowsRoute: AuthenticatedFlowsRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
+  AuthenticatedKnowledgeRoute: AuthenticatedKnowledgeRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedQuickRepliesRoute: AuthenticatedQuickRepliesRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
+  AuthenticatedTransferRulesRoute: AuthenticatedTransferRulesRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
@@ -473,21 +517,11 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
-  ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
