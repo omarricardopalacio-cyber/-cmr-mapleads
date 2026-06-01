@@ -958,9 +958,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           } else if (e.type === 'ack' && e.commandId) {
             const ackStatus = e.ackStatus ?? 'ok';
             const isFailed = ackStatus === 'failed' || ackStatus === 'error';
+            const rawPayload = (e.raw as any) ?? {};
+            const ackRecord: Record<string, any> = { status: ackStatus };
+            if (rawPayload.error) ackRecord.error = String(rawPayload.error);
+            if (rawPayload.result?.error) ackRecord.error = String(rawPayload.result.error);
+            if (rawPayload.result?.messageId) ackRecord.messageId = rawPayload.result.messageId;
             await supabaseAdmin
               .from('engine_commands')
-              .update({ status: isFailed ? 'failed' : 'acked', ack: ackStatus, acked_at: new Date().toISOString() })
+              .update({ status: isFailed ? 'failed' : 'acked', ack: ackRecord, acked_at: new Date().toISOString() })
               .eq('id', e.commandId)
               .eq('session_id', session.id);
 

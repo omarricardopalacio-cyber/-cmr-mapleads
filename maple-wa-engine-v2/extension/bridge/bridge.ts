@@ -84,7 +84,13 @@ export class ContentBridge {
 
     // Comando del backend → forwarded al injected script
     if (bridgeMsg.channel === "WA_COMMAND") {
-      this.sendToInjected(bridgeMsg).then(sendResponse).catch(sendResponse);
+      this.sendToInjected(bridgeMsg)
+        .then((result) => sendResponse(result))
+        .catch((err) => {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.warn("[ContentBridge] Error ejecutando comando:", errMsg);
+          sendResponse({ error: errMsg });
+        });
       return true; // Async response
     }
 
