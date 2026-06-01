@@ -182,6 +182,7 @@ function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () => void }
         name,
         trigger_type: triggerType,
         trigger_value: triggerValue || null,
+        is_active: false,
         description,
         ai_mode: aiMode,
         ai_time_limit_minutes: aiMode === "time_limited" ? aiTimeLimitMinutes : null,
