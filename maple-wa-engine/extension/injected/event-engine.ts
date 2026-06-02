@@ -432,56 +432,12 @@ async function normalizeMessage(msg: any): Promise<any> {
   let realFrom = msg.from?._serialized || msg.id?.remote?._serialized || msg.id?._serialized;
   let realTo = msg.to?._serialized;
 
-  // Si son JIDs de tipo LID, resolver su número telefónico real (@c.us) para evitar duplicación y chats "sin número"
-  if (WPP) {
-    // Detectar LIDs puros (sin @lid suffix) y convertirlos al formato esperado
-    const isPureLid = realChatId && !realChatId.includes('@') && realChatId.length > 10 && /^[A-F0-9]+$/.test(realChatId);
-    if (isPureLid) {
-      realChatId = `${realChatId}@lid`;
-      console.log("[EventEngine] LID puro detectado, convertido a formato @lid:", realChatId);
-    }
-
-    if (realChatId && realChatId.endsWith("@lid")) {
-      try {
-        const wid = createWidSafely(WPP, realChatId);
-        if (!wid) {
-          console.warn("[EventEngine] No se pudo crear Wid para:", realChatId);
-        } else {
-          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-          if (numObj && numObj._serialized) {
-            realChatId = numObj._serialized;
-            console.log("[EventEngine] Número resuelto desde LID:", realChatId);
-          }
-        }
-      } catch (err) {
-        console.warn("[EventEngine] Error al obtener número para LID chatId:", realChatId, err);
-      }
-    }
-    if (realFrom && realFrom.endsWith("@lid")) {
-      try {
-        const wid = createWidSafely(WPP, realFrom);
-        if (!wid) {
-          console.warn("[EventEngine] No se pudo crear Wid para:", realFrom);
-        } else {
-          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-          if (numObj && numObj._serialized) {
-            realFrom = numObj._serialized;
-          }
-        }
-      } catch (err) {}
-    }
-    if (realTo && realTo.endsWith("@lid")) {
-      try {
-        const wid = createWidSafely(WPP, realTo);
-        if (!wid) {
-          console.warn("[EventEngine] No se pudo crear Wid para:", realTo);
-        } else {
-          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-          if (numObj && numObj._serialized) {
-            realTo = numObj._serialized;
-          }
-        }
-      } catch (err) {}
+  // Extraer número telefónico del formato completo (ej: false_21917838930175@lid_3EB0...)
+  if (realChatId && realChatId.includes('@lid')) {
+    const match = realChatId.match(/_(\d+)@lid_/);
+    if (match && match[1]) {
+      realChatId = `${match[1]}@c.us`;
+      console.log("[EventEngine] Número extraído del formato LID:", realChatId);
     }
   }
 
