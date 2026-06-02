@@ -115,9 +115,13 @@ export async function uploadBase64ToStorage(
     options?.fileName || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const pathKey = `${orgId}/${fileName}`;
 
+  // Convertir Buffer de Node.js a Uint8Array para compatibilidad con Supabase en serverless
+  const fileData = new Uint8Array(bytes);
+  console.log("[uploadBase64ToStorage] Uint8Array length:", fileData.length);
+
   const { error: upErr } = await supabaseAdmin.storage
     .from("media")
-    .upload(pathKey, bytes, { contentType: mimeType, upsert: false });
+    .upload(pathKey, fileData, { contentType: mimeType, upsert: false });
   if (upErr) throw new Error(upErr.message);
 
   console.log("[uploadBase64ToStorage] Upload success:", pathKey, "size:", bytes.length);
