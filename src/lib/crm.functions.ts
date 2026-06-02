@@ -141,7 +141,7 @@ export const getContactCrmData = createServerFn({ method: "GET" })
     const orgId = await ensureUserOrg(context.userId);
     const { data: contact, error } = await supabaseAdmin
       .from("contacts")
-      .select("origin, entry_date, exit_date, deal_value, company, position, interested_products, observations")
+      .select("id, wa_id, phone, display_name, profile_picture_url, origin, entry_date, exit_date, deal_value, company, position, interested_products, observations")
       .eq("id", data.contactId)
       .eq("org_id", orgId)
       .single();

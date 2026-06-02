@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MAPLE WA Engine",
-  "version": "1.0.0",
-  "description": "WhatsApp Web Bridge Engine for Cloud CRM",
+  "version": "1.0.1",
+  "description": "WhatsApp Web Bridge Engine for Cloud CRM - Contact Enricher for LID resolution",
   "permissions": [
     "storage",
     "unlimitedStorage",

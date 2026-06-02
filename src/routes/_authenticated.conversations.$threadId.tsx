@@ -964,7 +964,9 @@ function ContactContextPanel({ contactId, threadId }: { contactId: string; threa
   const reminders = (remindersData?.reminders ?? []) as ReminderItem[];
 
   return (
-    <Tabs defaultValue="tags" className="flex flex-col h-full">
+    <div className="flex flex-col h-full">
+      <ContactProfileCard contact={(crmData as any)?.contact ?? null} />
+      <Tabs defaultValue="tags" className="flex flex-col flex-1 min-h-0">
       <TabsList className="mx-3 mt-3 grid grid-cols-4">
         <TabsTrigger value="tags" className="text-xs">
           <Tag className="h-3.5 w-3.5 mr-1 hidden sm:block" />
@@ -1266,6 +1268,49 @@ function ContactContextPanel({ contactId, threadId }: { contactId: string; threa
         </ScrollArea>
       </TabsContent>
     </Tabs>
+    </div>
+  );
+}
+
+function ContactProfileCard({ contact }: { contact: any }) {
+  if (!contact) return null;
+  const name: string = contact.display_name || contact.phone || (contact.wa_id || "").replace(/@lid$/, "");
+  const phone: string | null = contact.phone || null;
+  const pic: string | null = contact.profile_picture_url || null;
+  const initials = (name || "?").slice(0, 2).toUpperCase();
+  const waLink = phone ? `https://wa.me/${phone}` : null;
+  return (
+    <div className="px-3 pt-3">
+      <div className="rounded-lg border bg-card p-3 flex items-center gap-3">
+        {pic ? (
+          <img
+            src={pic}
+            alt={name}
+            className="h-12 w-12 rounded-full object-cover shrink-0"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center font-semibold shrink-0">
+            {initials}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium truncate">{name}</p>
+          {phone ? (
+            <a
+              href={waLink!}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-muted-foreground hover:text-primary truncate block"
+            >
+              +{phone}
+            </a>
+          ) : (
+            <p className="text-xs text-muted-foreground">Sin número</p>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

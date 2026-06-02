@@ -574,3 +574,211 @@ export function destroyEventEngine(): void {
   cleanupFns = [];
   listenersInitialized = false;
 }
+
+// ============================================================
+// MAPLE WA ENGINE — Contact Enricher (LID → Phone resolver)
+// Apéndice añadido para resolver números reales y enriquecer
+// los contactos con foto de perfil, nombre y teléfono.
+// ============================================================
+(function(){
+  if (window.__MAPLE_CONTACT_ENRICHER_LOADED) return;
+  window.__MAPLE_CONTACT_ENRICHER_LOADED = true;
+
+  const LID_CACHE = new Map();   // waId(lid) -> phone(digits)
+  const SENT_CACHE = new Map();  // waId -> timestamp last emit
+  const MIN_PHONE_LEN = 8;
+  const MAX_PHONE_LEN = 15;
+
+  function digitsOnly(v: any): string | null {
+    if (v == null) return null;
+    const s = String(v).split('@')[0].replace(/\D/g, '');
+    return s || null;
+  }
+
+  function looksLikePhone(d: string | null): boolean {
+    return !!d && d.length >= MIN_PHONE_LEN && d.length <= MAX_PHONE_LEN;
+  }
+
+  async function resolveLidToPhone(lid: string): Promise<string | null> {
+    if (!lid || typeof lid !== 'string') return null;
+    if (!lid.endsWith('@lid')) {
+      const d = digitsOnly(lid);
+      return looksLikePhone(d) ? d : null;
+    }
+    if (LID_CACHE.has(lid)) return LID_CACHE.get(lid) || null;
+
+    const WPP = (window as any).WPP;
+    if (!WPP) return null;
+    let phone: string | null = null;
+
+    // Estrategia 1: contact.get(lid) y revisar todos los campos posibles
+    try {
+      const c = await WPP.contact.get(lid);
+      const candidates = [
+        c?.phoneNumber?._serialized, c?.phoneNumber?.user, c?.phoneNumber,
+        c?.phone?._serialized, c?.phone?.user, c?.phone,
+        c?.id?._serialized, c?.wid?._serialized, c?.wid?.user,
+      ];
+      for (const x of candidates) {
+        const d = digitsOnly(x);
+        if (looksLikePhone(d)) { phone = d; break; }
+      }
+    } catch(e){}
+
+    // Estrategia 2: WidFactory + ApiContact.getPhoneNumber
+    if (!phone) {
+      try {
+        const wf = WPP.whatsapp?.WidFactory?.createWid || WPP.whatsapp?.createWid;
+        const Wid = wf ? wf(lid) : null;
+        if (Wid && WPP.whatsapp?.ApiContact?.getPhoneNumber) {
+          const pn = await WPP.whatsapp.ApiContact.getPhoneNumber(Wid);
+          const d = digitsOnly(pn?._serialized || pn?.user || pn);
+          if (looksLikePhone(d)) phone = d;
+        }
+      } catch(e){}
+    }
+
+    // Estrategia 3: LidToPnMap / LidUtils (WA-JS modernos)
+    if (!phone) {
+      try {
+        const map = WPP.whatsapp?.LidToPnMap || WPP.whatsapp?.LidUtils
+          || WPP.whatsapp?.LidPnMap || WPP.whatsapp?.SignalDeviceLidPnMap;
+        const fnName = ['findPnForLid','getPhoneNumber','getPn','getPhoneForLid','lidToPn']
+          .find(n => map && typeof map[n] === 'function');
+        if (fnName) {
+          const pn = await (map as any)[fnName](lid);
+          const d = digitsOnly(pn?._serialized || pn?.user || pn);
+          if (looksLikePhone(d)) phone = d;
+        }
+      } catch(e){}
+    }
+
+    // Estrategia 4: queryExists
+    if (!phone) {
+      try {
+        const r = await WPP.contact?.queryExists?.(lid);
+        const d = digitsOnly(r?.wid?._serialized || r?.wid?.user || r?.wid || r);
+        if (looksLikePhone(d)) phone = d;
+      } catch(e){}
+    }
+
+    if (phone) LID_CACHE.set(lid, phone);
+    return phone;
+  }
+
+  async function getProfilePicUrl(waId: string): Promise<string | null> {
+    try {
+      const url = await (window as any).WPP?.contact?.getProfilePictureUrl?.(waId);
+      if (typeof url === 'string' && url.startsWith('http')) return url;
+    } catch(e){}
+    return null;
+  }
+
+  function emit(event: string, payload: any): void {
+    try {
+      window.postMessage({
+        source: 'MAPLE_WA_INJECTED',
+        direction: 'INJECTED_TO_CONTENT',
+        channel: 'WA_EVENT',
+        id: `${Date.now()}-${Math.random().toString(36).slice(2,9)}`,
+        event,
+        payload
+      }, 'https://web.whatsapp.com');
+    } catch(e){}
+  }
+
+  async function enrichChat(chat: any): Promise<void> {
+    try {
+      const cid = chat?.id?._serialized || (typeof chat?.id === 'string' ? chat.id : null);
+      if (!cid || typeof cid !== 'string') return;
+      if (cid.endsWith('@g.us')) return;       // skip grupos
+
+      // Throttling: no reemitir el mismo waId en menos de 60 minutos
+      const last = SENT_CACHE.get(cid) || 0;
+      if (Date.now() - last < 60 * 60 * 1000) return;
+
+      let phone: string | null = null;
+      if (cid.endsWith('@lid')) {
+        phone = await resolveLidToPhone(cid);
+      } else if (cid.endsWith('@c.us')) {
+        phone = digitsOnly(cid);
+      }
+
+      const contact = (chat.contact) || (await (window as any).WPP.contact.get(cid).catch(()=>null));
+      const displayName = contact?.name || contact?.displayName
+        || contact?.pushname || contact?.formattedName
+        || chat.name || chat.formattedTitle || null;
+      const pushname = contact?.pushname || null;
+      const pic = await getProfilePicUrl(cid);
+
+      SENT_CACHE.set(cid, Date.now());
+
+      emit('CONTACT_INFO', {
+        waId: cid,
+        phone,
+        displayName,
+        pushname,
+        profilePictureUrl: pic,
+        isGroup: false,
+      });
+    } catch(e){
+      console.warn('[MAPLE ENRICHER] enrichChat error:', e);
+    }
+  }
+
+  async function enrichAll(): Promise<void> {
+    const WPP = (window as any).WPP;
+    if (!WPP || !WPP.chat) return;
+    try {
+      const chats = await WPP.chat.list();
+      let i = 0;
+      for (const chat of chats) {
+        await enrichChat(chat);
+        if (++i % 5 === 0) await new Promise(r => setTimeout(r, 150));
+      }
+      console.log('[MAPLE ENRICHER] Procesados', chats.length, 'chats');
+    } catch(e){
+      console.warn('[MAPLE ENRICHER] enrichAll error:', e);
+    }
+  }
+
+  // Espera a WPP y arranca
+  (async function start(){
+    let tries = 0;
+    while (!(window as any).WPP && tries < 300) {
+      await new Promise(r => setTimeout(r, 200));
+      tries++;
+    }
+    if (!(window as any).WPP) {
+      console.warn('[MAPLE ENRICHER] WPP no disponible, abortando');
+      return;
+    }
+
+    // Primer barrido a los 10s para dar tiempo al engine principal
+    setTimeout(enrichAll, 10000);
+    // Re-barrido cada 5 min
+    setInterval(enrichAll, 5 * 60 * 1000);
+
+    // Enriquecer cada vez que llega un mensaje nuevo
+    try {
+      (window as any).WPP.on?.('chat.new_message', async (msg: any) => {
+        try {
+          const cid = msg?.id?.remote?._serialized
+            || msg?.from?._serialized
+            || msg?.chatId;
+          if (!cid || cid.endsWith('@g.us')) return;
+          // Invalidar throttling para este chat
+          SENT_CACHE.delete(cid);
+          const chat = await (window as any).WPP.chat.find(cid).catch(()=>null);
+          await enrichChat(chat || { id: { _serialized: cid } });
+        } catch(e){}
+      });
+    } catch(e){}
+
+    console.log('[MAPLE ENRICHER] Contact enricher activo');
+  })();
+
+  // Expose for debugging
+  (window as any).__MAPLE_RESOLVE_LID = resolveLidToPhone;
+  (window as any).__MAPLE_ENRICH_ALL = enrichAll;
+})();
