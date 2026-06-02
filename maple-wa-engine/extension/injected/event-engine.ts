@@ -483,13 +483,31 @@ async function normalizeMessage(msg: any): Promise<any> {
   let displayName = msg.sender?.displayName || msg.sender?.name || msg.sender?.formattedName || pushname || undefined;
 
   // Si no hay nombre y tenemos el contacto de WPP, cargarlo
-  if (!displayName && WPP && realFrom) {
+  let profilePictureUrl: string | undefined = undefined;
+  if (WPP && realFrom) {
     try {
       const contactObj = await WPP.contact.get(realFrom);
       if (contactObj) {
         pushname = contactObj.pushname || pushname;
         notifyName = contactObj.pushname || notifyName;
         displayName = contactObj.name || contactObj.displayName || contactObj.pushname || contactObj.formattedName || undefined;
+        
+        // Extraer foto de perfil si está disponible
+        if (contactObj.profilePictureThumb || contactObj.profilePicThumbObj) {
+          profilePictureUrl = contactObj.profilePictureThumb || contactObj.profilePicThumbObj?.eurl || undefined;
+        }
+        
+        // Intentar obtener la foto de perfil usando la API de WPP si no está en el objeto contacto
+        if (!profilePictureUrl && typeof WPP.contact.getProfilePicture === 'function') {
+          try {
+            const profilePic = await WPP.contact.getProfilePicture(realFrom);
+            if (profilePic && profilePic.eurl) {
+              profilePictureUrl = profilePic.eurl;
+            }
+          } catch (picErr) {
+            console.warn("[EventEngine] Error obteniendo foto de perfil:", picErr);
+          }
+        }
       }
     } catch (err) {}
   }
@@ -511,6 +529,7 @@ async function normalizeMessage(msg: any): Promise<any> {
     pushname,
     notifyName,
     displayName,
+    profilePictureUrl,
   };
 }
 

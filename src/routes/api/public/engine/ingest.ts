@@ -35,6 +35,7 @@ const EventSchema = z
         waId: z.string().min(1).max(64),
         displayName: z.string().max(255).optional(),
         phone: z.string().max(32).optional(),
+        profilePictureUrl: z.string().max(2000).optional(),
       })
       .optional(),
     sentAt: z.union([z.string(), z.number()]).optional(),
@@ -52,7 +53,7 @@ type NormalizedEvent = {
   text?: string
   media?: Record<string, unknown>
   raw?: Record<string, unknown>
-  contact?: { waId: string; displayName?: string; phone?: string }
+  contact?: { waId: string; displayName?: string; phone?: string; profilePictureUrl?: string }
   sentAt?: string
   commandId?: string
   ackStatus?: string
@@ -184,12 +185,14 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
       waId: counterpart,
        displayName: pickDisplayName(p.notifyName ?? p.pushname ?? p.author?.name, counterpart, counterpartPhone),
        phone: counterpartPhone,
+       profilePictureUrl: p.profilePictureUrl ?? p.profilePicture,
     }
    } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
      contact = {
        waId: counterpart,
        displayName: pickDisplayName(contact.displayName, counterpart, counterpartPhone),
        phone: counterpartPhone,
+       profilePictureUrl: contact.profilePictureUrl ?? p.profilePictureUrl ?? p.profilePicture,
      }
    } else if (contact) {
      const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
@@ -199,6 +202,7 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
          waId: normalizedWaId,
          displayName: pickDisplayName(contact.displayName, normalizedWaId, normalizedPhone),
          phone: !isLidKey(normalizedWaId) ? normalizedPhone ?? digits(normalizedWaId) : normalizedPhone,
+         profilePictureUrl: contact.profilePictureUrl ?? p.profilePictureUrl ?? p.profilePicture,
        }
      }
   }
@@ -625,6 +629,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       wa_id: waId,
                       display_name: hasNewRealName ? e.contact.displayName : (byPhone.display_name ?? phone),
                       phone,
+                      profile_picture_url: e.contact?.profilePictureUrl,
                     })
                     .eq('id', byPhone.id)
                 }
@@ -640,6 +645,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     wa_id: waId,
                     display_name: e.contact?.displayName ?? phone ?? waId.replace(/@lid$/, ''),
                     phone,
+                    profile_picture_url: e.contact?.profilePictureUrl,
                   },
                   { onConflict: 'org_id,wa_id' },
                 )
@@ -672,6 +678,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     .from('contacts')
                     .update({
                       display_name: e.contact.displayName,
+                      profile_picture_url: e.contact?.profilePictureUrl,
                     })
                     .eq('id', contactId)
                 }

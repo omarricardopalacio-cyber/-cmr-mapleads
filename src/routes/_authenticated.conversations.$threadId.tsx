@@ -358,7 +358,18 @@ function ThreadPage() {
               <ArrowLeft className="h-4 w-4" />
             </Link>
           </Button>
-          <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium">
+          {data?.thread?.contact?.profilePictureUrl ? (
+            <img
+              src={data.thread.contact.profilePictureUrl}
+              alt={getContactDisplayName(data?.thread?.contact ?? null)}
+              className="h-10 w-10 rounded-full object-cover shrink-0"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                (e.currentTarget.nextElementSibling as HTMLElement)?.style.removeProperty('display');
+              }}
+            />
+          ) : null}
+          <div className={`h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium ${data?.thread?.contact?.profilePictureUrl ? 'hidden' : ''}`}>
             {getContactDisplayName(data?.thread?.contact ?? null).slice(0, 1).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">

@@ -149,7 +149,18 @@ function ConversationsLayout() {
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium shrink-0">
+                  {c?.profile_picture_url ? (
+                    <img
+                      src={c.profile_picture_url}
+                      alt={contactLabel}
+                      className="h-10 w-10 rounded-full object-cover shrink-0"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        (e.currentTarget.nextElementSibling as HTMLElement)?.style.removeProperty('display');
+                      }}
+                    />
+                  ) : null}
+                  <div className={`h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-medium shrink-0 ${c?.profile_picture_url ? 'hidden' : ''}`}>
                     {(contactLabel || "?").slice(0, 1).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
