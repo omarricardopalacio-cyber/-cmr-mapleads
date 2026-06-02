@@ -528,13 +528,6 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
   const b64 = (media.base64 || media.body || media.data) as string | undefined;
   if (typeof b64 !== "string" || b64.length <= CONSTANTS.MEDIA_INLINE_MAX_LEN) return event;
 
-  // DEBUG: Loguear valores raw del media antes de decidir mime
-  console.log("[SW MEDIA DEBUG] Raw media keys:", Object.keys(media));
-  console.log("[SW MEDIA DEBUG] mimetype:", media.mimetype);
-  console.log("[SW MEDIA DEBUG] mimeType:", media.mimeType);
-  console.log("[SW MEDIA DEBUG] mime_type:", media.mime_type);
-  console.log("[SW MEDIA DEBUG] type:", media.type);
-
   let mime = String(
     media.mimetype || media.mimeType || media.mime_type || "application/octet-stream"
   );
@@ -546,16 +539,10 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
     else if (msgType === "video") mime = "video/mp4";
     else if (msgType === "ptt" || msgType === "audio") mime = "audio/ogg";
     else if (msgType === "document") mime = "application/pdf";
-    console.log("[SW MEDIA DEBUG] Mime inferido por type:", mime);
   }
 
-  console.log("[SW MEDIA DEBUG] Final mime enviado a backend:", mime);
-  console.log("[SW MEDIA DEBUG] Base64 length:", b64.length);
-  console.log("[SW MEDIA DEBUG] Base64 first 100 chars:", b64.slice(0, 100));
   const uploaded = await uploadMediaToBackend(b64, mime, msgType);
   if (!uploaded?.url) return event;
-
-  console.log("[SW MEDIA DEBUG] Backend respondio mimeType:", uploaded.mimeType);
 
   const slimMedia: Record<string, unknown> = {
     ...media,

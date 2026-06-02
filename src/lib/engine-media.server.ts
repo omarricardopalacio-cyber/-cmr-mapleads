@@ -95,15 +95,11 @@ export async function uploadBase64ToStorage(
   const rawMime = options?.mimeType || "application/octet-stream";
   const { mimeType, base64String } = parseBase64Media(base64Raw, rawMime);
 
-  console.log("[uploadBase64ToStorage] rawMime:", rawMime, "parsed mimeType:", mimeType);
-  console.log("[uploadBase64ToStorage] base64String length:", base64String?.length);
-  console.log("[uploadBase64ToStorage] base64String first 50 chars:", base64String?.slice(0, 50));
-
   if (!base64String) return null;
 
-  const bytes = Buffer.from(base64String, "base64");
-  console.log("[uploadBase64ToStorage] Buffer length:", bytes.length);
-  console.log("[uploadBase64ToStorage] Buffer first 8 bytes:", bytes.slice(0, 8).toString("hex"));
+  // Usar atob + Uint8Array en lugar de Buffer.from para compatibilidad con serverless
+  const binaryString = atob(base64String);
+  const bytes = Uint8Array.from(binaryString, (m) => m.charCodeAt(0));
 
   if (!bytes.length) return null;
   if (bytes.length > MAX_MEDIA_BYTES) {
@@ -115,16 +111,10 @@ export async function uploadBase64ToStorage(
     options?.fileName || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const pathKey = `${orgId}/${fileName}`;
 
-  // Convertir Buffer de Node.js a Uint8Array para compatibilidad con Supabase en serverless
-  const fileData = new Uint8Array(bytes);
-  console.log("[uploadBase64ToStorage] Uint8Array length:", fileData.length);
-
   const { error: upErr } = await supabaseAdmin.storage
     .from("media")
-    .upload(pathKey, fileData, { contentType: mimeType, upsert: false });
+    .upload(pathKey, bytes, { contentType: mimeType, upsert: false });
   if (upErr) throw new Error(upErr.message);
-
-  console.log("[uploadBase64ToStorage] Upload success:", pathKey, "size:", bytes.length);
 
   const { data: urlData } = supabaseAdmin.storage.from("media").getPublicUrl(pathKey);
   return {
