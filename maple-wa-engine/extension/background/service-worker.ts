@@ -550,6 +550,8 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
   }
 
   console.log("[SW MEDIA DEBUG] Final mime enviado a backend:", mime);
+  console.log("[SW MEDIA DEBUG] Base64 length:", b64.length);
+  console.log("[SW MEDIA DEBUG] Base64 first 100 chars:", b64.slice(0, 100));
   const uploaded = await uploadMediaToBackend(b64, mime, msgType);
   if (!uploaded?.url) return event;
 
