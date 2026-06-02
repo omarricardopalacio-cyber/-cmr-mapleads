@@ -573,122 +573,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
         const meWaId = session.me_wa_id ?? null
         const normalized = events.map((ev) => normalizeEvent(ev, meWaId))
 
-        // ---- CONTACT_INFO: enriquece o fusiona contactos (waId + foto + nombre + teléfono) ----
-        const contactInfoEvents = events.filter(
-          (ev) => String(ev?.type || '').toUpperCase() === 'CONTACT_INFO',
-        )
-        for (const ev of contactInfoEvents) {
-          try {
-            const p: Record<string, any> = unwrapBridgePayload(ev)
-            const rawWaId = ev.chatId ?? p.waId ?? p.chatId
-            const waId = normalizeWaKey(rawWaId)
-            if (!waId) continue
-            const phone = p.phone ? digits(p.phone) : (!isLidKey(waId) ? digits(waId) : null)
-            const displayName =
-              typeof p.displayName === 'string' && p.displayName.trim()
-                ? p.displayName.trim()
-                : typeof p.pushname === 'string' && p.pushname.trim()
-                  ? p.pushname.trim()
-                  : null
-            const picUrl = typeof p.profilePictureUrl === 'string' ? p.profilePictureUrl : null
-            const isAnonName = (n?: string | null) =>
-              !n || n.startsWith('Cliente') || n.toLowerCase() === 'unknown' ||
-              n === phone || n === waId.replace(/@lid$/, '')
-            // 1) Buscar contacto existente por wa_id (el LID que ya guardamos)
-            const { data: byWa } = await supabaseAdmin
-              .from('contacts')
-              .select('id, wa_id, display_name, phone, profile_picture_url')
-              .eq('org_id', session.org_id)
-              .eq('wa_id', waId)
-              .maybeSingle()
-            // 2) Buscar contacto por phone (puede ser otro registro creado antes con @c.us)
-            let byPhone: any = null
-            if (phone) {
-              const { data } = await supabaseAdmin
-                .from('contacts')
-                .select('id, wa_id, display_name, phone, profile_picture_url')
-                .eq('org_id', session.org_id)
-                .eq('phone', phone)
-                .maybeSingle()
-              byPhone = data
-            }
-            // CASO A: existen ambos y son distintos => fusionar (LID → phone)
-            if (byWa && byPhone && byWa.id !== byPhone.id) {
-              // Mover threads del contacto LID al contacto phone (resolviendo posibles
-              // colisiones por unique session_id+contact_id)
-              const { data: lidThreads } = await supabaseAdmin
-                .from('threads')
-                .select('id, session_id')
-                .eq('contact_id', byWa.id)
-              for (const t of lidThreads ?? []) {
-                const { data: existingThread } = await supabaseAdmin
-                  .from('threads')
-                  .select('id')
-                  .eq('contact_id', byPhone.id)
-                  .eq('session_id', t.session_id)
-                  .maybeSingle()
-                if (existingThread) {
-                  await supabaseAdmin.from('messages').update({ thread_id: existingThread.id }).eq('thread_id', t.id)
-                  await supabaseAdmin.from('threads').delete().eq('id', t.id)
-                } else {
-                  await supabaseAdmin.from('threads').update({ contact_id: byPhone.id }).eq('id', t.id)
-                }
-              }
-              // Mover tags / mover relaciones simples
-              try {
-                await (supabaseAdmin as any).from('contact_tags').update({ contact_id: byPhone.id }).eq('contact_id', byWa.id)
-              } catch {}
-              try {
-                await (supabaseAdmin as any).from('notes').update({ contact_id: byPhone.id }).eq('contact_id', byWa.id)
-              } catch {}
-              try {
-                await (supabaseAdmin as any).from('reminders').update({ contact_id: byPhone.id }).eq('contact_id', byWa.id)
-              } catch {}
-              // Actualizar phone contact con el mejor dato
-              await supabaseAdmin.from('contacts').update({
-                display_name: !isAnonName(byPhone.display_name) ? byPhone.display_name : (displayName ?? byWa.display_name ?? byPhone.display_name),
-                profile_picture_url: picUrl ?? byPhone.profile_picture_url ?? byWa.profile_picture_url,
-              } as any).eq('id', byPhone.id)
-              // Borrar el LID huérfano
-              await supabaseAdmin.from('contacts').delete().eq('id', byWa.id)
-              continue
-            }
-            // CASO B: existe sólo por phone => actualizarlo con la mejor foto/nombre
-            if (!byWa && byPhone) {
-              const update: Record<string, any> = {}
-              if (picUrl && picUrl !== byPhone.profile_picture_url) update.profile_picture_url = picUrl
-              if (displayName && isAnonName(byPhone.display_name)) update.display_name = displayName
-              if (Object.keys(update).length) {
-                await supabaseAdmin.from('contacts').update(update as any).eq('id', byPhone.id)
-              }
-              continue
-            }
-            // CASO C: existe sólo por waId => añadir phone + foto + nombre real
-            if (byWa && !byPhone) {
-              const update: Record<string, any> = {}
-              if (phone && byWa.phone !== phone) update.phone = phone
-              if (picUrl && picUrl !== byWa.profile_picture_url) update.profile_picture_url = picUrl
-              if (displayName && isAnonName(byWa.display_name)) update.display_name = displayName
-              if (Object.keys(update).length) {
-                await supabaseAdmin.from('contacts').update(update as any).eq('id', byWa.id)
-              }
-              continue
-            }
-            // CASO D: no existe — sólo creamos si tenemos al menos phone o nombre útil
-            if (!byWa && !byPhone && (phone || displayName)) {
-              await supabaseAdmin.from('contacts').insert({
-                org_id: session.org_id,
-                wa_id: waId,
-                phone,
-                display_name: displayName ?? phone ?? waId.replace(/@lid$/, ''),
-                profile_picture_url: picUrl,
-              } as any)
-            }
-          } catch (err) {
-            console.warn('[ingest] CONTACT_INFO handler error:', (err as Error)?.message)
-          }
-        }
-
         for (const e of normalized) {
           try {
             if ((e.type === 'message-in' || e.type === 'message-out') && e.chatId) {
@@ -1131,6 +1015,122 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               '[ingest] events audit insert failed (non-fatal):',
               eventsErr instanceof Error ? eventsErr.message : eventsErr
             )
+          }
+        }
+
+        // ---- CONTACT_INFO: enriquece o fusiona contactos (waId + foto + nombre + teléfono) ----
+        const contactInfoEvents = events.filter(
+          (ev) => String(ev?.type || '').toUpperCase() === 'CONTACT_INFO',
+        )
+        for (const ev of contactInfoEvents) {
+          try {
+            const p: Record<string, any> = unwrapBridgePayload(ev)
+            const rawWaId = ev.chatId ?? p.waId ?? p.chatId
+            const waId = normalizeWaKey(rawWaId)
+            if (!waId) continue
+            const phone = p.phone ? digits(p.phone) : (!isLidKey(waId) ? digits(waId) : null)
+            const displayName =
+              typeof p.displayName === 'string' && p.displayName.trim()
+                ? p.displayName.trim()
+                : typeof p.pushname === 'string' && p.pushname.trim()
+                  ? p.pushname.trim()
+                  : null
+            const picUrl = typeof p.profilePictureUrl === 'string' ? p.profilePictureUrl : null
+            const isAnonName = (n?: string | null) =>
+              !n || n.startsWith('Cliente') || n.toLowerCase() === 'unknown' ||
+              n === phone || n === waId.replace(/@lid$/, '')
+            // 1) Buscar contacto existente por wa_id (el LID que ya guardamos)
+            const { data: byWa } = await supabaseAdmin
+              .from('contacts')
+              .select('id, wa_id, display_name, phone, profile_picture_url')
+              .eq('org_id', session.org_id)
+              .eq('wa_id', waId)
+              .maybeSingle()
+            // 2) Buscar contacto por phone (puede ser otro registro creado antes con @c.us)
+            let byPhone: any = null
+            if (phone) {
+              const { data } = await supabaseAdmin
+                .from('contacts')
+                .select('id, wa_id, display_name, phone, profile_picture_url')
+                .eq('org_id', session.org_id)
+                .eq('phone', phone)
+                .maybeSingle()
+              byPhone = data
+            }
+            // CASO A: existen ambos y son distintos => fusionar (LID → phone)
+            if (byWa && byPhone && byWa.id !== byPhone.id) {
+              // Mover threads del contacto LID al contacto phone (resolviendo posibles
+              // colisiones por unique session_id+contact_id)
+              const { data: lidThreads } = await supabaseAdmin
+                .from('threads')
+                .select('id, session_id')
+                .eq('contact_id', byWa.id)
+              for (const t of lidThreads ?? []) {
+                const { data: existingThread } = await supabaseAdmin
+                  .from('threads')
+                  .select('id')
+                  .eq('contact_id', byPhone.id)
+                  .eq('session_id', t.session_id)
+                  .maybeSingle()
+                if (existingThread) {
+                  await supabaseAdmin.from('messages').update({ thread_id: existingThread.id }).eq('thread_id', t.id)
+                  await supabaseAdmin.from('threads').delete().eq('id', t.id)
+                } else {
+                  await supabaseAdmin.from('threads').update({ contact_id: byPhone.id }).eq('id', t.id)
+                }
+              }
+              // Mover tags / mover relaciones simples
+              try {
+                await (supabaseAdmin as any).from('contact_tags').update({ contact_id: byPhone.id }).eq('contact_id', byWa.id)
+              } catch {}
+              try {
+                await (supabaseAdmin as any).from('notes').update({ contact_id: byPhone.id }).eq('contact_id', byWa.id)
+              } catch {}
+              try {
+                await (supabaseAdmin as any).from('reminders').update({ contact_id: byPhone.id }).eq('contact_id', byWa.id)
+              } catch {}
+              // Actualizar phone contact con el mejor dato
+              await supabaseAdmin.from('contacts').update({
+                display_name: !isAnonName(byPhone.display_name) ? byPhone.display_name : (displayName ?? byWa.display_name ?? byPhone.display_name),
+                profile_picture_url: picUrl ?? byPhone.profile_picture_url ?? byWa.profile_picture_url,
+              } as any).eq('id', byPhone.id)
+              // Borrar el LID huérfano
+              await supabaseAdmin.from('contacts').delete().eq('id', byWa.id)
+              continue
+            }
+            // CASO B: existe sólo por phone => actualizarlo con la mejor foto/nombre
+            if (!byWa && byPhone) {
+              const update: Record<string, any> = {}
+              if (picUrl && picUrl !== byPhone.profile_picture_url) update.profile_picture_url = picUrl
+              if (displayName && isAnonName(byPhone.display_name)) update.display_name = displayName
+              if (Object.keys(update).length) {
+                await supabaseAdmin.from('contacts').update(update as any).eq('id', byPhone.id)
+              }
+              continue
+            }
+            // CASO C: existe sólo por waId => añadir phone + foto + nombre real
+            if (byWa && !byPhone) {
+              const update: Record<string, any> = {}
+              if (phone && byWa.phone !== phone) update.phone = phone
+              if (picUrl && picUrl !== byWa.profile_picture_url) update.profile_picture_url = picUrl
+              if (displayName && isAnonName(byWa.display_name)) update.display_name = displayName
+              if (Object.keys(update).length) {
+                await supabaseAdmin.from('contacts').update(update as any).eq('id', byWa.id)
+              }
+              continue
+            }
+            // CASO D: no existe — sólo creamos si tenemos al menos phone o nombre útil
+            if (!byWa && !byPhone && (phone || displayName)) {
+              await supabaseAdmin.from('contacts').insert({
+                org_id: session.org_id,
+                wa_id: waId,
+                phone,
+                display_name: displayName ?? phone ?? waId.replace(/@lid$/, ''),
+                profile_picture_url: picUrl,
+              } as any)
+            }
+          } catch (err) {
+            console.warn('[ingest] CONTACT_INFO handler error:', (err as Error)?.message)
           }
         }
 

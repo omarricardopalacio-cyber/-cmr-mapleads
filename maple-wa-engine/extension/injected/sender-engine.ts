@@ -119,42 +119,39 @@ class SenderEngine {
       return { success: true, verifiedChatId: normalizedChatId };
     }
 
-    const queryExists = WPP.contact?.queryExists;
-    if (typeof queryExists !== "function") {
-      console.error("[MAPLE SENDER] WPP.contact.queryExists no disponible en esta versión de WA-JS");
-      return {
-        success: false,
-        error: "Motor WPP desactualizado para queryExists",
-      };
-    }
-
     console.log(`[MAPLE SENDER] Resolviendo LID de usuario para: ${normalizedChatId}`);
 
     try {
-      const result = await Promise.race([
-        queryExists.call(WPP.contact, normalizedChatId),
+      // Usar WPP.contact.get para obtener el contacto completo con su LID real
+      const contact = await Promise.race([
+        WPP.contact.get(normalizedChatId),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("LID_RESOLVE_TIMEOUT")), 10000)
         ),
       ]);
 
-      if (!result) {
-        console.warn("[MAPLE SENDER] queryExists retornó null para:", normalizedChatId, "- usando fallback");
+      if (!contact) {
+        console.warn("[MAPLE SENDER] contact.get retornó null para:", normalizedChatId, "- usando fallback");
         return { success: true, verifiedChatId: normalizedChatId };
       }
 
-      const verifiedChatId = this.extractVerifiedChatId(result, normalizedChatId);
-      console.log(
-        `[MAPLE SENDER] LID resuelto con éxito. JID Verificado de WhatsApp: ${verifiedChatId}`
-      );
+      // Extraer el wid del contacto (que es el LID real)
+      const wid = contact?.wid?._serialized || contact?.wid;
+      if (wid && typeof wid === "string" && wid.includes("@")) {
+        console.log(
+          `[MAPLE SENDER] LID resuelto con éxito. JID Verificado de WhatsApp: ${wid}`
+        );
+        return { success: true, verifiedChatId: wid };
+      }
 
-      return { success: true, verifiedChatId };
+      console.warn("[MAPLE SENDER] No se pudo extraer wid del contacto, usando fallback:", normalizedChatId);
+      return { success: true, verifiedChatId: normalizedChatId };
     } catch (lidErr: unknown) {
       const errMsg = lidErr instanceof Error ? lidErr.message : String(lidErr);
       if (errMsg.includes("LID_RESOLVE_TIMEOUT")) {
         console.warn("[MAPLE SENDER] Timeout resolviendo LID, usando fallback:", normalizedChatId);
       } else {
-        console.error("[MAPLE SENDER] Error consultando queryExists, aplicando fallback:", lidErr);
+        console.error("[MAPLE SENDER] Error consultando contact.get, aplicando fallback:", lidErr);
       }
       return { success: true, verifiedChatId: normalizedChatId };
     }
