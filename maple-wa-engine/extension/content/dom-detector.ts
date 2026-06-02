@@ -212,6 +212,36 @@ function parseMessageNode(node: HTMLElement): any {
   };
 }
 
+async function extractImageFromDom(node: HTMLElement): Promise<string | null> {
+  try {
+    const img = node.querySelector("img[src]");
+    if (!img) return null;
+
+    const src = img.getAttribute("src");
+    if (!src) return null;
+
+    // Si es un blob URL, convertir a base64
+    if (src.startsWith("blob:")) {
+      const resp = await fetch(src);
+      const blob = await resp.blob();
+      return new Promise<string | null>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    // Si es data URL, retornar directamente
+    if (src.startsWith("data:")) return src;
+
+    return null;
+  } catch (e) {
+    console.warn("[DOMDetector] Error extrayendo imagen del DOM:", e);
+    return null;
+  }
+}
+
 async function emitFromNode(node: HTMLElement) {
   const id = node.getAttribute?.("data-id");
   if (!id || SEEN.has(id)) return;
@@ -224,19 +254,19 @@ async function emitFromNode(node: HTMLElement) {
       return;
     }
 
-    // SOLO emitir mensajes de TEXTO desde DOMDetector.
-    // Los mensajes multimedia (imagen/video/audio) deben ser manejados exclusivamente
-    // por el EventEngine (injected script) que tiene acceso a WPP y puede descargar
-    // el base64 real. El DOMDetector no tiene acceso al base64 y crea duplicados
-    // con "Imagen" como texto plano y media vacía.
     const hasMedia = parsed.media.image || parsed.media.video || parsed.media.audio || parsed.media.document;
-    if (hasMedia) {
-      console.log("[DOMDetector] Saltando mensaje multimedia (lo manejará EventEngine):", id);
-      return;
+
+    // Para mensajes multimedia, intentar extraer la imagen del DOM renderizado
+    let mediaBase64: string | null = null;
+    if (hasMedia && parsed.media.image) {
+      mediaBase64 = await extractImageFromDom(node);
+      if (mediaBase64) {
+        console.log("[DOMDetector] Imagen extraída del DOM para:", id);
+      }
     }
 
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
-    const payload = {
+    const payload: any = {
       type: parsed.direction === "out" ? "message-out" : "message-in",
       chatId: parsed.chatId,
       waMessageId: parsed.id,
@@ -245,7 +275,16 @@ async function emitFromNode(node: HTMLElement) {
       sentAt: new Date().toISOString(),
     };
 
-    console.log("[DOMDetector] Mensaje de texto detectado:", evtType, parsed.text?.slice(0, 40));
+    // Si extrajimos la imagen del DOM, agregarla al payload
+    if (mediaBase64) {
+      payload.media = {
+        base64: mediaBase64,
+        mimetype: "image/jpeg",
+        type: "image",
+      };
+    }
+
+    console.log("[DOMDetector] Mensaje detectado:", evtType, hasMedia ? "(con media)" : "(texto)", parsed.text?.slice(0, 40));
 
     sendToBackground("WA_EVENT", {
       event: evtType,
