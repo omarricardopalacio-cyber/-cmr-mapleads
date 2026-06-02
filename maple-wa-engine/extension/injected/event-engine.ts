@@ -428,8 +428,8 @@ async function normalizeMessage(msg: any): Promise<any> {
   }
 
   const WPP = getWPP();
-  let realChatId = msg.id?.remote?._serialized;
-  let realFrom = msg.from?._serialized || msg.id?.remote?._serialized;
+  let realChatId = msg.id?.remote?._serialized || msg.id?._serialized;
+  let realFrom = msg.from?._serialized || msg.id?.remote?._serialized || msg.id?._serialized;
   let realTo = msg.to?._serialized;
 
   // Si son JIDs de tipo LID, resolver su número telefónico real (@c.us) para evitar duplicación y chats "sin número"
