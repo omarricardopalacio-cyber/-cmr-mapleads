@@ -140,6 +140,9 @@ async function downloadMediaFromStore(msgModel: any): Promise<any> {
  */
 async function blobUrlToBase64(blobUrl: string): Promise<string | null> {
   try {
+    if (blobUrl.startsWith("data:")) {
+      return blobUrl;
+    }
     const resp = await fetch(blobUrl);
     const blob = await resp.blob();
     return new Promise((resolve, reject) => {
@@ -177,10 +180,13 @@ export async function parseMessageNodeAsync(node: HTMLElement): Promise<any> {
   if (hasVideo) domMime = "video/mp4";
 
   // Intentar obtener la blob URL del DOM como alternativa
+  const img = node.querySelector('img[src^="blob:"], img[src^="data:"]') as HTMLImageElement | null;
+  const video = node.querySelector('video[src^="blob:"], video[src^="data:"], video[poster^="blob:"], video[poster^="data:"]') as HTMLVideoElement | null;
   let blobUrl: string | null = null;
   if (hasImage) {
-    const img = node.querySelector('img[src^="blob:"]') as HTMLImageElement | null;
     blobUrl = img?.src || null;
+  } else if (hasVideo) {
+    blobUrl = video?.currentSrc || video?.getAttribute("src") || video?.poster || null;
   }
 
   // 1. Intentar via Store
@@ -197,14 +203,15 @@ export async function parseMessageNodeAsync(node: HTMLElement): Promise<any> {
     try {
       const dataUri = await blobUrlToBase64(blobUrl);
       if (dataUri) {
-        // dataUri es "data:image/jpeg;base64,/9j/..."
+        const detectedMime =
+          dataUri.match(/^data:([^;]+);/i)?.[1] || domMime;
         return {
           id: dataId,
           hasMedia: true,
           mediaPayload: {
-            body: dataUri, // el ingest.ts sabe parsear data URIs
-            mimeType: domMime,
-            mimetype: domMime,
+            body: dataUri,
+            mimeType: detectedMime,
+            mimetype: detectedMime,
             caption: "",
           },
         };
