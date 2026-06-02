@@ -18,12 +18,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, X, ChevronUp, ChevronDown, ImagePlus, Link2, Clock } from "lucide-react";
-import { createClient } from "@supabase/supabase-js";
-
-// ─── Supabase browser client (for storage uploads) ───────────────
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-const supabaseBrowser = createClient(supabaseUrl, supabaseAnonKey);
+import { supabase as supabaseBrowser } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/_authenticated/auto-replies")({
   component: AutoRepliesPage,
