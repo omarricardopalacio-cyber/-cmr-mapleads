@@ -403,13 +403,13 @@ async function normalizeMessage(msg: any): Promise<any> {
 
       if (!base64Data) {
         console.warn("[MAPLE MULTIMEDIA] No se pudo obtener la multimedia tras reintentos para el mensaje:", msg.id?._serialized);
-        media.missing_media = true;
-        media.extraction_error = "timeout_after_retries";
+        console.log("[MAPLE MULTIMEDIA] NO enviando evento - DOMDetector se encargará de extraer del DOM");
+        return null; // No enviar evento, dejar que DOMDetector lo maneje
       }
     } catch (err) {
       console.error("[MAPLE MULTIMEDIA] Error general descargando media:", err);
-      media.missing_media = true;
-      media.extraction_error = "exception_during_download";
+      console.log("[MAPLE MULTIMEDIA] NO enviando evento - DOMDetector se encargará de extraer del DOM");
+      return null; // No enviar evento, dejar que DOMDetector lo maneje
     }
   }
 
