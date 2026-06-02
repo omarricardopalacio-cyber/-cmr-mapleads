@@ -256,14 +256,14 @@ async function normalizeMessage(msg: any): Promise<any> {
       let retries = isVideo ? 12 : 6;
 
       while (!base64Data && retries > 0) {
-        // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador
+        // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador (debe ser blob:)
         const possibleUrls = [
           msg.clientUrl,
           msg.mediaData?.clientUrl,
           msg.mediaData?.renderableUrl,
           msg.mediaData?.previewUrl,
           msg.deprecatedMms3Url,
-        ].filter((u): u is string => typeof u === "string" && (u.startsWith("blob:") || u.startsWith("https://mmg.whatsapp.net")));
+        ].filter((u): u is string => typeof u === "string" && u.startsWith("blob:"));
 
         for (const url of possibleUrls) {
           console.log("[MAPLE MULTIMEDIA] Intentando extraer desde URL:", url.substring(0, 60) + "...");
