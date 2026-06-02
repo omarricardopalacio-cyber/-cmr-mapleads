@@ -253,7 +253,7 @@ async function normalizeMessage(msg: any): Promise<any> {
       const WPP = getWPP();
       let base64Data: string | null = null;
       const isVideo = msg.type === "video";
-      let retries = isVideo ? 12 : 6;
+      let retries = isVideo ? 12 : 12; // Aumentado a 12 para imágenes también - más tiempo para descarga
 
       while (!base64Data && retries > 0) {
         // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador (debe ser blob:)
@@ -341,12 +341,17 @@ async function normalizeMessage(msg: any): Promise<any> {
                 else if (res.base64) base64Data = res.base64;
                 else if (res._blob) {
                   const blob = res._blob;
-                  base64Data = await new Promise<string | null>((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result as string);
-                    reader.onerror = () => reject(reader.error);
-                    reader.readAsDataURL(blob);
-                  });
+                  // Verificar que el Blob tenga contenido
+                  if (blob.size > 0) {
+                    base64Data = await new Promise<string | null>((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve(reader.result as string);
+                      reader.onerror = () => reject(reader.error);
+                      reader.readAsDataURL(blob);
+                    });
+                  } else {
+                    console.warn("[MAPLE MULTIMEDIA] WPP devolvió Blob vacío, reintentando...");
+                  }
                 } else if (res._arrayBuffer) {
                   const bytes = new Uint8Array(res._arrayBuffer);
                   let binary = "";
