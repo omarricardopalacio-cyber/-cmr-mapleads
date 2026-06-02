@@ -42,6 +42,36 @@ function emit(event: WAEventType, payload: any): void {
   postFromInjected("WA_EVENT", { event, payload });
 }
 
+/**
+ * Valida que un base64 contenga datos de imagen/video reales.
+ * Retorna los primeros bytes hex para diagnóstico.
+ */
+function validateBase64Media(base64Data: string): { valid: boolean; firstBytesHex: string; detectedType: string } {
+  try {
+    // Quitar prefijo data URI si existe
+    const clean = base64Data.replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "");
+    if (clean.length < 8) return { valid: false, firstBytesHex: "too_short", detectedType: "unknown" };
+
+    const binary = atob(clean);
+    const bytes = new Uint8Array(8);
+    for (let i = 0; i < 8; i++) bytes[i] = binary.charCodeAt(i);
+
+    const hex = [...bytes].map(b => b.toString(16).padStart(2, "0")).join(" ");
+
+    // Firmas mágicas
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8) return { valid: true, firstBytesHex: hex, detectedType: "image/jpeg" };
+    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) return { valid: true, firstBytesHex: hex, detectedType: "image/png" };
+    if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return { valid: true, firstBytesHex: hex, detectedType: "image/gif" };
+    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) return { valid: true, firstBytesHex: hex, detectedType: "image/webp" };
+    if (bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x00 && (bytes[3] === 0x18 || bytes[3] === 0x20) && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return { valid: true, firstBytesHex: hex, detectedType: "video/mp4" };
+    if (bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) return { valid: true, firstBytesHex: hex, detectedType: "video/webm" };
+
+    return { valid: false, firstBytesHex: hex, detectedType: "unknown/encrypted" };
+  } catch (e) {
+    return { valid: false, firstBytesHex: "decode_error", detectedType: "error" };
+  }
+}
+
 function registerNewMessage(WPP: NonNullable<typeof window.WPP>): void {
   const handler = async (...args: any[]) => {
     const msg = args[0];
@@ -333,16 +363,30 @@ async function normalizeMessage(msg: any): Promise<any> {
         }
 
         if (base64Data) {
-          const approxBytes = Math.ceil(base64Data.length * 0.75);
-          if (approxBytes > 20 * 1024 * 1024) {
-            console.warn(
-              "[MAPLE MULTIMEDIA] Archivo > 20MB; se enviará solo metadata (evita timeout en servidor)"
-            );
+          const validation = validateBase64Media(base64Data);
+          console.log("[MAPLE MULTIMEDIA] Base64 validación:", {
+            valid: validation.valid,
+            detectedType: validation.detectedType,
+            firstBytes: validation.firstBytesHex,
+            length: base64Data.length,
+            approxBytes: Math.ceil(base64Data.length * 0.75),
+          });
+
+          if (!validation.valid) {
+            console.warn("[MAPLE MULTIMEDIA] Base64 NO es una imagen válida. Probablemente datos encriptados o corruptos. Reintentando...");
+            base64Data = null; // Forzar reintento con otro método
           } else {
-            media.base64 = base64Data;
-            media.type = msg.type;
+            const approxBytes = Math.ceil(base64Data.length * 0.75);
+            if (approxBytes > 20 * 1024 * 1024) {
+              console.warn(
+                "[MAPLE MULTIMEDIA] Archivo > 20MB; se enviará solo metadata (evita timeout en servidor)"
+              );
+            } else {
+              media.base64 = base64Data;
+              media.type = msg.type;
+            }
+            break;
           }
-          break;
         }
 
         retries--;
