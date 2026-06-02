@@ -245,8 +245,6 @@ async function extractImageFromDom(node: HTMLElement): Promise<string | null> {
 async function emitFromNode(node: HTMLElement) {
   const id = node.getAttribute?.("data-id");
   if (!id || SEEN.has(id)) return;
-  SEEN.set(id, Date.now());
-  gc();
 
   try {
     const parsed = parseMessageNode(node);
@@ -256,14 +254,37 @@ async function emitFromNode(node: HTMLElement) {
 
     const hasMedia = parsed.media.image || parsed.media.video || parsed.media.audio || parsed.media.document;
 
-    // Para mensajes multimedia, intentar extraer la imagen del DOM renderizado
-    let mediaBase64: string | null = null;
-    if (hasMedia && parsed.media.image) {
-      mediaBase64 = await extractImageFromDom(node);
-      if (mediaBase64) {
-        console.log("[DOMDetector] Imagen extraída del DOM para:", id);
+    let mediaPayload: any = undefined;
+    if (hasMedia && (parsed.media.image || parsed.media.video || parsed.media.audio)) {
+      try {
+        const parser = (window as any).__engineParser;
+        if (parser && typeof parser.parseMessageNodeAsync === "function") {
+          const asyncParsed = await parser.parseMessageNodeAsync(node);
+          if (asyncParsed?.mediaPayload) {
+            mediaPayload = asyncParsed.mediaPayload;
+            console.log("[DOMDetector] Media extraído con parser:", {
+              id,
+              hasBody: !!mediaPayload.body,
+              mimeType: mediaPayload.mimeType || mediaPayload.mimetype,
+            });
+          }
+        }
+      } catch (parserErr) {
+        console.warn("[DOMDetector] Error extrayendo media con parser:", parserErr);
+      }
+
+      const mediaStillPending =
+        !mediaPayload ||
+        (!mediaPayload.body && !mediaPayload.data && !mediaPayload.base64 && !mediaPayload.url);
+
+      if (mediaStillPending) {
+        console.log("[DOMDetector] Media aún no listo, se reintentará en el próximo escaneo:", id);
+        return;
       }
     }
+
+    SEEN.set(id, Date.now());
+    gc();
 
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
     const payload: any = {
@@ -275,13 +296,8 @@ async function emitFromNode(node: HTMLElement) {
       sentAt: new Date().toISOString(),
     };
 
-    // Si extrajimos la imagen del DOM, agregarla al payload
-    if (mediaBase64) {
-      payload.media = {
-        base64: mediaBase64,
-        mimetype: "image/jpeg",
-        type: "image",
-      };
+    if (mediaPayload) {
+      payload.media = mediaPayload;
     }
 
     console.log("[DOMDetector] Mensaje detectado:", evtType, hasMedia ? "(con media)" : "(texto)", parsed.text?.slice(0, 40));

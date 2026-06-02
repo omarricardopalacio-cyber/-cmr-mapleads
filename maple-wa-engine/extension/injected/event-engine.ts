@@ -79,6 +79,7 @@ function registerNewMessage(WPP: NonNullable<typeof window.WPP>): void {
 
     try {
       const normalized = await normalizeMessage(msg);
+      if (!normalized) return;
       emit("NEW_MESSAGE", normalized);
     } catch (err) {
       console.error("[EventEngine] Error normalizando mensaje:", err);
