@@ -215,8 +215,6 @@ function parseMessageNode(node: HTMLElement): any {
 async function emitFromNode(node: HTMLElement) {
   const id = node.getAttribute?.("data-id");
   if (!id || SEEN.has(id)) return;
-  SEEN.set(id, Date.now());
-  gc();
 
   try {
     const parsed = parseMessageNode(node);
@@ -224,8 +222,7 @@ async function emitFromNode(node: HTMLElement) {
       return;
     }
 
-    // Si tiene media, intentar extraer el base64 usando el message-parser
-    let mediaPayload: any = parsed.media;
+    let mediaPayload: any = undefined;
     if (parsed.media.image || parsed.media.video || parsed.media.audio) {
       try {
         const parser = (window as any).__engineParser;
@@ -242,7 +239,19 @@ async function emitFromNode(node: HTMLElement) {
       } catch (parserErr) {
         console.warn("[DOMDetector] Error extrayendo media con parser:", parserErr);
       }
+
+      const mediaStillPending =
+        !mediaPayload ||
+        (!mediaPayload.body && !mediaPayload.data && !mediaPayload.base64 && !mediaPayload.url);
+
+      if (mediaStillPending) {
+        console.log("[DOMDetector] Media aún no listo, se reintentará en el próximo escaneo:", id);
+        return;
+      }
     }
+
+    SEEN.set(id, Date.now());
+    gc();
 
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
     const payload = {
