@@ -42,7 +42,12 @@ export function parseBase64Media(
   let mimeType = normalizeMimeType(fallbackMime || "application/octet-stream");
   const dataUriMatch = base64String.match(/^data:([^;]+);base64,(.+)$/i);
   if (dataUriMatch) {
-    mimeType = normalizeMimeType(dataUriMatch[1]);
+    const dataUriMime = normalizeMimeType(dataUriMatch[1]);
+    // Solo usar el mime del data URI si es específico.
+    // Si es genérico (application/octet-stream), respetar el fallback explícito.
+    if (dataUriMime && dataUriMime !== "application/octet-stream") {
+      mimeType = dataUriMime;
+    }
     base64String = dataUriMatch[2];
   }
   base64String = base64String.replace(/\s/g, "");

@@ -173,9 +173,9 @@ async function resolveMediaInServiceWorker(
     const newPayload = { ...payload };
     newPayload.media = dataUri;
     newPayload.mimeType =
+      (payload.mimetype as string) ||
       (payload.mimeType as string) ||
       (payload.mime_type as string) ||
-      (payload.mimetype as string) ||
       blob.type ||
       "application/octet-stream";
     delete newPayload.mediaUrl;
@@ -528,12 +528,32 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
   const b64 = (media.base64 || media.body || media.data) as string | undefined;
   if (typeof b64 !== "string" || b64.length <= CONSTANTS.MEDIA_INLINE_MAX_LEN) return event;
 
-  const mime = String(
+  // DEBUG: Loguear valores raw del media antes de decidir mime
+  console.log("[SW MEDIA DEBUG] Raw media keys:", Object.keys(media));
+  console.log("[SW MEDIA DEBUG] mimetype:", media.mimetype);
+  console.log("[SW MEDIA DEBUG] mimeType:", media.mimeType);
+  console.log("[SW MEDIA DEBUG] mime_type:", media.mime_type);
+  console.log("[SW MEDIA DEBUG] type:", media.type);
+
+  let mime = String(
     media.mimetype || media.mimeType || media.mime_type || "application/octet-stream"
   );
   const msgType = typeof media.type === "string" ? media.type : undefined;
+
+  // FIX: Si el mime sigue siendo genérico, inferir por tipo de mensaje
+  if (mime === "application/octet-stream" && msgType) {
+    if (msgType === "image") mime = "image/jpeg";
+    else if (msgType === "video") mime = "video/mp4";
+    else if (msgType === "ptt" || msgType === "audio") mime = "audio/ogg";
+    else if (msgType === "document") mime = "application/pdf";
+    console.log("[SW MEDIA DEBUG] Mime inferido por type:", mime);
+  }
+
+  console.log("[SW MEDIA DEBUG] Final mime enviado a backend:", mime);
   const uploaded = await uploadMediaToBackend(b64, mime, msgType);
   if (!uploaded?.url) return event;
+
+  console.log("[SW MEDIA DEBUG] Backend respondio mimeType:", uploaded.mimeType);
 
   const slimMedia: Record<string, unknown> = {
     ...media,
