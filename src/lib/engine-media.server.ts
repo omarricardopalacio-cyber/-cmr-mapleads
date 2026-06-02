@@ -140,6 +140,8 @@ export async function enrichMediaForMessage(
 ): Promise<Record<string, unknown> | null> {
   if (!media) return null;
 
+  console.log("[enrichMediaForMessage] Input media:", { hasBase64: !!media.base64, base64Len: media.base64?.length || 0, hasUrl: !!media.url, type: media.type });
+
   const existingUrl = (media.url || media.mediaUrl || media.fileUrl) as string | undefined;
   if (existingUrl && existingUrl.startsWith("http") && !existingUrl.startsWith("blob:")) {
     const rawMime = (media.mimetype || media.mimeType || media.mime_type || "") as string;
