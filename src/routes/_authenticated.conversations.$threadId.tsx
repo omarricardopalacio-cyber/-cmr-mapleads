@@ -509,17 +509,30 @@ function ThreadPage() {
             const mediaObj = (m.media as { url?: string; mimeType?: string; mime_type?: string; mimetype?: string; filename?: string; caption?: string; error?: string; missing_media?: boolean }) ?? null;
             
             // Log para diagnosticar mensajes entrantes con media
+            const debugMime = (mediaObj?.mimeType || mediaObj?.mime_type || mediaObj?.mimetype || "")?.toLowerCase();
+            const debugUrlStr = mediaObj?.url ?? '';
+            const debugMsgType = (m.media as any)?.type as string | undefined;
+            const debugInferred = !debugMime || debugMime === "application/octet-stream"
+              ? (debugUrlStr.match(/\.jpe?g$/i) ? 'image/jpeg'
+                : debugUrlStr.match(/\.png$/i) ? 'image/png'
+                : debugUrlStr.match(/\.mp4$/i) ? 'video/mp4'
+                : debugUrlStr.match(/\.bin$/i) && debugMsgType === 'image' ? 'image/jpeg'
+                : debugMime)
+              : debugMime;
+            const debugEffective = debugInferred || debugMime;
+            const debugIsImage = debugEffective.startsWith("image/") || !!(mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i)) || debugMsgType === "image";
             if (m.media && m.direction === 'in') {
               console.log('[MEDIA-DEBUG] Mensaje entrante con media:', {
                 id: m.id,
-                media: m.media,
                 url: (m.media as any)?.url,
                 mimeType: (m.media as any)?.mimeType,
                 mime_type: (m.media as any)?.mime_type,
                 mimetype: (m.media as any)?.mimetype,
+                type: debugMsgType,
+                effectiveMime: debugEffective,
+                isImage: debugIsImage,
                 missing_media: (m.media as any)?.missing_media,
                 error: (m.media as any)?.error,
-                keys: Object.keys(m.media as object),
               });
             }
             
