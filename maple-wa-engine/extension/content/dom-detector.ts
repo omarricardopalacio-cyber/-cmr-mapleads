@@ -184,6 +184,15 @@ function extractTimestamp(node: HTMLElement): string | null {
   return m ? m[1] : null;
 }
 
+function extractChatIdFromDataId(dataId: string): string | null {
+  // data-id format: true_573003918780@c.us_3EB0... or false_573...@g.us_3EB0...
+  const match = dataId.match(/^(true|false)_([^@]+@(c\.us|g\.us))_/);
+  if (match) {
+    return match[2]; // Returns: 573003918780@c.us or 573...@g.us
+  }
+  return null;
+}
+
 function parseMessageNode(node: HTMLElement): any {
   const dataId = node.getAttribute?.("data-id") || "";
   const dir = direction(node);
@@ -202,9 +211,19 @@ function parseMessageNode(node: HTMLElement): any {
   const hasDocument = !!node.querySelector('[data-icon="document"]') ||
                       !!node.querySelector('[data-testid*="document"]');
 
+  // Try to get chatId from sidebar first, fallback to data-id extraction
+  let chatId = getChatId();
+  if (chatId === "unknown" && dataId) {
+    const fromDataId = extractChatIdFromDataId(dataId);
+    if (fromDataId) {
+      chatId = fromDataId;
+      console.log("[DOMDetector] chatId extraído de data-id:", chatId);
+    }
+  }
+
   return {
     id: dataId,
-    chatId: getChatId(),
+    chatId,
     direction: dir,
     text,
     timestamp_label: tsLabel,
