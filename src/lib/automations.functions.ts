@@ -24,10 +24,15 @@ export const listAutoReplies = createServerFn({ method: "GET" })
     const orgId = await getUserOrg(context.userId);
     const { data } = await supabaseAdmin
       .from("auto_replies")
-      .select("*")
+      .select("*, auto_reply_steps(*)")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false });
-    return { rules: data ?? [] };
+    // Sort steps by step_order on the client side
+    const rules = (data ?? []).map((r: any) => ({
+      ...r,
+      steps: (r.auto_reply_steps ?? []).sort((a: any, b: any) => a.step_order - b.step_order),
+    }));
+    return { rules };
   });
 
 export const upsertAutoReply = createServerFn({ method: "POST" })
@@ -39,28 +44,64 @@ export const upsertAutoReply = createServerFn({ method: "POST" })
         name: z.string().min(1).max(100),
         match_type: z.enum(["contains", "equals", "starts", "regex"]),
         match_value: z.string().min(1).max(500),
-        reply_text: z.string().min(1).max(4000),
         is_active: z.boolean().default(true),
-        cooldown_seconds: z.number().int().min(0).max(86400).default(60),
-        session_id: z.string().uuid().nullable().optional(),
         trigger_type: z.enum(["keyword", "first_message_overall", "first_message_month"]).default("keyword"),
-        media_url: z.string().url().nullable().optional(),
-        mime_type: z.string().max(100).nullable().optional(),
+        session_id: z.string().uuid().nullable().optional(),
         action_add_tags: z.array(z.string().uuid()).nullable().optional(),
         action_remove_tags: z.array(z.string().uuid()).nullable().optional(),
         action_ai_behavior: z.enum(["no_change", "disable_ai", "enable_ai"]).default("no_change"),
+        chain_to_rule_id: z.string().uuid().nullable().optional(),
+        steps: z
+          .array(
+            z.object({
+              cooldown_seconds: z.number().int().min(0).max(2592000).default(0),
+              text_content: z.string().max(4000).nullable().optional(),
+              media_url: z.string().nullable().optional(),
+              mime_type: z.string().max(100).nullable().optional(),
+            })
+          )
+          .min(1),
       })
       .parse(d)
   )
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    const row = { ...data, org_id: orgId, created_by: context.userId };
+    const { steps, ...ruleData } = data;
+
+    // Upsert the rule itself
+    const ruleRow = {
+      ...ruleData,
+      org_id: orgId,
+      created_by: context.userId,
+    };
     const { data: result, error } = await supabaseAdmin
       .from("auto_replies")
-      .upsert(row)
+      .upsert(ruleRow)
       .select()
       .single();
     if (error) throw new Error(error.message);
+
+    // Delete existing steps and reinsert in order
+    await supabaseAdmin
+      .from("auto_reply_steps")
+      .delete()
+      .eq("rule_id", result.id);
+
+    const stepRows = steps.map((s, i) => ({
+      rule_id: result.id,
+      org_id: orgId,
+      step_order: i,
+      cooldown_seconds: s.cooldown_seconds ?? 0,
+      text_content: s.text_content ?? null,
+      media_url: s.media_url ?? null,
+      mime_type: s.mime_type ?? null,
+    }));
+
+    const { error: stepsErr } = await supabaseAdmin
+      .from("auto_reply_steps")
+      .insert(stepRows);
+    if (stepsErr) throw new Error(stepsErr.message);
+
     return { rule: result };
   });
 
