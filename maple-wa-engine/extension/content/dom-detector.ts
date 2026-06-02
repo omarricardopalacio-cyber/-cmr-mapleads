@@ -261,6 +261,37 @@ async function extractImageFromDom(node: HTMLElement): Promise<string | null> {
   }
 }
 
+async function resolveLidToPhone(lid: string): Promise<string | null> {
+  try {
+    const parser = (window as any).__engineParser;
+    if (!parser) return null;
+
+    // Try to find the message in WPP's store using the LID
+    const msgModel = parser.findMsgModelInStore?.(lid);
+    if (msgModel && msgModel.id?.remote?._serialized) {
+      const remoteId = msgModel.id.remote._serialized;
+      // If it's already a phone number, return it
+      if (!remoteId.endsWith('@lid')) {
+        return remoteId;
+      }
+      // If it's a LID, try to resolve it
+      const WPP = (window as any).WPP;
+      if (WPP) {
+        const wid = WPP.whatsapp.WidFactory.createWid(remoteId);
+        if (wid) {
+          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
+          if (numObj && numObj._serialized) {
+            return numObj._serialized;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[DOMDetector] Error resolviendo LID:", lid, err);
+  }
+  return null;
+}
+
 async function emitFromNode(node: HTMLElement) {
   const id = node.getAttribute?.("data-id");
   if (!id || SEEN.has(id)) return;
@@ -269,6 +300,18 @@ async function emitFromNode(node: HTMLElement) {
     const parsed = parseMessageNode(node);
     if (!parsed || (!parsed.text && !parsed.media.image && !parsed.media.audio && !parsed.media.video && !parsed.media.document)) {
       return;
+    }
+
+    // Resolve chatId if it's a pure LID
+    if (parsed.chatId === "unknown" && id) {
+      const isPureLid = !id.includes('@') && id.length > 10 && /^[A-F0-9]+$/.test(id);
+      if (isPureLid) {
+        const resolvedPhone = await resolveLidToPhone(id);
+        if (resolvedPhone) {
+          parsed.chatId = resolvedPhone;
+          console.log("[DOMDetector] chatId resuelto desde LID:", resolvedPhone);
+        }
+      }
     }
 
     const hasMedia = parsed.media.image || parsed.media.video || parsed.media.audio || parsed.media.document;
