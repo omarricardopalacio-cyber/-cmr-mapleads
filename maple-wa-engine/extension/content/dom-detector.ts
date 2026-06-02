@@ -14,7 +14,6 @@ let active = false;
 let lastScan = Date.now();
 
 // Selectores actualizados para WhatsApp Web (2025-2026)
-// Incluye soporte para LIDs puros después de borrar chats
 const MSG_SELECTORS = [
   '[data-testid="msg-container"]',
   'div.message-out',
@@ -22,9 +21,6 @@ const MSG_SELECTORS = [
   'div[data-id*="false_"]',
   'div[data-id*="true_"]',
   '[role="row"] div[data-id]',
-  // Selectores para LIDs puros (ej: 3EB0A8FB8336EA9E8A39B0)
-  'div[data-id]',
-  '[data-id]',
 ];
 
 const PANEL_SELECTORS = [
@@ -275,15 +271,6 @@ async function emitFromNode(node: HTMLElement) {
       return;
     }
 
-    // Extract phone number from full data-id format if available (ej: false_21917838930175@lid_3EB0...)
-    if (parsed.chatId === "unknown" && id) {
-      const match = id.match(/_(\d+)@lid_/);
-      if (match && match[1]) {
-        parsed.chatId = `${match[1]}@c.us`;
-        console.log("[DOMDetector] chatId extraído de data-id:", parsed.chatId);
-      }
-    }
-
     const hasMedia = parsed.media.image || parsed.media.video || parsed.media.audio || parsed.media.document;
 
     let mediaPayload: any = undefined;
@@ -361,14 +348,13 @@ async function emitFromNode(node: HTMLElement) {
 
 function scanAll(): number {
   // ESTRATEGIA AGRESIVA: buscar TODOS los elementos con data-id que parezcan mensajes de WA
-  const allWithId = document.querySelectorAll('[data-id*="true_"], [data-id*="false_"], [data-id]');
+  const allWithId = document.querySelectorAll('[data-id*="true_"], [data-id*="false_"]');
   const unique = new Map<string, HTMLElement>();
   for (const n of allWithId) {
     if (n instanceof HTMLElement) {
       const id = n.getAttribute?.("data-id") || "";
       // Los IDs de mensajes de WA son como: true_573003918780@c.us_3EB0... o false_573..._3EB0...
-      // O después de borrar chats: solo el LID puro (ej: 3EB0A8FB8336EA9E8A39B0)
-      if (id && (id.includes("true_") || id.includes("false_") || (/^[A-F0-9]{20,}$/.test(id)))) {
+      if (id && (id.includes("true_") || id.includes("false_"))) {
         unique.set(id, n);
       }
     }
@@ -420,16 +406,13 @@ function attach(): boolean {
       for (const node of m.addedNodes) {
         if (!(node instanceof HTMLElement)) continue;
         // Verificar si el nodo o sus hijos son mensajes
-        // Incluye soporte para LIDs puros (sin _)
-        const candidates = [];
-        if (node.matches?.('[data-id]')) candidates.push(node);
-        node.querySelectorAll?.('[data-id]').forEach((child) => {
+        const candidates = node.matches?.('[data-id*="_"]') ? [node] : [];
+        node.querySelectorAll?.('[data-id*="_"]').forEach((child) => {
           if (child instanceof HTMLElement) candidates.push(child);
         });
         for (const cand of candidates) {
           const id = cand.getAttribute?.("data-id");
-          // Aceptar IDs con formato completo (false_123@c.us_3EB0...) o LIDs puros (3EB0...)
-          if (id && (id.includes("_") || /^[A-F0-9]{20,}$/.test(id)) && !SEEN.has(id)) {
+          if (id && id.includes("_") && !SEEN.has(id)) {
             emitFromNode(cand);
             newMessages = true;
           }
