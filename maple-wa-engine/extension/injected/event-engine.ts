@@ -434,6 +434,13 @@ async function normalizeMessage(msg: any): Promise<any> {
 
   // Si son JIDs de tipo LID, resolver su número telefónico real (@c.us) para evitar duplicación y chats "sin número"
   if (WPP) {
+    // Detectar LIDs puros (sin @lid suffix) y convertirlos al formato esperado
+    const isPureLid = realChatId && !realChatId.includes('@') && realChatId.length > 10 && /^[A-F0-9]+$/.test(realChatId);
+    if (isPureLid) {
+      realChatId = `${realChatId}@lid`;
+      console.log("[EventEngine] LID puro detectado, convertido a formato @lid:", realChatId);
+    }
+
     if (realChatId && realChatId.endsWith("@lid")) {
       try {
         const wid = createWidSafely(WPP, realChatId);
@@ -443,6 +450,7 @@ async function normalizeMessage(msg: any): Promise<any> {
           const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
           if (numObj && numObj._serialized) {
             realChatId = numObj._serialized;
+            console.log("[EventEngine] Número resuelto desde LID:", realChatId);
           }
         }
       } catch (err) {
