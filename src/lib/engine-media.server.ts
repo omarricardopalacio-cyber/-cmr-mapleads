@@ -98,8 +98,15 @@ export async function uploadBase64ToStorage(
   if (!base64String) return null;
 
   // Usar atob + Uint8Array en lugar de Buffer.from para compatibilidad con serverless
-  const binaryString = atob(base64String);
+  let binaryString: string;
+  try {
+    binaryString = atob(base64String);
+  } catch (e: any) {
+    console.error("[uploadBase64ToStorage] atob failed:", e.message);
+    return null;
+  }
   const bytes = Uint8Array.from(binaryString, (m) => m.charCodeAt(0));
+  console.log("[uploadBase64ToStorage] Decoded bytes:", bytes.length, "First 4 bytes:", [...bytes.slice(0, 4)].map(b => b.toString(16).padStart(2, '0')).join(' '));
 
   if (!bytes.length) return null;
   if (bytes.length > MAX_MEDIA_BYTES) {
