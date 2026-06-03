@@ -742,11 +742,25 @@ function ThreadPage() {
                   onClick={async () => {
                     setSending(true);
                     try {
+                      let finalSchedMsg = schedMsg.trim();
+                      let mediaUrl = null;
+                      let mimeType = null;
+
+                      if (finalSchedMsg.startsWith("/")) {
+                        const shortcut = finalSchedMsg.split(" ")[0].slice(1);
+                        const qr = (qrData?.items ?? []).find((r: { shortcut?: string }) => r.shortcut === shortcut);
+                        if (qr) {
+                          finalSchedMsg = qr.text_content || "";
+                          mediaUrl = qr.media_url || null;
+                          mimeType = qr.mime_type || null;
+                        }
+                      }
+
                       const isoDate = new Date(schedDate).toISOString();
                       const waId = (data as any)?.thread?.contact?.wa_id;
                       const sessionId = (data as any)?.thread?.session_id;
                       if (!waId || !sessionId) throw new Error("Faltan datos del cliente o sesión");
-                      await createSched({ data: { session_id: sessionId, wa_id: waId, text: schedMsg, send_at: isoDate } });
+                      await createSched({ data: { session_id: sessionId, wa_id: waId, text: finalSchedMsg, send_at: isoDate, media_url: mediaUrl, mime_type: mimeType } });
                       toast.success("Mensaje programado con éxito");
                       setShowSched(false);
                       setSchedMsg("");

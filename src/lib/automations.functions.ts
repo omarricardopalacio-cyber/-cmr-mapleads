@@ -183,6 +183,8 @@ export const createScheduled = createServerFn({ method: "POST" })
         wa_id: z.string().min(1).max(64),
         text: z.string().min(1).max(4000),
         send_at: z.string().datetime(),
+        media_url: z.string().nullable().optional(),
+        mime_type: z.string().max(100).nullable().optional(),
       })
       .parse(d)
   )
