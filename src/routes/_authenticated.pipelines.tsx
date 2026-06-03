@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getPipelineStages, updateContactStage, listContacts } from "@/lib/crm.functions";
@@ -11,6 +11,9 @@ import { toast } from "sonner";
 import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/pipelines")({
+  beforeLoad: () => {
+    throw redirect({ to: "/dashboard" });
+  },
   component: PipelinesPage,
 });
 

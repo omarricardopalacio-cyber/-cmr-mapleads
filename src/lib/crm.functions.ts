@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
 import { z } from "zod";
+import { triggerFlows } from "./flow-trigger.server";
 
 export const getDashboardStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -106,6 +107,11 @@ export const updateContactStage = createServerFn({ method: "POST" })
       .eq("id", data.contactId)
       .eq("org_id", orgId);
     if (error) throw new Error(error.message);
+    
+    if (data.stageId) {
+      triggerFlows({ orgId, contactId: data.contactId, triggerType: "stage_changed", triggerValue: data.stageId }).catch(console.error);
+    }
+    
     return { success: true };
   });
 

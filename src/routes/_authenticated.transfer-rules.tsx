@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
@@ -26,6 +26,9 @@ interface TransferRule {
 }
 
 export const Route = createFileRoute("/_authenticated/transfer-rules")({
+  beforeLoad: () => {
+    throw redirect({ to: "/dashboard" });
+  },
   component: TransferRulesPage,
 });
 

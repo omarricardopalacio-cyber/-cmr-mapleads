@@ -55,7 +55,7 @@ function AppSidebar() {
 
   const aiConfig = [
     { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
-    { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
+    // { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
     { title: "Integración Catálogo", url: "/catalog-integration", icon: Store },
   ];
 
@@ -65,7 +65,7 @@ function AppSidebar() {
 
   const system = [
     { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
-    { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
+    // { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
     { title: "Integraciones IA", url: "/integrations", icon: Sparkles },
   ];
 

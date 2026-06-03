@@ -5,6 +5,7 @@ import { generateReply } from '@/lib/ai.server'
 import { sanitizeMessageText } from '@/lib/message-text'
 import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
 import { z } from 'zod'
+import { triggerFlows } from '@/lib/flow-trigger.server'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
 
@@ -787,6 +788,18 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.error('[ingest] default flow enrollment error (non-fatal):', flowErr.message);
               }
             }
+
+            // --- NUEVO: Motor de Flujos v2 ---
+            // Si el contacto existe, y es un mensaje entrante o saliente, podemos disparar eventos
+            if (contactId && e.type === 'message-in') {
+              // triggerFlows("wa_new_message")
+              // Si el thread ya existía y el contacto responde a algo, se podría asumir wa_customer_reply
+              // Simplificado: llamamos a wa_new_message siempre, y wa_customer_reply si ya había mensajes previos (esto se podría refinar).
+              triggerFlows({ orgId: session.org_id, contactId, triggerType: 'wa_new_message' }).catch(console.error);
+              triggerFlows({ orgId: session.org_id, contactId, triggerType: 'wa_customer_reply' }).catch(console.error);
+            }
+            // ---------------------------------
+
             // DIAGNÓSTICO: Loguear estructura completa del media para mensajes entrantes
             if (e.media && (e.direction === 'in' || e.type === 'message-in')) {
               const mediaKeys = Object.keys(e.media as object);

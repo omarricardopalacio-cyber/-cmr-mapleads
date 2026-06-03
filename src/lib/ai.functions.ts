@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { generateReply } from "./ai.server";
+import { triggerFlows } from "./flow-trigger.server";
 
 async function getUserOrg(userId: string) {
   const { data } = await supabaseAdmin
@@ -101,4 +102,23 @@ export const listAiActions = createServerFn({ method: "GET" })
       .limit(50);
     if (error) throw new Error(error.message);
     return { logs: (logs ?? []) as Array<{ id: string; action_name: string; action_details: string; created_at: string }> };
+  });
+
+export const toggleContactAi = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ threadId: z.string().uuid(), contactId: z.string().uuid(), enabled: z.boolean() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { error } = await supabaseAdmin
+      .from("threads")
+      .update({ ai_enabled: data.enabled })
+      .eq("id", data.threadId)
+      .eq("org_id", orgId);
+    if (error) throw new Error(error.message);
+    
+    // Disparar flujos (ai_enabled / ai_disabled)
+    const triggerType = data.enabled ? "ai_enabled" : "ai_disabled";
+    triggerFlows({ orgId, contactId: data.contactId, triggerType }).catch(console.error);
+    
+    return { success: true };
   });

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { triggerFlows } from "./flow-trigger.server";
 
 async function getUserOrg(userId: string) {
   const { data } = await supabaseAdmin
@@ -106,6 +107,12 @@ export const addContactTag = createServerFn({ method: "POST" })
       .from("contact_tags")
       .insert({ contact_id: data.contactId, tag_id: data.tagId });
     if (error && error.code !== "23505") throw new Error(error.message);
+    
+    // Disparar flujos (tag_added)
+    if (!error || error.code === "23505") { // Si se insertó o ya existía, podríamos dispararlo (o solo si se insertó).
+      triggerFlows({ orgId, contactId: data.contactId, triggerType: "tag_added", triggerValue: data.tagId }).catch(console.error);
+    }
+    
     return { success: true };
   });
 
@@ -123,6 +130,10 @@ export const removeContactTag = createServerFn({ method: "POST" })
       .eq("contact_id", data.contactId)
       .eq("tag_id", data.tagId);
     if (error) throw new Error(error.message);
+    
+    // Disparar flujos (tag_removed)
+    triggerFlows({ orgId, contactId: data.contactId, triggerType: "tag_removed", triggerValue: data.tagId }).catch(console.error);
+    
     return { success: true };
   });
 

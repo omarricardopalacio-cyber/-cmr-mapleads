@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { z } from "zod";
 import { normalizePhone } from "@/lib/leads.functions";
+import { triggerFlows } from "@/lib/flow-trigger.server";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -175,12 +176,15 @@ export const Route = createFileRoute("/api/public/mapleads/ingest")({
         let inserted = 0;
         let duplicated = 0;
         for (const row of rows) {
-          const { error } = await supabaseAdmin.from("leads").insert(row);
+          const { data: insertedLead, error } = await supabaseAdmin.from("leads").insert(row).select("id").single();
           if (error) {
             if (/duplicate key/i.test(error.message)) duplicated++;
             else console.error("[mapleads ingest]", error.message);
           } else {
             inserted++;
+            if (insertedLead?.id) {
+              triggerFlows({ orgId: tokenRow.user_id, contactId: insertedLead.id, triggerType: "mapleads_new_prospect" }).catch(console.error);
+            }
           }
         }
 
