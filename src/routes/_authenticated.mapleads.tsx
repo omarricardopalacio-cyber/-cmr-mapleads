@@ -140,7 +140,14 @@ function MapleadsContent() {
 
       {/* Bloque de conexión a la extensión */}
       <Card className="p-4 space-y-3">
-        <h3 className="font-medium text-sm">Configuración de la extensión Mapleads</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-medium text-sm">Configuración de la extensión Mapleads</h3>
+          <Button variant="default" size="sm" asChild>
+            <a href="/mapleads-extension.zip" download>
+              <Download className="h-4 w-4 mr-1" /> Descargar extensión
+            </a>
+          </Button>
+        </div>
         <div className="grid md:grid-cols-2 gap-3">
           <div className="space-y-1">
             <Label className="text-xs">Backend URL (cópialo en la extensión)</Label>
