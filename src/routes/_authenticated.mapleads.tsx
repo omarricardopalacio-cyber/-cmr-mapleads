@@ -9,6 +9,9 @@ import {
   deleteLead,
   getOrCreateIngestToken,
   rotateIngestToken,
+  fixLeadNumbers,
+  deleteLocalLeadNumbers,
+  isMobilePhone,
 } from "@/lib/leads.functions";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +34,7 @@ import {
   Copy,
   CheckCircle,
   Search,
+  Wrench,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/mapleads")({
@@ -53,6 +57,8 @@ function MapleadsContent() {
   const deleteFn = useServerFn(deleteLead);
   const tokenFn = useServerFn(getOrCreateIngestToken);
   const rotateFn = useServerFn(rotateIngestToken);
+  const fixFn = useServerFn(fixLeadNumbers);
+  const deleteLocalFn = useServerFn(deleteLocalLeadNumbers);
 
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -125,9 +131,27 @@ function MapleadsContent() {
         <p className="text-sm text-muted-foreground">
           Leads recopilados desde Google Maps por la extensión Mapleads.
         </p>
-        <Button variant="outline" size="sm" onClick={handleDownloadCsv}>
-          <Download className="h-4 w-4 mr-1" /> Exportar CSV
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={async () => {
+            if (!confirm("¿Arreglar todos los números móviles (quitar espacios y agregar 57)?")) return;
+            const res = await fixFn({});
+            qc.invalidateQueries({ queryKey: ["leads"] });
+            toast.success(`Se arreglaron ${res.updatedCount} números`);
+          }}>
+            <Wrench className="h-4 w-4 mr-1" /> Arreglar números
+          </Button>
+          <Button variant="outline" size="sm" onClick={async () => {
+            if (!confirm("¿Eliminar todos los números locales que no sirven para WhatsApp?")) return;
+            const res = await deleteLocalFn({});
+            qc.invalidateQueries({ queryKey: ["leads"] });
+            toast.success(`Se eliminaron ${res.deletedCount} números locales`);
+          }}>
+            <Trash2 className="h-4 w-4 mr-1 text-red-500" /> Eliminar locales
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleDownloadCsv}>
+            <Download className="h-4 w-4 mr-1" /> Exportar CSV
+          </Button>
+        </div>
       </div>
 
       {/* Totales */}
@@ -307,14 +331,16 @@ function MapleadsContent() {
                   </td>
                 </tr>
               )}
-              {data?.items.map((l: any) => (
-                <tr key={l.id} className="border-t hover:bg-muted/40">
-                  <td className="p-2 font-medium">{l.name || "—"}</td>
-                  <td className="p-2 font-mono text-xs">{l.phone || "—"}</td>
-                  <td className="p-2">{l.city || "—"}</td>
-                  <td className="p-2 text-xs text-muted-foreground">
-                    {l.category || l.maps_category || "—"}
-                  </td>
+              {data?.items.map((l: any) => {
+                const local = !isMobilePhone(l.phone) && !!l.phone;
+                return (
+                  <tr key={l.id} className="border-t hover:bg-muted/40">
+                    <td className="p-2 font-medium">{l.name || "—"}</td>
+                    <td className={`p-2 font-mono text-xs ${local ? "text-red-500 font-semibold" : ""}`}>{l.phone || "—"}</td>
+                    <td className="p-2">{l.city || "—"}</td>
+                    <td className="p-2 text-xs text-muted-foreground">
+                      {l.category || l.maps_category || "—"}
+                    </td>
                   <td className="p-2 text-xs">
                     {l.scraped_at
                       ? new Date(l.scraped_at).toLocaleDateString()
@@ -353,7 +379,8 @@ function MapleadsContent() {
                     </Button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

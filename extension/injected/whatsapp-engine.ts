@@ -72,11 +72,13 @@ async function handleCommands(event: MessageEvent): Promise<void> {
 
   try {
     switch (cmdEvent) {
-      case "SEND_MESSAGE": {
+      case "SEND_MESSAGE":
+      case "SEND_MEDIA": {
+        const mediaData = payload.media || payload.base64 || payload.mediaUrl;
         const sendResult = await senderEngine.send({
           chatId: payload.chatId,
           text: payload.text,
-          media: payload.media,
+          media: mediaData,
           caption: payload.caption,
           quotedMsgId: payload.quotedMsgId,
           options: payload.options,

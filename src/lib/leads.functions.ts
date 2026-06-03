@@ -10,6 +10,12 @@ export function normalizePhone(raw: string | null | undefined): string {
   return cleaned.replace(/^00/, "+");
 }
 
+export function isMobilePhone(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  const cleaned = String(raw).replace(/\D/g, "");
+  return (cleaned.length === 10 && cleaned.startsWith("3")) || (cleaned.length === 12 && cleaned.startsWith("573"));
+}
+
 // ============== TOKEN ==============
 export const getOrCreateIngestToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -149,6 +155,73 @@ export const deleteLead = createServerFn({ method: "POST" })
       .eq("user_id", userId);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+// ============== ARREGLAR NÚMEROS ==============
+export const fixLeadNumbers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+    const { data: leads, error } = await supabase
+      .from("leads")
+      .select("id, phone")
+      .eq("user_id", userId)
+      .neq("phone", "");
+    if (error) throw new Error(error.message);
+
+    let updatedCount = 0;
+    for (const lead of leads ?? []) {
+      if (!lead.phone) continue;
+      const cleaned = lead.phone.replace(/\D/g, "");
+      if (cleaned.length === 10 && cleaned.startsWith("3")) {
+        const newPhone = "57" + cleaned;
+        await supabase
+          .from("leads")
+          .update({ phone: newPhone, phone_normalized: newPhone })
+          .eq("id", lead.id);
+        updatedCount++;
+      } else if (lead.phone !== cleaned && cleaned.length === 12 && cleaned.startsWith("573")) {
+        await supabase
+          .from("leads")
+          .update({ phone: cleaned, phone_normalized: cleaned })
+          .eq("id", lead.id);
+        updatedCount++;
+      }
+    }
+    return { ok: true, updatedCount };
+  });
+
+// ============== ELIMINAR NÚMEROS LOCALES ==============
+export const deleteLocalLeadNumbers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+    const { data: leads, error } = await supabase
+      .from("leads")
+      .select("id, phone")
+      .eq("user_id", userId)
+      .neq("phone", "");
+    if (error) throw new Error(error.message);
+
+    const idsToDelete: string[] = [];
+    for (const lead of leads ?? []) {
+      if (!isMobilePhone(lead.phone)) {
+        idsToDelete.push(lead.id);
+      }
+    }
+
+    if (idsToDelete.length > 0) {
+      const chunkSize = 100;
+      for (let i = 0; i < idsToDelete.length; i += chunkSize) {
+        const chunk = idsToDelete.slice(i, i + chunkSize);
+        await supabase
+          .from("leads")
+          .delete()
+          .in("id", chunk)
+          .eq("user_id", userId);
+      }
+    }
+    return { ok: true, deletedCount: idsToDelete.length };
   });
 
 // ============== Teléfonos no enviados (para Campañas Masivas) ==============
