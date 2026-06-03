@@ -58,7 +58,7 @@ export function storagePathFromMediaUrl(url: string): string | null {
 
 export async function convertUrlToBase64(url: string): Promise<{ base64: string; mimeType: string }> {
   const safe = assertSafeUrl(url);
-  const response = await fetch(safe.toString(), { redirect: "error" });
+  const response = await fetch(safe.toString(), { redirect: "follow" });
   if (!response.ok) throw new Error(`Failed to fetch media: ${response.status}`);
   const lenHeader = response.headers.get("content-length");
   if (lenHeader && Number(lenHeader) > MAX_MEDIA_BYTES) {

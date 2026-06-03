@@ -75,6 +75,8 @@ function BroadcastContent() {
       ? form.wa_ids_raw.split(/[\s,;\n]+/).map((s) => s.trim()).filter(Boolean)
       : undefined;
     if (mode === "manual" && (!wa_ids || !wa_ids.length)) { toast.error("Agrega destinatarios"); return; }
+    if (!form.message_text.trim() && !form.media_url) { toast.error("Escribe un mensaje o adjunta una imagen"); return; }
+    if (!form.session_id) { toast.error("Selecciona una sesión de WhatsApp"); return; }
     try {
       await create({
         data: {
@@ -131,7 +133,7 @@ function BroadcastContent() {
               ))}
             </SelectContent>
           </Select>
-          <Textarea placeholder="Mensaje de la campaña" value={form.message_text} onChange={(e) => setForm({ ...form, message_text: e.target.value })} required />
+          <Textarea placeholder="Mensaje de la campaña (opcional si adjuntas imagen)" value={form.message_text} onChange={(e) => setForm({ ...form, message_text: e.target.value })} />
           <div className="space-y-2 border rounded-md p-3 bg-muted/20">
             <Label className="text-xs flex items-center gap-1"><Paperclip className="h-3 w-3" /> Adjuntar media (opcional)</Label>
             <Select value={mediaType} onValueChange={(v: any) => setMediaType(v)}>

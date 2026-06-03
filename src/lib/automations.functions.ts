@@ -232,7 +232,7 @@ export const createBroadcast = createServerFn({ method: "POST" })
       .object({
         session_id: z.string().uuid(),
         name: z.string().min(1).max(100),
-        message_text: z.string().min(1).max(4000),
+        message_text: z.string().max(4000).default(""),
         rate_per_minute: z.number().int().min(1).max(60).default(15),
         tag_id: z.string().uuid().nullable().optional(),
         audience: z.enum(["mapleads"]).nullable().optional(),
@@ -240,6 +240,9 @@ export const createBroadcast = createServerFn({ method: "POST" })
         media_url: z.string().url().nullable().optional(),
         mime_type: z.string().max(100).nullable().optional(),
         scheduled_at: z.string().datetime().nullable().optional(),
+      })
+      .refine((d) => d.message_text.length > 0 || !!d.media_url, {
+        message: "Debes escribir un mensaje o adjuntar una imagen/archivo",
       })
       .parse(d)
   )

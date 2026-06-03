@@ -3,6 +3,18 @@ import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { convertUrlToBase64 } from "@/lib/media";
 
+// For broadcast media: try base64 first, fall back to URL-only if too large
+async function resolveMediaForBroadcast(mediaUrl: string): Promise<{ base64?: string; mimeType?: string; mediaUrl?: string }> {
+  try {
+    const { base64, mimeType } = await convertUrlToBase64(mediaUrl);
+    return { base64, mimeType };
+  } catch (err: any) {
+    console.warn("[broadcast] base64 conversion failed, falling back to URL:", err.message);
+    // Fall back to sending the URL directly (engine will handle download)
+    return { mediaUrl };
+  }
+}
+
 const json = (s: number, b: unknown) =>
   new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
 
@@ -117,17 +129,15 @@ async function handler({ request }: { request: Request }) {
 
     let mediaBase64: string | null = null;
     let mediaMimeType: string | null = null;
+    let mediaFallbackUrl: string | null = null;
     if (b.media_url) {
-      try {
-        const media = await convertUrlToBase64(b.media_url);
-        mediaBase64 = media.base64;
-        mediaMimeType = b.mime_type || media.mimeType;
-      } catch (err: any) {
-        await supabaseAdmin
-          .from("broadcasts")
-          .update({ status: "failed", error_log: err.message ?? "media download failed", finished_at: now })
-          .eq("id", b.id);
-        continue;
+      const resolved = await resolveMediaForBroadcast(b.media_url);
+      if (resolved.base64) {
+        mediaBase64 = resolved.base64;
+        mediaMimeType = b.mime_type || resolved.mimeType || null;
+      } else if (resolved.mediaUrl) {
+        mediaFallbackUrl = resolved.mediaUrl;
+        mediaMimeType = b.mime_type || null;
       }
     }
 
@@ -135,11 +145,31 @@ async function handler({ request }: { request: Request }) {
     let failedInBatch = 0;
 
     for (const r of pending) {
-      let payload: Record<string, unknown> = { chatId: r.wa_id, text: b.message_text };
-      let type = "send_message";
+      let payload: Record<string, unknown>;
+      let type: string;
+
       if (mediaBase64) {
+        // Send media with caption
         type = "send_media";
-        payload = { chatId: r.wa_id, base64: mediaBase64, mimeType: mediaMimeType };
+        payload = {
+          chatId: r.wa_id,
+          base64: mediaBase64,
+          mimeType: mediaMimeType,
+          caption: b.message_text || undefined,
+        };
+      } else if (mediaFallbackUrl) {
+        // Send media via URL with caption
+        type = "send_media";
+        payload = {
+          chatId: r.wa_id,
+          mediaUrl: mediaFallbackUrl,
+          mimeType: mediaMimeType,
+          caption: b.message_text || undefined,
+        };
+      } else {
+        // Text-only message
+        type = "send_message";
+        payload = { chatId: r.wa_id, text: b.message_text };
       }
 
       const { data: cmd, error } = await supabaseAdmin
@@ -156,14 +186,14 @@ async function handler({ request }: { request: Request }) {
       if (error) {
         await supabaseAdmin
           .from("broadcast_recipients")
-          .update({ status: "failed", error: error.message })
+          .update({ status: "failed", error: error.message, sent_at: now })
           .eq("id", r.id);
         failedInBatch++;
         continue;
       }
       await supabaseAdmin
         .from("broadcast_recipients")
-        .update({ status: "sending", command_id: cmd!.id })
+        .update({ status: "sent", command_id: cmd!.id, sent_at: now })
         .eq("id", r.id);
       sentInBatch++;
       result.broadcast++;
