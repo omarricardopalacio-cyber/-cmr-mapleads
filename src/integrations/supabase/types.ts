@@ -123,19 +123,21 @@ export type Database = {
           action_add_tags: string[] | null
           action_ai_behavior: string | null
           action_remove_tags: string[] | null
+          chain_to_rule_id: string | null
           cooldown_seconds: number
           created_at: string
           created_by: string | null
           id: string
           is_active: boolean
           last_triggered_at: string | null
+          limit_per_contact: number | null
           match_type: string
           match_value: string
           media_url: string | null
           mime_type: string | null
           name: string
           org_id: string
-          reply_text: string
+          reply_text: string | null
           session_id: string | null
           trigger_type: string | null
           updated_at: string
@@ -144,19 +146,21 @@ export type Database = {
           action_add_tags?: string[] | null
           action_ai_behavior?: string | null
           action_remove_tags?: string[] | null
+          chain_to_rule_id?: string | null
           cooldown_seconds?: number
           created_at?: string
           created_by?: string | null
           id?: string
           is_active?: boolean
           last_triggered_at?: string | null
+          limit_per_contact?: number | null
           match_type?: string
           match_value: string
           media_url?: string | null
           mime_type?: string | null
           name: string
           org_id: string
-          reply_text: string
+          reply_text?: string | null
           session_id?: string | null
           trigger_type?: string | null
           updated_at?: string
@@ -165,24 +169,127 @@ export type Database = {
           action_add_tags?: string[] | null
           action_ai_behavior?: string | null
           action_remove_tags?: string[] | null
+          chain_to_rule_id?: string | null
           cooldown_seconds?: number
           created_at?: string
           created_by?: string | null
           id?: string
           is_active?: boolean
           last_triggered_at?: string | null
+          limit_per_contact?: number | null
           match_type?: string
           match_value?: string
           media_url?: string | null
           mime_type?: string | null
           name?: string
           org_id?: string
-          reply_text?: string
+          reply_text?: string | null
           session_id?: string | null
           trigger_type?: string | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "auto_replies_chain_to_rule_id_fkey"
+            columns: ["chain_to_rule_id"]
+            isOneToOne: false
+            referencedRelation: "auto_replies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      auto_reply_steps: {
+        Row: {
+          cooldown_seconds: number
+          created_at: string
+          id: string
+          media_url: string | null
+          mime_type: string | null
+          org_id: string
+          rule_id: string
+          step_order: number
+          text_content: string | null
+          updated_at: string
+        }
+        Insert: {
+          cooldown_seconds?: number
+          created_at?: string
+          id?: string
+          media_url?: string | null
+          mime_type?: string | null
+          org_id: string
+          rule_id: string
+          step_order?: number
+          text_content?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cooldown_seconds?: number
+          created_at?: string
+          id?: string
+          media_url?: string | null
+          mime_type?: string | null
+          org_id?: string
+          rule_id?: string
+          step_order?: number
+          text_content?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "auto_reply_steps_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "auto_replies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      auto_reply_triggers: {
+        Row: {
+          contact_id: string
+          id: string
+          org_id: string
+          rule_id: string
+          triggered_at: string | null
+        }
+        Insert: {
+          contact_id: string
+          id?: string
+          org_id: string
+          rule_id: string
+          triggered_at?: string | null
+        }
+        Update: {
+          contact_id?: string
+          id?: string
+          org_id?: string
+          rule_id?: string
+          triggered_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "auto_reply_triggers_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "auto_reply_triggers_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "auto_reply_triggers_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "auto_replies"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       broadcast_recipients: {
         Row: {
@@ -235,10 +342,13 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          error_log: string | null
           failed_count: number
           finished_at: string | null
           id: string
+          media_url: string | null
           message_text: string
+          mime_type: string | null
           name: string
           org_id: string
           rate_per_minute: number
@@ -247,16 +357,20 @@ export type Database = {
           session_id: string
           started_at: string | null
           status: string
+          tag_id: string | null
           total_count: number
           updated_at: string
         }
         Insert: {
           created_at?: string
           created_by?: string | null
+          error_log?: string | null
           failed_count?: number
           finished_at?: string | null
           id?: string
+          media_url?: string | null
           message_text: string
+          mime_type?: string | null
           name: string
           org_id: string
           rate_per_minute?: number
@@ -265,16 +379,20 @@ export type Database = {
           session_id: string
           started_at?: string | null
           status?: string
+          tag_id?: string | null
           total_count?: number
           updated_at?: string
         }
         Update: {
           created_at?: string
           created_by?: string | null
+          error_log?: string | null
           failed_count?: number
           finished_at?: string | null
           id?: string
+          media_url?: string | null
           message_text?: string
+          mime_type?: string | null
           name?: string
           org_id?: string
           rate_per_minute?: number
@@ -283,10 +401,66 @@ export type Database = {
           session_id?: string
           started_at?: string | null
           status?: string
+          tag_id?: string | null
           total_count?: number
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "broadcasts_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_integrations: {
+        Row: {
+          api_token: string
+          base_url: string
+          catalog_slug: string
+          enabled: boolean
+          last_test_at: string | null
+          last_test_message: string | null
+          last_test_ok: boolean | null
+          org_id: string
+          send_media: boolean
+          updated_at: string
+        }
+        Insert: {
+          api_token?: string
+          base_url?: string
+          catalog_slug?: string
+          enabled?: boolean
+          last_test_at?: string | null
+          last_test_message?: string | null
+          last_test_ok?: boolean | null
+          org_id: string
+          send_media?: boolean
+          updated_at?: string
+        }
+        Update: {
+          api_token?: string
+          base_url?: string
+          catalog_slug?: string
+          enabled?: boolean
+          last_test_at?: string | null
+          last_test_message?: string | null
+          last_test_ok?: boolean | null
+          org_id?: string
+          send_media?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       contact_tags: {
         Row: {
@@ -329,6 +503,7 @@ export type Database = {
           org_id: string
           phone: string | null
           pipeline_stage_id: string | null
+          profile_picture_url: string | null
           updated_at: string
           wa_id: string
         }
@@ -339,6 +514,7 @@ export type Database = {
           org_id: string
           phone?: string | null
           pipeline_stage_id?: string | null
+          profile_picture_url?: string | null
           updated_at?: string
           wa_id: string
         }
@@ -349,6 +525,7 @@ export type Database = {
           org_id?: string
           phone?: string | null
           pipeline_stage_id?: string | null
+          profile_picture_url?: string | null
           updated_at?: string
           wa_id?: string
         }
@@ -705,6 +882,105 @@ export type Database = {
           },
         ]
       }
+      lead_ingest_tokens: {
+        Row: {
+          created_at: string | null
+          token: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          token: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          token?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      leads: {
+        Row: {
+          address: string | null
+          campaign_name: string | null
+          category: string | null
+          city: string | null
+          created_at: string | null
+          email: string | null
+          has_photos: boolean | null
+          id: string
+          maps_category: string | null
+          message_broadcast_id: string | null
+          message_sent_at: string | null
+          name: string
+          open_status: string | null
+          phone: string
+          phone_normalized: string | null
+          rating: number | null
+          raw: Json | null
+          review_count: number | null
+          scraped_at: string | null
+          source: string | null
+          updated_at: string | null
+          user_id: string
+          website: string | null
+          zone: string | null
+        }
+        Insert: {
+          address?: string | null
+          campaign_name?: string | null
+          category?: string | null
+          city?: string | null
+          created_at?: string | null
+          email?: string | null
+          has_photos?: boolean | null
+          id?: string
+          maps_category?: string | null
+          message_broadcast_id?: string | null
+          message_sent_at?: string | null
+          name?: string
+          open_status?: string | null
+          phone?: string
+          phone_normalized?: string | null
+          rating?: number | null
+          raw?: Json | null
+          review_count?: number | null
+          scraped_at?: string | null
+          source?: string | null
+          updated_at?: string | null
+          user_id: string
+          website?: string | null
+          zone?: string | null
+        }
+        Update: {
+          address?: string | null
+          campaign_name?: string | null
+          category?: string | null
+          city?: string | null
+          created_at?: string | null
+          email?: string | null
+          has_photos?: boolean | null
+          id?: string
+          maps_category?: string | null
+          message_broadcast_id?: string | null
+          message_sent_at?: string | null
+          name?: string
+          open_status?: string | null
+          phone?: string
+          phone_normalized?: string | null
+          rating?: number | null
+          raw?: Json | null
+          review_count?: number | null
+          scraped_at?: string | null
+          source?: string | null
+          updated_at?: string | null
+          user_id?: string
+          website?: string | null
+          zone?: string | null
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           created_at: string
@@ -875,6 +1151,36 @@ export type Database = {
           created_at?: string
           display_name?: string | null
           id?: string
+        }
+        Relationships: []
+      }
+      quick_replies: {
+        Row: {
+          created_at: string
+          id: string
+          media_url: string | null
+          mime_type: string | null
+          org_id: string
+          shortcut: string
+          text_content: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          media_url?: string | null
+          mime_type?: string | null
+          org_id: string
+          shortcut: string
+          text_content: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          media_url?: string | null
+          mime_type?: string | null
+          org_id?: string
+          shortcut?: string
+          text_content?: string
         }
         Relationships: []
       }
@@ -1215,6 +1521,14 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      increment_broadcast_failed: {
+        Args: { p_broadcast_id: string }
+        Returns: undefined
+      }
+      increment_broadcast_sent: {
+        Args: { p_broadcast_id: string }
+        Returns: undefined
       }
       is_member: {
         Args: { _org_id: string; _user_id: string }

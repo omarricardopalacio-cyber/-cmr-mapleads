@@ -17,17 +17,20 @@ import { Route as AuthenticatedTransferRulesRouteImport } from './routes/_authen
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
 import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
+import { Route as AuthenticatedMapleadsRouteImport } from './routes/_authenticated.mapleads'
 import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated.knowledge'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
 import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.flows'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
 import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
+import { Route as AuthenticatedCatalogIntegrationRouteImport } from './routes/_authenticated.catalog-integration'
 import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
 import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenticated.auto-replies'
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
 import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
+import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public/mapleads/ingest'
 import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/public/engine/upload-media'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
@@ -74,6 +77,11 @@ const AuthenticatedPipelinesRoute = AuthenticatedPipelinesRouteImport.update({
   path: '/pipelines',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedMapleadsRoute = AuthenticatedMapleadsRouteImport.update({
+  id: '/mapleads',
+  path: '/mapleads',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 const AuthenticatedKnowledgeRoute = AuthenticatedKnowledgeRouteImport.update({
   id: '/knowledge',
   path: '/knowledge',
@@ -106,6 +114,12 @@ const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
   path: '/contacts',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedCatalogIntegrationRoute =
+  AuthenticatedCatalogIntegrationRouteImport.update({
+    id: '/catalog-integration',
+    path: '/catalog-integration',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedBroadcastsRoute = AuthenticatedBroadcastsRouteImport.update({
   id: '/broadcasts',
   path: '/broadcasts',
@@ -134,6 +148,11 @@ const AuthenticatedConversationsThreadIdRoute =
     path: '/$threadId',
     getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
+const ApiPublicMapleadsIngestRoute = ApiPublicMapleadsIngestRouteImport.update({
+  id: '/api/public/mapleads/ingest',
+  path: '/api/public/mapleads/ingest',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicEngineUploadMediaRoute =
   ApiPublicEngineUploadMediaRouteImport.update({
     id: '/api/public/engine/upload-media',
@@ -162,12 +181,14 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
+  '/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
+  '/mapleads': typeof AuthenticatedMapleadsRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
@@ -179,6 +200,7 @@ export interface FileRoutesByFullPath {
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
+  '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -186,11 +208,13 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
+  '/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
+  '/mapleads': typeof AuthenticatedMapleadsRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
@@ -202,6 +226,7 @@ export interface FileRoutesByTo {
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
+  '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -211,12 +236,14 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_authenticated/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/_authenticated/broadcasts': typeof AuthenticatedBroadcastsRoute
+  '/_authenticated/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
   '/_authenticated/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/flows': typeof AuthenticatedFlowsRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
   '/_authenticated/knowledge': typeof AuthenticatedKnowledgeRoute
+  '/_authenticated/mapleads': typeof AuthenticatedMapleadsRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
@@ -228,6 +255,7 @@ export interface FileRoutesById {
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
+  '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -237,12 +265,14 @@ export interface FileRouteTypes {
     | '/signup'
     | '/auto-replies'
     | '/broadcasts'
+    | '/catalog-integration'
     | '/contacts'
     | '/conversations'
     | '/dashboard'
     | '/flows'
     | '/integrations'
     | '/knowledge'
+    | '/mapleads'
     | '/pipelines'
     | '/quick-replies'
     | '/sessions'
@@ -254,6 +284,7 @@ export interface FileRouteTypes {
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
     | '/api/public/engine/upload-media'
+    | '/api/public/mapleads/ingest'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -261,11 +292,13 @@ export interface FileRouteTypes {
     | '/signup'
     | '/auto-replies'
     | '/broadcasts'
+    | '/catalog-integration'
     | '/contacts'
     | '/dashboard'
     | '/flows'
     | '/integrations'
     | '/knowledge'
+    | '/mapleads'
     | '/pipelines'
     | '/quick-replies'
     | '/sessions'
@@ -277,6 +310,7 @@ export interface FileRouteTypes {
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
     | '/api/public/engine/upload-media'
+    | '/api/public/mapleads/ingest'
   id:
     | '__root__'
     | '/'
@@ -285,12 +319,14 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_authenticated/auto-replies'
     | '/_authenticated/broadcasts'
+    | '/_authenticated/catalog-integration'
     | '/_authenticated/contacts'
     | '/_authenticated/conversations'
     | '/_authenticated/dashboard'
     | '/_authenticated/flows'
     | '/_authenticated/integrations'
     | '/_authenticated/knowledge'
+    | '/_authenticated/mapleads'
     | '/_authenticated/pipelines'
     | '/_authenticated/quick-replies'
     | '/_authenticated/sessions'
@@ -302,6 +338,7 @@ export interface FileRouteTypes {
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
     | '/api/public/engine/upload-media'
+    | '/api/public/mapleads/ingest'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -314,6 +351,7 @@ export interface RootRouteChildren {
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
   ApiPublicEngineUploadMediaRoute: typeof ApiPublicEngineUploadMediaRoute
+  ApiPublicMapleadsIngestRoute: typeof ApiPublicMapleadsIngestRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -374,6 +412,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPipelinesRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/mapleads': {
+      id: '/_authenticated/mapleads'
+      path: '/mapleads'
+      fullPath: '/mapleads'
+      preLoaderRoute: typeof AuthenticatedMapleadsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/knowledge': {
       id: '/_authenticated/knowledge'
       path: '/knowledge'
@@ -416,6 +461,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedContactsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/catalog-integration': {
+      id: '/_authenticated/catalog-integration'
+      path: '/catalog-integration'
+      fullPath: '/catalog-integration'
+      preLoaderRoute: typeof AuthenticatedCatalogIntegrationRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/broadcasts': {
       id: '/_authenticated/broadcasts'
       path: '/broadcasts'
@@ -450,6 +502,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/conversations/$threadId'
       preLoaderRoute: typeof AuthenticatedConversationsThreadIdRouteImport
       parentRoute: typeof AuthenticatedConversationsRoute
+    }
+    '/api/public/mapleads/ingest': {
+      id: '/api/public/mapleads/ingest'
+      path: '/api/public/mapleads/ingest'
+      fullPath: '/api/public/mapleads/ingest'
+      preLoaderRoute: typeof ApiPublicMapleadsIngestRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/public/engine/upload-media': {
       id: '/api/public/engine/upload-media'
@@ -502,12 +561,14 @@ const AuthenticatedConversationsRouteWithChildren =
 interface AuthenticatedRouteChildren {
   AuthenticatedAutoRepliesRoute: typeof AuthenticatedAutoRepliesRoute
   AuthenticatedBroadcastsRoute: typeof AuthenticatedBroadcastsRoute
+  AuthenticatedCatalogIntegrationRoute: typeof AuthenticatedCatalogIntegrationRoute
   AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
   AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRouteWithChildren
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedFlowsRoute: typeof AuthenticatedFlowsRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
   AuthenticatedKnowledgeRoute: typeof AuthenticatedKnowledgeRoute
+  AuthenticatedMapleadsRoute: typeof AuthenticatedMapleadsRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
   AuthenticatedQuickRepliesRoute: typeof AuthenticatedQuickRepliesRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
@@ -517,12 +578,14 @@ interface AuthenticatedRouteChildren {
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAutoRepliesRoute: AuthenticatedAutoRepliesRoute,
   AuthenticatedBroadcastsRoute: AuthenticatedBroadcastsRoute,
+  AuthenticatedCatalogIntegrationRoute: AuthenticatedCatalogIntegrationRoute,
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
   AuthenticatedConversationsRoute: AuthenticatedConversationsRouteWithChildren,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedFlowsRoute: AuthenticatedFlowsRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
   AuthenticatedKnowledgeRoute: AuthenticatedKnowledgeRoute,
+  AuthenticatedMapleadsRoute: AuthenticatedMapleadsRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedQuickRepliesRoute: AuthenticatedQuickRepliesRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
@@ -543,17 +606,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
   ApiPublicEngineUploadMediaRoute: ApiPublicEngineUploadMediaRoute,
+  ApiPublicMapleadsIngestRoute: ApiPublicMapleadsIngestRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
