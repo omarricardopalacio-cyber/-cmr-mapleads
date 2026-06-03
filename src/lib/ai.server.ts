@@ -506,42 +506,49 @@ export async function runAiAgent({
     (cfg.knowledge_base as string)?.trim()
       ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${(cfg.knowledge_base as string).trim()}`
       : "",
-    "\n\nTienes acceso a herramientas para ayudar al cliente. Usalas cuando sea necesario.",
-    catalogCfg ? "\n\n=== CATÁLOGO ===\nTienes acceso a un catálogo de productos. Usa search_catalog cuando el cliente pregunte por productos, precios o disponibilidad. Después usa send_product_to_customer para mostrarle la ficha con imagen." : "",
-    "\n\nTienes acceso a herramientas para ayudar al cliente. Usalas cuando sea necesario. Responde con coherencia teniendo en cuenta TODO el historial previo de la conversación.",
+    "\n\nTienes acceso a herramientas para ayudar al cliente. Úsalas cuando sea necesario. Responde con coherencia teniendo en cuenta TODO el historial previo de la conversación.",
+    catalogCfg ? [
+      "\n\n=== CATÁLOGO DE PRODUCTOS ===",
+      "\nTienes acceso a un catálogo de productos REALES de la empresa. REGLAS CRÍTICAS:",
+      "\n- Cuando el cliente pregunte por productos, precios, stock, disponibilidad o categorías, llama PRIMERO a search_catalog.",
+      "\n- NUNCA inventes productos, precios ni stock. Solo usa los devueltos por search_catalog.",
+      "\n- Si search_catalog devuelve count=0 o lista vacía, dile al cliente: 'No tenemos ese producto disponible en este momento'.",
+      "\n- Para mostrar la ficha completa (foto + precio + descripción) al cliente, llama a send_product_to_customer con el product_id.",
+      "\n- Puedes enviar máximo 3 productos por respuesta para no saturar al cliente.",
+      "\n- Siempre busca ANTES de recomendar. No asumas disponibilidad sin consultar el catálogo.",
+    ].join("") : "",
   ].join("");
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
 
-  // Round 1
-  const { text: firstText, toolCalls } = await callAiProvider(cfg, msgs, tools);
-
-  if (!toolCalls?.length) {
-    return { reply: firstText, actions: [] };
-  }
-
-  // Append assistant message with tool_calls
-  msgs.push({
-    role: "assistant",
-    content: firstText || "",
-  });
-
   const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
   const actions: string[] = [];
+  let lastText = "";
 
-  // Execute each tool and append results
-  for (const tc of toolCalls) {
-    const exec = await executeToolCall(tc, ctx);
-    actions.push(exec.name);
-    msgs.push({
-      role: "tool" as any,
-      content: exec.result,
-    } as Msg);
+  // Loop de hasta 4 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
+  for (let round = 0; round < 4; round++) {
+    const { text, toolCalls } = await callAiProvider(cfg, msgs, tools);
+    lastText = text;
+
+    if (!toolCalls?.length) {
+      // Sin más tool-calls: respuesta final lista
+      return { reply: text || lastText, actions };
+    }
+
+    // Anexar mensaje del asistente con tool_calls
+    msgs.push({ role: "assistant", content: text || "" });
+
+    // Ejecutar cada tool call y anexar resultados
+    for (const tc of toolCalls) {
+      const exec = await executeToolCall(tc, ctx);
+      actions.push(exec.name);
+      msgs.push({ role: "tool" as any, content: exec.result } as Msg);
+    }
   }
 
-  // Round 2 (sin tools para forzar respuesta final)
+  // Pasada final sin tools para forzar respuesta en texto después de 4 rondas
   const { text: finalText } = await callAiProvider(cfg, msgs);
-  return { reply: finalText, actions };
+  return { reply: finalText || lastText, actions };
 }
 
 /* ============================================================
