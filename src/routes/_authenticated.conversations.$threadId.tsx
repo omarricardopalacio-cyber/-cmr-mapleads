@@ -305,7 +305,7 @@ function ThreadPage() {
         const shortcut = payloadText.split(" ")[0].slice(1);
         const qr = (qrData?.items ?? []).find((r: { shortcut?: string }) => r.shortcut === shortcut);
         if (qr) {
-          payloadText = qr.text_content || payloadText;
+          payloadText = qr.text_content || "";
           if (!mediaUrl) {
             mediaUrl = qr.media_url || null;
             mimeType = qr.mime_type || null;
@@ -674,7 +674,7 @@ function ThreadPage() {
             accept="image/*,video/*,audio/*,application/pdf"
             onChange={handleFileSelect}
           />
-          <Popover open={showQr && !!text.startsWith("/") && (qrData?.items?.length ?? 0) > 0} onOpenChange={setShowQr}>
+          <Popover open={showQr && (qrData?.items?.length ?? 0) > 0} onOpenChange={setShowQr}>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
