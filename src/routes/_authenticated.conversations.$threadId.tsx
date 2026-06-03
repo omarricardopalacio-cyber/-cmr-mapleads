@@ -677,11 +677,13 @@ function ThreadPage() {
           <Popover open={showQr && (qrData?.items?.length ?? 0) > 0} onOpenChange={setShowQr}>
             <TooltipProvider>
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" onClick={() => setShowQr(true)}>
-                    <Zap className="h-4 w-4 text-purple-500" />
-                  </Button>
-                </TooltipTrigger>
+                <PopoverTrigger asChild>
+                  <TooltipTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon">
+                      <Zap className="h-4 w-4 text-purple-500" />
+                    </Button>
+                  </TooltipTrigger>
+                </PopoverTrigger>
                 <TooltipContent>
                   <p>Escribe / o haz clic aquí para usar respuestas rápidas</p>
                 </TooltipContent>
@@ -709,11 +711,13 @@ function ThreadPage() {
           <Popover open={showSched} onOpenChange={setShowSched}>
             <TooltipProvider>
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" onClick={() => setShowSched(true)}>
-                    <Calendar className="h-4 w-4 text-blue-500" />
-                  </Button>
-                </TooltipTrigger>
+                <PopoverTrigger asChild>
+                  <TooltipTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon">
+                      <Calendar className="h-4 w-4 text-blue-500" />
+                    </Button>
+                  </TooltipTrigger>
+                </PopoverTrigger>
                 <TooltipContent>
                   <p>Programar un mensaje</p>
                 </TooltipContent>
