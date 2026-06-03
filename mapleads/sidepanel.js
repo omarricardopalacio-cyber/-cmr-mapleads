@@ -498,9 +498,17 @@ statusPoller = setInterval(refreshStatus, 1400);
         method: 'GET',
         headers: { 'X-Mapleads-Token': token },
       });
-      if (r.ok) setDot('ok', 'Conectado ✓');
-      else if (r.status === 401) setDot('err', 'Token inválido');
-      else setDot('err', `Error HTTP ${r.status}`);
+      if (r.redirected || (r.headers.get('content-type') || '').includes('text/html')) {
+        setDot('err', 'URL inválida (Preview/Login)');
+      } else if (r.ok) {
+        setDot('ok', 'Conectado ✓');
+      } else if (r.status === 401) {
+        setDot('err', 'Token inválido');
+      } else {
+        let msg = `Error HTTP ${r.status}`;
+        try { const d = await r.json(); if (d.error) msg += `: ${d.error}`; } catch(e){}
+        setDot('err', msg);
+      }
     } catch (e) {
       setDot('err', 'Sin conexión: ' + (e?.message || e));
     }

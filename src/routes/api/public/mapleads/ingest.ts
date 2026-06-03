@@ -49,11 +49,23 @@ export const Route = createFileRoute("/api/public/mapleads/ingest")({
             { status: 401, headers: corsHeaders },
           );
         }
-        const { data: tokenRow } = await supabaseAdmin
-          .from("lead_ingest_tokens")
-          .select("user_id")
-          .eq("token", token)
-          .maybeSingle();
+        let tokenRow;
+        try {
+          const res = await supabaseAdmin
+            .from("lead_ingest_tokens")
+            .select("user_id")
+            .eq("token", token)
+            .maybeSingle();
+          tokenRow = res.data;
+          if (res.error) throw res.error;
+        } catch (err: any) {
+          console.error("Supabase Admin Error:", err.message || err);
+          return Response.json(
+            { ok: false, error: err.message || String(err) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        
         if (!tokenRow?.user_id) {
           return Response.json(
             { ok: false, error: "invalid token" },
@@ -77,12 +89,24 @@ export const Route = createFileRoute("/api/public/mapleads/ingest")({
           );
         }
 
-        const { data: tokenRow, error: tokenErr } = await supabaseAdmin
-          .from("lead_ingest_tokens")
-          .select("user_id")
-          .eq("token", token)
-          .maybeSingle();
-        if (tokenErr || !tokenRow?.user_id) {
+        let tokenRow;
+        try {
+          const res = await supabaseAdmin
+            .from("lead_ingest_tokens")
+            .select("user_id")
+            .eq("token", token)
+            .maybeSingle();
+          tokenRow = res.data;
+          if (res.error) throw res.error;
+        } catch (err: any) {
+          console.error("Supabase Admin Error:", err.message || err);
+          return Response.json(
+            { error: "Internal Server Error: " + (err.message || String(err)) },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+
+        if (!tokenRow?.user_id) {
           return Response.json(
             { error: "invalid token" },
             { status: 401, headers: corsHeaders },
