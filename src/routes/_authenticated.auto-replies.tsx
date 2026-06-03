@@ -166,7 +166,7 @@ function AutoRepliesTab() {
     setSteps([emptyStep()]);
   }
 
-  function loadEdit(r: any) {
+  async function loadEdit(r: any) {
     setForm({
       id: r.id,
       name: r.name,
@@ -180,12 +180,19 @@ function AutoRepliesTab() {
       action_ai_behavior: r.action_ai_behavior ?? "no_change",
       chain_to_rule_id: r.chain_to_rule_id ?? null,
     });
-    const loaded: Step[] = (r.steps ?? []).map((s: any) => ({
-      cooldown_seconds: s.cooldown_seconds,
-      text_content: s.text_content ?? "",
-      media_url: s.media_url ?? "",
-      mime_type: s.mime_type ?? "",
-      previewUrl: s.media_url ?? "",
+    const loaded: Step[] = await Promise.all((r.steps ?? []).map(async (s: any) => {
+      let previewUrl = s.media_url ?? "";
+      if (s.media_url) {
+        const { data: signedData } = await supabaseBrowser.storage.from("auto-reply-media").createSignedUrl(s.media_url, 3600);
+        if (signedData?.signedUrl) previewUrl = signedData.signedUrl;
+      }
+      return {
+        cooldown_seconds: s.cooldown_seconds,
+        text_content: s.text_content ?? "",
+        media_url: s.media_url ?? "",
+        mime_type: s.mime_type ?? "",
+        previewUrl,
+      };
     }));
     setSteps(loaded.length ? loaded : [emptyStep()]);
   }
@@ -377,14 +384,18 @@ function AutoRepliesTab() {
                   className="min-h-[72px] text-sm"
                 />
 
-                {/* Image preview */}
+                {/* Image/Video/Doc preview */}
                 {step.previewUrl && (
                   <div className="relative w-20 h-20">
-                    <img
-                      src={step.previewUrl}
-                      alt="preview"
-                      className="w-20 h-20 object-cover rounded border"
-                    />
+                    {step.mime_type?.startsWith("video/") ? (
+                      <video src={step.previewUrl} className="w-20 h-20 object-cover rounded border" />
+                    ) : step.mime_type?.startsWith("image/") || !step.mime_type ? (
+                      <img src={step.previewUrl} alt="preview" className="w-20 h-20 object-cover rounded border" />
+                    ) : (
+                      <div className="w-20 h-20 flex items-center justify-center border rounded bg-muted text-xs text-center p-1">
+                        Documento
+                      </div>
+                    )}
                     <button
                       type="button"
                       className="absolute -top-1 -right-1 bg-destructive text-white rounded-full w-4 h-4 flex items-center justify-center text-xs"
@@ -395,12 +406,12 @@ function AutoRepliesTab() {
                   </div>
                 )}
 
-                {/* Image upload button */}
+                {/* File upload button */}
                 {!step.previewUrl && (
                   <>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,video/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                       className="hidden"
                       ref={(el) => { fileInputRefs.current[i] = el; }}
                       onChange={(e) => {
@@ -417,7 +428,7 @@ function AutoRepliesTab() {
                       onClick={() => fileInputRefs.current[i]?.click()}
                     >
                       <ImagePlus className="h-3 w-3" />
-                      {uploading[i] ? "Subiendo…" : "Adjuntar imagen"}
+                      {uploading[i] ? "Subiendo…" : "Adjuntar archivo"}
                     </Button>
                   </>
                 )}
@@ -583,7 +594,7 @@ function AutoRepliesTab() {
                           </span>
                         )}
                         <span className="truncate">
-                          {s.text_content || (s.media_url ? "📎 imagen" : "—")}
+                          {s.text_content || (s.media_url ? (s.mime_type?.startsWith("video/") ? "🎥 video" : s.mime_type?.startsWith("image/") ? "📎 imagen" : "📄 documento") : "—")}
                         </span>
                       </div>
                     ))}

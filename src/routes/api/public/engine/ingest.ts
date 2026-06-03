@@ -306,23 +306,42 @@ async function maybeAutoReply(
       if (diff < (raw.cooldown_seconds ?? 0)) continue;
     }
 
-    // Send text or media
-    if (raw.media_url) {
-      await supabaseAdmin.from('engine_commands').insert({
-        org_id: orgId,
-        session_id: sessionId,
-        type: 'send_media',
-        payload: { chatId, mediaUrl: raw.media_url, mimeType: raw.mime_type, caption: raw.reply_text },
-        status: 'pending',
-      });
-    } else {
-      await supabaseAdmin.from('engine_commands').insert({
-        org_id: orgId,
-        session_id: sessionId,
-        type: 'send_message',
-        payload: { chatId, text: raw.reply_text },
-        status: 'pending',
-      });
+    // Fetch steps
+    const { data: steps } = await supabaseAdmin
+      .from('auto_reply_steps')
+      .select('*')
+      .eq('rule_id', raw.id)
+      .order('step_order', { ascending: true });
+
+    if (steps && steps.length > 0) {
+      // Execute steps
+      // For short delays we just wait in place. If it's a huge delay it might timeout the webhook, 
+      // but for normal bots (0-10s) it will work perfectly.
+      for (const step of steps) {
+        if (step.cooldown_seconds && step.cooldown_seconds > 0) {
+          // Cap the wait to 10 seconds to prevent webhook timeout
+          const waitTime = Math.min(step.cooldown_seconds, 10);
+          await new Promise((r) => setTimeout(r, waitTime * 1000));
+        }
+
+        if (step.media_url) {
+          await supabaseAdmin.from('engine_commands').insert({
+            org_id: orgId,
+            session_id: sessionId,
+            type: 'send_media',
+            payload: { chatId, mediaUrl: step.media_url, mimeType: step.mime_type, caption: step.text_content },
+            status: 'pending',
+          });
+        } else if (step.text_content) {
+          await supabaseAdmin.from('engine_commands').insert({
+            org_id: orgId,
+            session_id: sessionId,
+            type: 'send_message',
+            payload: { chatId, text: step.text_content },
+            status: 'pending',
+          });
+        }
+      }
     }
 
     // Tags actions
