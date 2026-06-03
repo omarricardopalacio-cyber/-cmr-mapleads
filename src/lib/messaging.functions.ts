@@ -90,7 +90,7 @@ export const listMessages = createServerFn({ method: "GET" })
 
     const { data: thread, error: threadErr } = await userSupabase
       .from("threads")
-      .select("id, contact_id, session_id, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
+      .select("id, contact_id, session_id, ai_enabled, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
@@ -123,7 +123,7 @@ export const listMessages = createServerFn({ method: "GET" })
       console.warn("[listMessages] FALLBACK a supabaseAdmin. threadRow:", !!threadRow, "messagesCount:", messages?.length ?? 0);
       const { data: adminThread } = await supabaseAdmin
         .from("threads")
-        .select("id, contact_id, session_id, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
+        .select("id, contact_id, session_id, ai_enabled, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
         .eq("id", data.threadId)
         .eq("org_id", orgId)
         .maybeSingle();
@@ -161,7 +161,7 @@ export const listMessages = createServerFn({ method: "GET" })
         id: threadRow.id,
         sessionId: threadRow.session_id,
         contactId: threadRow.contact_id,
-        aiEnabled: true,
+        aiEnabled: (threadRow as any).ai_enabled !== false, // default true si es null/undefined
         contact: {
           displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id?.replace(/@lid$/, "").replace(/@c\.us$/, "") ?? null,
           waId: contact?.wa_id ?? null,

@@ -481,9 +481,8 @@ async function maybeAiReply(
     .eq('id', threadId)
     .maybeSingle();
 
-  // If AI is disabled, re-enable it for next message and skip this one
+  // Si la IA está explícitamente desactivada para este thread, no responder
   if ((thread as unknown as { ai_enabled?: boolean })?.ai_enabled === false) {
-    await supabaseAdmin.from('threads').update({ ai_enabled: true } as unknown as Record<string, unknown>).eq('id', threadId);
     return;
   }
 
