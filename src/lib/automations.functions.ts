@@ -354,6 +354,43 @@ export const cancelBroadcast = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const pauseBroadcast = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await supabaseAdmin
+      .from("broadcasts")
+      .update({ status: "paused" })
+      .eq("id", data.id)
+      .eq("org_id", orgId)
+      .in("status", ["running", "scheduled"]);
+    return { ok: true };
+  });
+
+export const resumeBroadcast = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await supabaseAdmin
+      .from("broadcasts")
+      .update({ status: "running" })
+      .eq("id", data.id)
+      .eq("org_id", orgId)
+      .eq("status", "paused");
+    return { ok: true };
+  });
+
+export const deleteBroadcast = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await supabaseAdmin.from("broadcasts").delete().eq("id", data.id).eq("org_id", orgId);
+    return { ok: true };
+  });
+
 // ───── FLOWS ─────
 export const listFlows = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])

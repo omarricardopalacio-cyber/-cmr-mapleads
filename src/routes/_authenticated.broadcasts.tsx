@@ -8,6 +8,9 @@ import {
   listBroadcasts,
   createBroadcast,
   cancelBroadcast,
+  pauseBroadcast,
+  resumeBroadcast,
+  deleteBroadcast,
   getBroadcastRecipients,
 } from "@/lib/automations.functions";
 import { listTags } from "@/lib/tags.functions";
@@ -22,7 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { uploadMedia, mediaKindFromMime } from "@/lib/upload-media";
-import { X, Users, AlertCircle, CheckCircle, Loader2, Paperclip } from "lucide-react";
+import { X, Users, AlertCircle, CheckCircle, Loader2, Paperclip, Play, Pause, Trash2, Download } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/broadcasts")({
   component: BroadcastsPage,
@@ -42,6 +45,9 @@ function BroadcastContent() {
   const list = useServerFn(listBroadcasts);
   const create = useServerFn(createBroadcast);
   const cancel = useServerFn(cancelBroadcast);
+  const pause = useServerFn(pauseBroadcast);
+  const resume = useServerFn(resumeBroadcast);
+  const del = useServerFn(deleteBroadcast);
   const recipientsFn = useServerFn(getBroadcastRecipients);
   const sess = useServerFn(listSessions);
   const tagsFn = useServerFn(listTags);
@@ -90,6 +96,25 @@ function BroadcastContent() {
       qc.invalidateQueries({ queryKey: ["mapleadsUnsent"] });
       qc.invalidateQueries({ queryKey: ["leads"] });
     } catch (e: any) { toast.error(e.message); }
+  };
+
+  const handleDownloadReport = async (broadcastId: string, name: string) => {
+    try {
+      const res = await recipientsFn({ data: { broadcastId } });
+      const rows = res.items || [];
+      const csv = ["wa_id,status,error,sent_at"];
+      rows.forEach(r => {
+        csv.push(`${r.wa_id},${r.status},${r.error || ""},${r.sent_at || ""}`);
+      });
+      const blob = new Blob(["\uFEFF" + csv.join("\n")], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `reporte-${name.replace(/\s+/g, "_")}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e: any) {
+      toast.error("Error al descargar reporte");
+    }
   };
 
   return (
@@ -223,10 +248,33 @@ function BroadcastContent() {
                 {b.tag_id && <Badge variant="outline">etiqueta</Badge>}
                 <span className="text-xs text-muted-foreground ml-auto">{b.sent_count + b.failed_count}/{b.total_count}</span>
                 {["running", "scheduled"].includes(b.status) && (
-                  <Button size="icon" variant="ghost" onClick={async () => { await cancel({ data: { id: b.id } }); qc.invalidateQueries({ queryKey: ["broadcasts"] }); }}>
-                    <X className="h-4 w-4" />
+                  <Button size="icon" variant="ghost" title="Detener campaña (Pausar)" onClick={async () => {
+                    await pause({ data: { id: b.id } });
+                    qc.invalidateQueries({ queryKey: ["broadcasts"] });
+                  }}>
+                    <Pause className="h-4 w-4 text-amber-500" />
                   </Button>
                 )}
+                {b.status === "paused" && (
+                  <Button size="icon" variant="ghost" title="Iniciar campaña (Reanudar)" onClick={async () => {
+                    await resume({ data: { id: b.id } });
+                    qc.invalidateQueries({ queryKey: ["broadcasts"] });
+                  }}>
+                    <Play className="h-4 w-4 text-green-500" />
+                  </Button>
+                )}
+                {["paused", "cancelled", "completed", "failed"].includes(b.status) && (
+                  <Button size="icon" variant="ghost" title="Descargar reporte" onClick={() => handleDownloadReport(b.id, b.name)}>
+                    <Download className="h-4 w-4 text-blue-500" />
+                  </Button>
+                )}
+                <Button size="icon" variant="ghost" title="Borrar campaña" onClick={async () => {
+                  if(!confirm("¿Borrar campaña? Esto no se puede deshacer.")) return;
+                  await del({ data: { id: b.id } });
+                  qc.invalidateQueries({ queryKey: ["broadcasts"] });
+                }}>
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
               </div>
               <div className="text-sm truncate text-muted-foreground">{b.message_text}</div>
               {b.media_url && <div className="text-xs text-blue-600 truncate">media: {b.media_url}</div>}
