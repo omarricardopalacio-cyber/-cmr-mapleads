@@ -34,6 +34,7 @@ import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public
 import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/public/engine/upload-media'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
+import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
 
 const SignupRoute = SignupRouteImport.update({
@@ -169,6 +170,12 @@ const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
   path: '/api/public/engine/commands',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicCronFlowSchedulerRoute =
+  ApiPublicCronFlowSchedulerRouteImport.update({
+    id: '/api/public/cron/flow-scheduler',
+    path: '/api/public/cron/flow-scheduler',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
   id: '/api/public/cron/dispatch',
   path: '/api/public/cron/dispatch',
@@ -197,6 +204,7 @@ export interface FileRoutesByFullPath {
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
+  '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
@@ -223,6 +231,7 @@ export interface FileRoutesByTo {
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
+  '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
@@ -252,6 +261,7 @@ export interface FileRoutesById {
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
+  '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
@@ -281,6 +291,7 @@ export interface FileRouteTypes {
     | '/api/debug/media-diag'
     | '/conversations/'
     | '/api/public/cron/dispatch'
+    | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
     | '/api/public/engine/upload-media'
@@ -307,6 +318,7 @@ export interface FileRouteTypes {
     | '/api/debug/media-diag'
     | '/conversations'
     | '/api/public/cron/dispatch'
+    | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
     | '/api/public/engine/upload-media'
@@ -335,6 +347,7 @@ export interface FileRouteTypes {
     | '/api/debug/media-diag'
     | '/_authenticated/conversations/'
     | '/api/public/cron/dispatch'
+    | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
     | '/api/public/engine/upload-media'
@@ -348,6 +361,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
+  ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
   ApiPublicEngineUploadMediaRoute: typeof ApiPublicEngineUploadMediaRoute
@@ -531,6 +545,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEngineCommandsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/cron/flow-scheduler': {
+      id: '/api/public/cron/flow-scheduler'
+      path: '/api/public/cron/flow-scheduler'
+      fullPath: '/api/public/cron/flow-scheduler'
+      preLoaderRoute: typeof ApiPublicCronFlowSchedulerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/cron/dispatch': {
       id: '/api/public/cron/dispatch'
       path: '/api/public/cron/dispatch'
@@ -603,6 +624,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
+  ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
   ApiPublicEngineUploadMediaRoute: ApiPublicEngineUploadMediaRoute,
