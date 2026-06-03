@@ -249,3 +249,70 @@ src/routes/_authenticated.broadcasts.tsx         (modo "Leads Mapleads")
 public/mapleads-extension.zip                    (extensiÃ³n empaquetada)
 MAPLEADS_INTEGRATION.md                          (este documento)
 ```
+
+---
+
+## 11. Indicador de conexión (verde / rojo)
+
+### 11.1 Endpoint de health-check
+
+"GET /api/public/mapleads/ingest" con header "X-Mapleads-Token: <token>":
+
+- "200 { ok: true }" -> token válido.
+- "401 { ok: false, error }" -> token faltante o inválido.
+
+Implementación en "src/routes/api/public/mapleads/ingest.ts" (handler "GET"): consulta "lead_ingest_tokens" por el token; responde "ok" si existe.
+
+### 11.2 En la extensión
+
+"sidepanel.html" añade dentro de la tarjeta "Conexión al backend":
+
+```html
+<div id="mlsConnStatus" class="conn-status">
+  <span id="mlsConnDot" class="conn-dot idle"></span>
+  <span id="mlsConnText">Sin verificar</span>
+</div>
+```
+
+CSS ("sidepanel.css"):
+
+```css
+.conn-status { display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid var(--border); border-radius:8px; background:#0f0f14; }
+.conn-dot { width:10px; height:10px; border-radius:999px; background:var(--muted); }
+.conn-dot.ok  { background:#22c55e; box-shadow:0 0 8px rgba(34,197,94,.7); }
+.conn-dot.err { background:#ef4444; box-shadow:0 0 8px rgba(239,68,68,.7); }
+.conn-dot.idle{ background:#eab308; }
+```
+
+JS ("sidepanel.js"), función "ping()" se ejecuta al cargar, al guardar y cada 30 s. Se añade botón "Probar conexión" y el botón "Guardar conexión" pasa a ser legible (texto oscuro sobre fondo claro).
+
+### 11.3 En la web ("/mapleads")
+
+Componente "ConnectionStatus" en "src/routes/_authenticated.mapleads.tsx" se monta junto al título "Configuración de la extensión Mapleads" y refresca cada 20 s para validar token e informar el número de leads.
+
+---
+
+## 12. Cómo replicar en otro proyecto (pasos)
+
+1. **Backend**
+   - Crear migración con tablas "leads" y "lead_ingest_tokens" + RLS + GRANTs.
+   - Copiar "src/lib/leads.functions.ts".
+   - Copiar "src/routes/api/public/mapleads/ingest.ts" (POST + OPTIONS + GET ping).
+2. **UI web**
+   - Página "/mapleads" con componentes.
+3. **Extensión Chrome MV3**
+   - Incluir los archivos CSS, JS e imágenes asegurándose que el backend y token se puedan guardar y usar la lógica de "ping()" y envío por POST a la url.
+4. **Empaquetado**
+   - Comprimir extensión en "mapleads-extension.zip"
+5. **Instalación usuario final**
+   - Instalar por "Cargar descomprimida", o desde la store si estuviera.
+
+---
+
+## 13. Cambios de este turno (resumen)
+
+- "ingest.ts": añadido handler GET para validación de token.
+- Extensión: añadido CSS y HTML para barra de estado, modificado botón de guardar y agregado lógica en JS para pinging.
+- "mapleads.tsx": añadido UI web para testear conexión (ConnectionStatus).
+- ZIP: reempaquetado con fixes.
+

@@ -2,7 +2,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   listLeads,
   updateLead,
@@ -141,7 +141,14 @@ function MapleadsContent() {
       {/* Bloque de conexión a la extensión */}
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-medium text-sm">Configuración de la extensión Mapleads</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="font-medium text-sm">Configuración de la extensión Mapleads</h3>
+            <ConnectionStatus
+              backendUrl={backendUrl}
+              token={tokenData?.token}
+              totalLeads={data?.total ?? 0}
+            />
+          </div>
           <Button variant="default" size="sm" asChild>
             <a href="/mapleads-extension.zip" download>
               <Download className="h-4 w-4 mr-1" /> Descargar extensión
@@ -439,5 +446,77 @@ function StatCard({
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="text-2xl font-semibold">{value}</div>
     </Card>
+  );
+}
+
+function ConnectionStatus({
+  backendUrl,
+  token,
+  totalLeads,
+}: {
+  backendUrl: string;
+  token?: string;
+  totalLeads: number;
+}) {
+  const [state, setState] = useState<"idle" | "ok" | "err">("idle");
+  const [label, setLabel] = useState("Verificando...");
+  
+  useEffect(() => {
+    let cancel = false;
+    async function ping() {
+      if (!backendUrl || !token) {
+        setState("idle");
+        setLabel("Sin token");
+        return;
+      }
+      try {
+        const r = await fetch(`${backendUrl}/api/public/mapleads/ingest`, {
+          method: "GET",
+          headers: { "X-Mapleads-Token": token },
+        });
+        if (cancel) return;
+        if (r.ok) {
+          setState("ok");
+          setLabel(
+            totalLeads > 0
+              ? `Conectado · ${totalLeads} leads recibidos`
+              : "Conectado · esperando leads",
+          );
+        } else {
+          setState("err");
+          setLabel(`Token inválido (HTTP ${r.status})`);
+        }
+      } catch (e: any) {
+        if (cancel) return;
+        setState("err");
+        setLabel("Sin conexión");
+      }
+    }
+    ping();
+    const i = setInterval(ping, 20000);
+    return () => {
+      cancel = true;
+      clearInterval(i);
+    };
+  }, [backendUrl, token, totalLeads]);
+  
+  const color =
+    state === "ok"
+      ? "bg-green-500"
+      : state === "err"
+        ? "bg-red-500"
+        : "bg-yellow-500";
+  const textColor =
+    state === "ok"
+      ? "text-green-600"
+      : state === "err"
+        ? "text-red-600"
+        : "text-yellow-600";
+        
+  return (
+    <span className={`inline-flex items-center gap-2 text-xs font-medium ${textColor}`}>
+      <span className={`h-2.5 w-2.5 rounded-full ${color} shadow`} />
+      {label}
+    </span>
   );
 }

@@ -39,6 +39,30 @@ export const Route = createFileRoute("/api/public/mapleads/ingest")({
       OPTIONS: async () =>
         new Response(null, { status: 204, headers: corsHeaders }),
 
+      GET: async ({ request }) => {
+        const token =
+          request.headers.get("x-mapleads-token") ||
+          (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+        if (!token || token.length < 10) {
+          return Response.json(
+            { ok: false, error: "missing token" },
+            { status: 401, headers: corsHeaders },
+          );
+        }
+        const { data: tokenRow } = await supabaseAdmin
+          .from("lead_ingest_tokens")
+          .select("user_id")
+          .eq("token", token)
+          .maybeSingle();
+        if (!tokenRow?.user_id) {
+          return Response.json(
+            { ok: false, error: "invalid token" },
+            { status: 401, headers: corsHeaders },
+          );
+        }
+        return Response.json({ ok: true }, { headers: corsHeaders });
+      },
+
       POST: async ({ request }) => {
         const token =
           request.headers.get("x-mapleads-token") ||
