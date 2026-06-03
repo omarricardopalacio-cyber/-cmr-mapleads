@@ -13,7 +13,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -56,6 +56,7 @@ function AppSidebar() {
   const aiConfig = [
     { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
     { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
+    { title: "Integración Catálogo", url: "/catalog-integration", icon: Store },
   ];
 
   const leads = [

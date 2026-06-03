@@ -1,5 +1,6 @@
 import { SignJWT, importPKCS8 } from "jose";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getCatalogConfig, searchCatalog, getCatalogProduct, formatProductForPrompt, type CatalogConfig } from "./catalog.server";
 
 export type Msg = { role: "system" | "user" | "assistant"; content: string };
 
@@ -42,6 +43,43 @@ export const CRM_TOOLS = [
       name: "transfer_to_human",
       description: "Transfiere la conversacion a un agente humano (apaga la IA).",
       parameters: { type: "object", properties: {} },
+    },
+  },
+];
+
+/* Catalog tools — solo se incluyen cuando hay integración activa */
+export const CATALOG_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "search_catalog",
+      description: "Busca productos en el catálogo de la tienda por palabra clave o nombre. Úsalo cuando el cliente pregunta por un producto, precio, disponibilidad o categoría.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Palabra clave del producto" },
+          limit: { type: "number", description: "Cantidad de resultados (1-6)" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "send_product_to_customer",
+      description: "Envía al cliente la ficha de un producto del catálogo: imagen + nombre + precio + breve descripción. Úsalo después de search_catalog cuando quieras mostrar el producto.",
+      parameters: {
+        type: "object",
+        properties: {
+          product_id: { type: "string", description: "id del producto devuelto por search_catalog" },
+          caption: {
+            type: "string",
+            description: "Mensaje breve que acompaña la imagen (opcional)",
+          },
+        },
+        required: ["product_id"],
+      },
     },
   },
 ];
@@ -291,12 +329,20 @@ export async function callAiProvider(
 /* ============================================================
    5. TOOL EXECUTOR + AUDIT LOG
    ============================================================ */
+export type ToolExecCtx = {
+  orgId: string;
+  threadId: string;
+  contactId?: string;
+  sessionId?: string;
+  chatId?: string;
+  catalogCfg?: CatalogConfig | null;
+};
+
 export async function executeToolCall(
   toolCall: { id: string; function: { name: string; arguments: string } },
-  orgId: string,
-  threadId: string,
-  contactId?: string
+  ctx: ToolExecCtx,
 ): Promise<{ name: string; result: string }> {
+  const { orgId, threadId, contactId, sessionId, chatId, catalogCfg } = ctx;
   const name = toolCall.function.name;
   const args = JSON.parse(toolCall.function.arguments || "{}");
 
@@ -354,6 +400,67 @@ export async function executeToolCall(
     }
     result = "Conversacion transferida a agente humano. IA desactivada.";
     details = "Transfirio la conversacion a un agente humano (IA apagada).";
+  } else if (name === "search_catalog") {
+    if (!catalogCfg) {
+      result = "Catálogo no configurado.";
+      details = "Intentó buscar en el catálogo pero no hay integración activa.";
+    } else {
+      try {
+        const limit = Math.min(Math.max(Number(args.limit) || 4, 1), 6);
+        const products = await searchCatalog(catalogCfg, String(args.query || ""), limit);
+        if (!products.length) {
+          result = "Sin resultados en el catálogo para esa búsqueda.";
+        } else {
+          result = "Productos encontrados (usa el id con send_product_to_customer):\n" + products.map((p) => formatProductForPrompt(p)).join("\n");
+        }
+        details = `Buscó "${args.query}" en el catálogo (${products.length} resultados).`;
+      } catch (e) {
+        result = `Error al buscar en catálogo: ${(e as Error).message}`;
+        details = result;
+      }
+    }
+  } else if (name === "send_product_to_customer") {
+    if (!catalogCfg || !sessionId || !chatId) {
+      result = "No puedo enviar productos: falta sesión/chat o catálogo.";
+      details = result;
+    } else {
+      try {
+        const prod = await getCatalogProduct(catalogCfg, String(args.product_id));
+        if (!prod) {
+          result = `Producto ${args.product_id} no encontrado en catálogo.`;
+          details = result;
+        } else {
+          const caption = (args.caption ? String(args.caption) + "\n\n" : "") +
+            `*${prod.name}*` +
+            (prod.price !== undefined ? `\nPrecio: ${prod.currency ?? "$"} ${prod.price}` : "") +
+            (prod.description ? `\n${String(prod.description).slice(0, 300)}` : "") +
+            (prod.url ? `\n${prod.url}` : "");
+          const media = prod.image_url || prod.images?.[0];
+          if (catalogCfg.send_media && media) {
+            await (supabaseAdmin as any).from("engine_commands").insert({
+              org_id: orgId,
+              session_id: sessionId,
+              type: "send_media",
+              payload: { chatId, media_url: media, caption },
+              status: "pending",
+            });
+          } else {
+            await (supabaseAdmin as any).from("engine_commands").insert({
+              org_id: orgId,
+              session_id: sessionId,
+              type: "send_message",
+              payload: { chatId, text: caption },
+              status: "pending",
+            });
+          }
+          result = `Enviado al cliente: ${prod.name}.`;
+          details = `Envió producto ${prod.id} (${prod.name}) al chat ${chatId}.`;
+        }
+      } catch (e) {
+        result = `Error enviando producto: ${(e as Error).message}`;
+        details = result;
+      }
+    }
   } else {
     result = `Herramienta desconocida: ${name}`;
     details = `Intento usar herramienta desconocida: ${name}`;
@@ -377,27 +484,37 @@ export async function runAiAgent({
   orgId,
   threadId,
   contactId,
+  sessionId,
+  chatId,
   messages,
   cfg,
 }: {
   orgId: string;
   threadId: string;
   contactId?: string;
+  sessionId?: string;
+  chatId?: string;
   messages: Msg[];
   cfg: Record<string, unknown>;
 }): Promise<{ reply: string; actions: string[] }> {
+  // Cargar integración de catálogo (si está activa)
+  const catalogCfg = await getCatalogConfig(orgId);
+  const tools = catalogCfg ? [...CRM_TOOLS, ...CATALOG_TOOLS] : CRM_TOOLS;
+
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente util.",
     (cfg.knowledge_base as string)?.trim()
       ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${(cfg.knowledge_base as string).trim()}`
       : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usalas cuando sea necesario.",
+    catalogCfg ? "\n\n=== CATÁLOGO ===\nTienes acceso a un catálogo de productos. Usa search_catalog cuando el cliente pregunte por productos, precios o disponibilidad. Después usa send_product_to_customer para mostrarle la ficha con imagen." : "",
+    "\n\nTienes acceso a herramientas para ayudar al cliente. Usalas cuando sea necesario. Responde con coherencia teniendo en cuenta TODO el historial previo de la conversación.",
   ].join("");
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
 
-  // Round 1: call with tools
-  const { text: firstText, toolCalls } = await callAiProvider(cfg, msgs, CRM_TOOLS);
+  // Round 1
+  const { text: firstText, toolCalls } = await callAiProvider(cfg, msgs, tools);
 
   if (!toolCalls?.length) {
     return { reply: firstText, actions: [] };
@@ -409,11 +526,12 @@ export async function runAiAgent({
     content: firstText || "",
   });
 
+  const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
   const actions: string[] = [];
 
   // Execute each tool and append results
   for (const tc of toolCalls) {
-    const exec = await executeToolCall(tc, orgId, threadId, contactId);
+    const exec = await executeToolCall(tc, ctx);
     actions.push(exec.name);
     msgs.push({
       role: "tool" as any,
@@ -421,7 +539,7 @@ export async function runAiAgent({
     } as Msg);
   }
 
-  // Round 2: call again so AI can compose final reply
+  // Round 2 (sin tools para forzar respuesta final)
   const { text: finalText } = await callAiProvider(cfg, msgs);
   return { reply: finalText, actions };
 }

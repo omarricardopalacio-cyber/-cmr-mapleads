@@ -502,24 +502,42 @@ async function maybeAiReply(
     if ((count ?? 0) > 0) return
   }
 
-  // Get short history (last 10)
+  // Historial completo de la conversación (últimos 200 mensajes con texto)
   const { data: hist } = await supabaseAdmin
     .from('messages')
     .select('direction, text')
     .eq('thread_id', threadId)
     .not('text', 'is', null)
     .order('sent_at', { ascending: false })
-    .limit(10)
-  const history = (hist ?? [])
+    .limit(200)
+    
+  const fullHistory = (hist ?? [])
     .reverse()
-    .slice(0, -1)
     .map((m: unknown) => ({
       role: ((m as { direction: string }).direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
       content: String((m as { text: unknown }).text),
     }))
 
+  // El último mensaje ya está en el historial (es el mensaje entrante que disparó la IA)
+  // Si por timing no está, lo agregamos como respaldo
+  const lastIsCurrent = fullHistory.length > 0 && 
+    fullHistory[fullHistory.length - 1].role === 'user' && 
+    fullHistory[fullHistory.length - 1].content.trim() === text.trim()
+    
+  const history = lastIsCurrent ? fullHistory : [...fullHistory, { role: 'user' as const, content: text }]
+
   try {
-    const reply = await generateReply(cfg as { provider: 'lovable' | 'vertex'; model: string; system_prompt: string; knowledge_base: string; vertex_project?: string | null; vertex_location?: string | null; vertex_model?: string | null }, text, history)
+    const { runAiAgent } = await import('@/lib/ai.server')
+    const { reply } = await runAiAgent({
+      orgId,
+      threadId,
+      contactId,
+      sessionId,
+      chatId,
+      messages: history,
+      cfg: cfg as Record<string, unknown>,
+    })
+    
     if (!reply?.trim()) return
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,
