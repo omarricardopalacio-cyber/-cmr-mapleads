@@ -235,9 +235,19 @@ function ThreadPage() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `thread_id=eq.${threadId}` },
-        () => {
-          console.log('[REALTIME] INSERT detectado, invalidando query');
+        (payload) => {
+          console.log('[REALTIME] INSERT detectado, actualizando mensajes en tiempo real');
+          // Actualizar clientMessages directamente sin esperar al servidor
+          if (payload.new) {
+            setClientMessages((prev) => {
+              const exists = prev.some((m) => m.id === (payload.new as any).id);
+              if (exists) return prev;
+              return [...prev, payload.new as any];
+            });
+          }
+          // También invalidar la query del servidor
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.refetchQueries({ queryKey: ["thread", threadId] });
         }
       )
       .on(
@@ -248,10 +258,21 @@ function ThreadPage() {
             waMessageId: (payload.new as any)?.wa_message_id,
             hasMedia: !!(payload.new as any)?.media,
           });
+          // Actualizar el mensaje específico en clientMessages
+          if (payload.new) {
+            setClientMessages((prev) =>
+              prev.map((m) =>
+                m.id === (payload.new as any).id ? { ...m, ...(payload.new as any) } : m
+              )
+            );
+          }
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.refetchQueries({ queryKey: ["thread", threadId] });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('[REALTIME] Estado del canal:', status);
+      });
     return () => {
       supabase.removeChannel(ch);
     };
@@ -817,9 +838,9 @@ function ThreadPage() {
         </form>
       </div>
 
-      {data?.thread?.contactId && data?.thread?.id && (
-        <aside className="w-80 border-l bg-card flex-col shrink-0 flex hidden lg:flex overflow-hidden">
-          <ContactContextPanel contactId={data.thread.contactId} threadId={data.thread.id} />
+      {data?.thread?.id && (
+        <aside className="w-80 border-l bg-card flex-col shrink-0 hidden md:flex overflow-hidden">
+          <ContactContextPanel contactId={data.thread.contactId ?? ''} threadId={data.thread.id} />
         </aside>
       )}
 

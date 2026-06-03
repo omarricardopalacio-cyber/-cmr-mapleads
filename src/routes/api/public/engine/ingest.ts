@@ -493,13 +493,22 @@ async function maybeAiReply(
     .maybeSingle()
   if (!cfg || !cfg.enabled) return
 
+  // respond_to === 'new'  → solo responder si es el PRIMER mensaje de TODA la conversación
+  // respond_to === 'all'  → responder siempre (por defecto)
+  // Cualquier otro valor  → responder siempre
   if (cfg.respond_to === 'new') {
+    // Contar mensajes salientes ANTERIORES (excluye el que acabamos de guardar en este ciclo,
+    // que tiene wa_message_id pending-*, verificamos solo los confirmados por WhatsApp)
     const { count } = await supabaseAdmin
       .from('messages')
       .select('id', { count: 'exact', head: true })
       .eq('thread_id', threadId)
       .eq('direction', 'out')
-    if ((count ?? 0) > 0) return
+      .not('wa_message_id', 'like', 'pending-%')
+    if ((count ?? 0) > 0) {
+      console.log('[ai-reply] respond_to=new: ya hay mensajes salientes confirmados, IA silenciada para este thread:', threadId)
+      return
+    }
   }
 
   // Historial completo de la conversación (últimos 200 mensajes con texto)
@@ -968,16 +977,24 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
-            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
+            // Disparar IA/auto-respuestas para mensajes entrantes con texto O con multimedia
+            const msgDirection = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
+            const triggerText = e.text || (e.media ? '[multimedia]' : null)
+            if (msgDirection === 'in' && triggerText) {
               // Use phone@c.us when we have a real phone (avoids @lid issues)
               const sendChatId = e.contact?.phone
                 ? `${e.contact.phone}@c.us`
                 : /^\d+$/.test(waId)
                   ? `${waId}@c.us`
                   : e.chatId
-              const { aiDisabled } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
+              // Auto-replies solo para mensajes con texto real (no multimedia puro)
+              let aiDisabled = false
+              if (e.text) {
+                const result = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
+                aiDisabled = result.aiDisabled
+              }
               if (!aiDisabled) {
-                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
+                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, triggerText)
               }
 
               // Keyword flow enrollment (wrapped to avoid breaking bridge on DB errors)
