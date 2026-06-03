@@ -531,3 +531,76 @@ statusPoller = setInterval(refreshStatus, 1400);
   });
   testBtn?.addEventListener('click', ping);
 })();
+
+// === Auto-sync de leads al backend ===
+(function initAutoSync() {
+  const SENT_KEY = 'mls_sent_keys';
+  let syncing = false;
+
+  function leadKey(l) {
+    return [
+      (l.phone || '').replace(/\D+/g, ''),
+      (l.name || '').toLowerCase().trim(),
+      (l.address || '').toLowerCase().trim(),
+    ].join('|');
+  }
+
+  async function autoSync() {
+    if (syncing) return;
+    syncing = true;
+    try {
+      const cfg = await chrome.storage.local.get([
+        'mls_backend_url', 'mls_backend_token', SENT_KEY,
+      ]);
+      const url = (cfg.mls_backend_url || '').trim().replace(/\/$/, '');
+      const token = (cfg.mls_backend_token || '').trim();
+      if (!url || !token) return;
+
+      let res;
+      try { res = await sendToContent('GET_LEADS'); } catch { return; }
+      const leads = res?.leads || [];
+      if (!leads.length) return;
+
+      const sent = new Set(cfg[SENT_KEY] || []);
+      const pending = leads.filter((l) => {
+        const k = leadKey(l);
+        return k && !sent.has(k);
+      });
+      if (!pending.length) return;
+
+      for (let i = 0; i < pending.length; i += 100) {
+        const batch = pending.slice(i, i + 100);
+        try {
+          const r = await fetch(`${url}/api/public/mapleads/ingest`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Mapleads-Token': token,
+            },
+            body: JSON.stringify({ leads: batch }),
+          });
+          if (r.ok) {
+            batch.forEach((l) => sent.add(leadKey(l)));
+            const status = document.getElementById('mlsBackendStatus');
+            if (status) {
+              const d = await r.json().catch(() => ({}));
+              status.textContent = `Sync: +${d.inserted ?? batch.length} (${sent.size} total)`;
+            }
+          } else {
+            console.warn('[mapleads] ingest fail', r.status, await r.text());
+          }
+        } catch (e) {
+          console.warn('[mapleads] ingest error', e);
+        }
+      }
+      const arr = Array.from(sent).slice(-5000);
+      await chrome.storage.local.set({ [SENT_KEY]: arr });
+    } finally {
+      syncing = false;
+    }
+  }
+
+  setInterval(autoSync, 5000);
+  setTimeout(autoSync, 1500);
+})();
+
