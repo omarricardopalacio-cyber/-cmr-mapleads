@@ -235,6 +235,7 @@ export const createBroadcast = createServerFn({ method: "POST" })
         message_text: z.string().min(1).max(4000),
         rate_per_minute: z.number().int().min(1).max(60).default(15),
         tag_id: z.string().uuid().nullable().optional(),
+        audience: z.enum(["mapleads"]).nullable().optional(),
         wa_ids: z.array(z.string().min(1).max(64)).min(1).max(5000).nullable().optional(),
         media_url: z.string().url().nullable().optional(),
         mime_type: z.string().max(100).nullable().optional(),
@@ -245,8 +246,29 @@ export const createBroadcast = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
     let wa_ids: string[] = data.wa_ids ?? [];
+    const mapleadIds: string[] = [];
 
-    if (data.tag_id) {
+    if (data.audience === "mapleads") {
+      const { data: leads } = await supabaseAdmin
+        .from("leads")
+        .select("id, phone, phone_normalized")
+        .eq("user_id", context.userId)
+        .is("message_sent_at", null)
+        .neq("phone", "")
+        .limit(5000);
+
+      const seen = new Set<string>();
+      wa_ids = [];
+      for (const l of leads ?? []) {
+        const digits = String(l.phone_normalized || l.phone || "").replace(/\D/g, "");
+        if (digits && !seen.has(digits)) {
+          seen.add(digits);
+          wa_ids.push(digits);
+          mapleadIds.push(l.id);
+        }
+      }
+      if (!wa_ids.length) throw new Error("No hay leads Mapleads no enviados con teléfono");
+    } else if (data.tag_id) {
       const { data: contacts } = await supabaseAdmin
         .from("contact_tags")
         .select("contacts(wa_id)")
@@ -288,6 +310,19 @@ export const createBroadcast = createServerFn({ method: "POST" })
     }));
     const { error: rErr } = await supabaseAdmin.from("broadcast_recipients").insert(rows);
     if (rErr) throw new Error(rErr.message);
+
+    // Bloquear leads Mapleads: solo se les puede enviar un mensaje
+    if (mapleadIds.length) {
+      await supabaseAdmin
+        .from("leads")
+        .update({
+          message_sent_at: new Date().toISOString(),
+          message_broadcast_id: b.id,
+        })
+        .in("id", mapleadIds)
+        .eq("user_id", context.userId);
+    }
+
     return { broadcast: b };
   });
 

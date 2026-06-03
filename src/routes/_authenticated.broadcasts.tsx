@@ -12,6 +12,7 @@ import {
 } from "@/lib/automations.functions";
 import { listTags } from "@/lib/tags.functions";
 import { listSessions } from "@/lib/sessions.functions";
+import { getUnsentLeadPhones } from "@/lib/leads.functions";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,14 +45,16 @@ function BroadcastContent() {
   const recipientsFn = useServerFn(getBroadcastRecipients);
   const sess = useServerFn(listSessions);
   const tagsFn = useServerFn(listTags);
+  const unsentFn = useServerFn(getUnsentLeadPhones);
   const { data } = useQuery({ queryKey: ["broadcasts"], queryFn: () => list({}), refetchInterval: 5000 });
   const { data: sessions } = useQuery({ queryKey: ["sessions"], queryFn: () => sess({}) });
   const { data: tagsData } = useQuery({ queryKey: ["tags"], queryFn: () => tagsFn({}) });
+  const { data: unsentData } = useQuery({ queryKey: ["mapleadsUnsent"], queryFn: () => unsentFn({}) });
   const tags = tagsData?.tags ?? [];
   const [form, setForm] = useState({
     session_id: "", name: "", message_text: "", rate_per_minute: 15, wa_ids_raw: "", scheduled_at: "", tag_id: "", media_url: "", mime_type: "",
   });
-  const [mode, setMode] = useState<"manual" | "tag">("tag");
+  const [mode, setMode] = useState<"manual" | "tag" | "mapleads">("tag");
   const [mediaType, setMediaType] = useState<"image" | "video" | "audio" | "document">("image");
   const [uploading, setUploading] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -74,6 +77,7 @@ function BroadcastContent() {
           message_text: form.message_text,
           rate_per_minute: form.rate_per_minute,
           tag_id: mode === "tag" ? (form.tag_id || null) : null,
+          audience: mode === "mapleads" ? "mapleads" : null,
           wa_ids: wa_ids ?? null,
           media_url: form.media_url || null,
           mime_type: form.mime_type || null,
@@ -83,6 +87,8 @@ function BroadcastContent() {
       toast.success("Campaña creada");
       setForm({ session_id: "", name: "", message_text: "", rate_per_minute: 15, wa_ids_raw: "", scheduled_at: "", tag_id: "", media_url: "", mime_type: "" });
       qc.invalidateQueries({ queryKey: ["broadcasts"] });
+      qc.invalidateQueries({ queryKey: ["mapleadsUnsent"] });
+      qc.invalidateQueries({ queryKey: ["leads"] });
     } catch (e: any) { toast.error(e.message); }
   };
 
@@ -136,11 +142,12 @@ function BroadcastContent() {
             )}
             <Input placeholder="O pega URL pública" value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button type="button" variant={mode === "tag" ? "default" : "outline"} size="sm" onClick={() => setMode("tag")}>Por etiqueta</Button>
+            <Button type="button" variant={mode === "mapleads" ? "default" : "outline"} size="sm" onClick={() => setMode("mapleads")}>Leads Mapleads</Button>
             <Button type="button" variant={mode === "manual" ? "default" : "outline"} size="sm" onClick={() => setMode("manual")}>Manual</Button>
           </div>
-          {mode === "tag" ? (
+          {mode === "tag" && (
             <div className="space-y-1">
               <Select value={form.tag_id} onValueChange={(v) => setForm({ ...form, tag_id: v })}>
                 <SelectTrigger><SelectValue placeholder="Selecciona etiqueta" /></SelectTrigger>
@@ -156,7 +163,18 @@ function BroadcastContent() {
                 </p>
               )}
             </div>
-          ) : (
+          )}
+          {mode === "mapleads" && (
+            <div className="space-y-1 border rounded-md p-3 bg-muted/20">
+              <p className="text-sm font-medium flex items-center gap-2">
+                <Users className="h-4 w-4" /> Leads Mapleads (no enviados)
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Se enviará a <span className="font-mono font-semibold">{unsentData?.items.length ?? 0}</span> teléfonos extraídos por la extensión Mapleads. Cada lead se bloquea tras enviar para no recibir un segundo mensaje.
+              </p>
+            </div>
+          )}
+          {mode === "manual" && (
             <Textarea placeholder="WA IDs separados por coma, espacio o salto de línea" value={form.wa_ids_raw} onChange={(e) => setForm({ ...form, wa_ids_raw: e.target.value })} rows={3} />
           )}
           <div className="space-y-2 border rounded-md p-3">
