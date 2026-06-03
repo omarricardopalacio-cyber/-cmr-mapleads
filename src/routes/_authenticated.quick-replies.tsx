@@ -13,8 +13,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { uploadMedia, mediaKindFromMime } from "@/lib/upload-media";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trash2, Zap, Image, Video, FileText, Music } from "lucide-react";
+import { Trash2, Zap, Image, Video, FileText, Music, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/quick-replies")({
   component: QuickRepliesPage,
@@ -36,6 +37,7 @@ function QuickRepliesContent() {
   const del = useServerFn(deleteQuickReply);
   const { data } = useQuery({ queryKey: ["quickReplies"], queryFn: () => list({}) });
   const [form, setForm] = useState({ shortcut: "", text_content: "", media_url: "", mime_type: "", media_type: "image" });
+  const [uploading, setUploading] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,12 +75,23 @@ function QuickRepliesContent() {
           
           <div className="space-y-2">
             <Label className="text-xs">Adjuntar archivo</Label>
-            <Input type="file" accept={form.media_type === "image" ? "image/*" : form.media_type === "video" ? "video/*" : form.media_type === "audio" ? "audio/*" : "*/*"} onChange={async (e) => {
+            <Input type="file" accept={form.media_type === "image" ? "image/*" : form.media_type === "video" ? "video/*" : form.media_type === "audio" ? "audio/*" : "*/*"} disabled={uploading} onChange={async (e) => {
               const file = e.target.files?.[0];
               if (!file) return;
               const url = URL.createObjectURL(file);
               setForm({ ...form, media_url: url, mime_type: file.type });
+              try {
+                setUploading(true);
+                const { url: uploadedUrl, mime_type } = await uploadMedia(file);
+                setForm({ ...form, media_url: uploadedUrl, mime_type, media_type: mediaKindFromMime(mime_type) });
+                toast.success("Archivo subido");
+              } catch (err: any) {
+                toast.error("Error al subir: " + err.message);
+              } finally {
+                setUploading(false);
+              }
             }} />
+            {uploading && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Subiendo...</div>}
           </div>
           
           <div className="space-y-2">

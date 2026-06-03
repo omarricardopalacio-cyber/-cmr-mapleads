@@ -20,7 +20,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { X, Users, AlertCircle, CheckCircle } from "lucide-react";
+import { uploadMedia, mediaKindFromMime } from "@/lib/upload-media";
+import { X, Users, AlertCircle, CheckCircle, Loader2, Paperclip } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/broadcasts")({
   component: BroadcastsPage,
@@ -51,6 +52,8 @@ function BroadcastContent() {
     session_id: "", name: "", message_text: "", rate_per_minute: 15, wa_ids_raw: "", scheduled_at: "", tag_id: "", media_url: "", mime_type: "",
   });
   const [mode, setMode] = useState<"manual" | "tag">("tag");
+  const [mediaType, setMediaType] = useState<"image" | "video" | "audio" | "document">("image");
+  const [uploading, setUploading] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const tagCount = mode === "tag" && form.tag_id
@@ -98,9 +101,40 @@ function BroadcastContent() {
             </SelectContent>
           </Select>
           <Textarea placeholder="Mensaje de la campaña" value={form.message_text} onChange={(e) => setForm({ ...form, message_text: e.target.value })} required />
-          <div className="grid grid-cols-2 gap-2">
-            <Input placeholder="URL imagen/documento (opcional)" value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
-            <Input placeholder="MIME type (opcional)" value={form.mime_type} onChange={(e) => setForm({ ...form, mime_type: e.target.value })} />
+          <div className="space-y-2 border rounded-md p-3 bg-muted/20">
+            <Label className="text-xs flex items-center gap-1"><Paperclip className="h-3 w-3" /> Adjuntar media (opcional)</Label>
+            <Select value={mediaType} onValueChange={(v: any) => setMediaType(v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="image">Imagen</SelectItem>
+                <SelectItem value="video">Video</SelectItem>
+                <SelectItem value="document">Documento</SelectItem>
+                <SelectItem value="audio">Audio</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input type="file" accept={mediaType === "image" ? "image/*" : mediaType === "video" ? "video/*" : mediaType === "audio" ? "audio/*" : "*/*"} disabled={uploading} onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              try {
+                setUploading(true);
+                const { url, mime_type } = await uploadMedia(file);
+                setForm({ ...form, media_url: url, mime_type });
+                setMediaType(mediaKindFromMime(mime_type));
+                toast.success("Archivo subido");
+              } catch (err: any) {
+                toast.error("Error al subir: " + err.message);
+              } finally {
+                setUploading(false);
+              }
+            }} />
+            {uploading && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Subiendo...</div>}
+            {form.media_url && !uploading && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-green-600 truncate flex-1">✓ {form.mime_type}</span>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setForm({ ...form, media_url: "", mime_type: "" })}>Quitar</Button>
+              </div>
+            )}
+            <Input placeholder="O pega URL pública" value={form.media_url} onChange={(e) => setForm({ ...form, media_url: e.target.value })} />
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" variant={mode === "tag" ? "default" : "outline"} size="sm" onClick={() => setMode("tag")}>Por etiqueta</Button>
@@ -125,15 +159,35 @@ function BroadcastContent() {
           ) : (
             <Textarea placeholder="WA IDs separados por coma, espacio o salto de línea" value={form.wa_ids_raw} onChange={(e) => setForm({ ...form, wa_ids_raw: e.target.value })} rows={3} />
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
+          <div className="space-y-2 border rounded-md p-3">
+            <div className="flex items-center justify-between">
               <Label className="text-xs">Velocidad (msg/min)</Label>
-              <Input type="number" min={5} max={30} value={form.rate_per_minute} onChange={(e) => setForm({ ...form, rate_per_minute: +e.target.value })} />
+              <span className="text-xs font-mono font-semibold">{form.rate_per_minute} msg/min</span>
             </div>
-            <div>
-              <Label className="text-xs">Programar (opcional)</Label>
-              <Input type="datetime-local" value={form.scheduled_at} onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} />
+            <input
+              type="range"
+              min={1}
+              max={60}
+              step={1}
+              value={form.rate_per_minute}
+              onChange={(e) => setForm({ ...form, rate_per_minute: +e.target.value })}
+              className="w-full accent-primary"
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Lento (1)</span>
+              <span>Seguro (10-15)</span>
+              <span>Agresivo (60)</span>
             </div>
+            <p className="text-[11px] text-amber-600">
+              {form.rate_per_minute <= 5 && "✓ Muy seguro contra bloqueos."}
+              {form.rate_per_minute > 5 && form.rate_per_minute <= 15 && "✓ Velocidad recomendada para evitar bloqueos de WhatsApp."}
+              {form.rate_per_minute > 15 && form.rate_per_minute <= 30 && "⚠ Velocidad media: posible riesgo en cuentas nuevas."}
+              {form.rate_per_minute > 30 && "⚠ Alta velocidad: riesgo elevado de bloqueo."}
+            </p>
+          </div>
+          <div>
+            <Label className="text-xs">Programar (opcional)</Label>
+            <Input type="datetime-local" value={form.scheduled_at} onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} />
           </div>
           <Button type="submit" className="w-full">Crear campaña</Button>
         </form>
