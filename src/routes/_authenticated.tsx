@@ -13,7 +13,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -58,6 +58,10 @@ function AppSidebar() {
     { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
   ];
 
+  const leads = [
+    { title: "Mapleads", url: "/mapleads", icon: MapPin },
+  ];
+
   const system = [
     { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
     { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
@@ -95,6 +99,12 @@ function AppSidebar() {
           <SidebarGroupLabel>Configuración IA</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(aiConfig)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Búsqueda de clientes</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(leads)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
