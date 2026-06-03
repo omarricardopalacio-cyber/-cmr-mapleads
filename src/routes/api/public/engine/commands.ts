@@ -60,7 +60,8 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                       const arrayBuffer = await res.arrayBuffer();
                       const base64 = Buffer.from(arrayBuffer).toString('base64');
                       const mimeType = res.headers.get("content-type") || p.mimeType;
-                      return { ...c, payload: { ...p, base64, mimeType, mediaUrl: undefined } };
+                      const dataUri = `data:${mimeType};base64,${base64}`;
+                      return { ...c, payload: { ...p, mediaUrl: dataUri } };
                     }
                   }
                 } catch (err) {
