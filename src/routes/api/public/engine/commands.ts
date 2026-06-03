@@ -42,7 +42,30 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           .order('created_at', { ascending: true })
           .limit(20)
 
-        const commands = pending ?? []
+        let commands = pending ?? []
+
+        // If a command is send_media and mediaUrl is a relative path in our bucket, sign it
+        commands = await Promise.all(
+          commands.map(async (c) => {
+            if (c.type === 'send_media' && c.payload && typeof c.payload === 'object') {
+              const p = c.payload as any;
+              if (p.mediaUrl && typeof p.mediaUrl === 'string' && !p.mediaUrl.startsWith('http')) {
+                try {
+                  const { data: signed } = await supabaseAdmin.storage
+                    .from('auto-reply-media')
+                    .createSignedUrl(p.mediaUrl, 3600);
+                  if (signed?.signedUrl) {
+                    return { ...c, payload: { ...p, mediaUrl: signed.signedUrl } };
+                  }
+                } catch (err) {
+                  console.error('[commands] error signing url:', err);
+                }
+              }
+            }
+            return c;
+          })
+        );
+
         if (commands.length > 0) {
           const ids = commands.map((c) => c.id)
           await supabaseAdmin
