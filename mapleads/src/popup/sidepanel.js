@@ -313,33 +313,111 @@ async function ping() {
   setDot('idle', 'Verificando...');
   try {
     const r = await fetch(url + '/api/public/mapleads/ingest', { method: 'GET', headers: { 'X-Mapleads-Token': token } });
-    if (r.ok) setDot('ok', 'Conectado \u2713');
-    else if (r.status === 401) setDot('err', 'Token inválido');
-    else setDot('err', 'Error HTTP ' + r.status);
-  } catch (e) { setDot('err', 'Sin conexión'); }
+    if (r.redirected || (r.headers.get('content-type') || '').includes('text/html')) {
+      setDot('err', 'URL invalida (Preview/Login)');
+    } else if (r.ok) {
+      setDot('ok', 'Conectado - esperando leads');
+    } else if (r.status === 401) {
+      setDot('err', 'Token invalido');
+    } else {
+      setDot('err', 'HTTP ' + r.status);
+    }
+  } catch (e) {
+    setDot('err', 'Sin conexion: ' + (e?.message || e));
+  }
 }
 
-if (globalThis.MLBackendSync) {
-  globalThis.MLBackendSync.getConfig().then(c => {
-    if (urlEl) urlEl.value = c.url || '';
-    if (tokEl) tokEl.value = c.token || '';
-    ping();
+(async () => {
+  if (!urlEl || !tokEl) return;
+  const s = await chrome.storage.local.get(['mls_backend_url', 'mls_backend_token']);
+  urlEl.value = s.mls_backend_url || '';
+  tokEl.value = s.mls_backend_token || '';
+  ping();
+  setInterval(ping, 30000);
+})();
+
+btnSave?.addEventListener('click', async () => {
+  await chrome.storage.local.set({
+    mls_backend_url: (urlEl.value || '').trim().replace(/\/$/, ''),
+    mls_backend_token: (tokEl.value || '').trim(),
   });
-}
+  if (mlsStatus) {
+    mlsStatus.textContent = 'Guardado';
+    setTimeout(() => (mlsStatus.textContent = ''), 2500);
+  }
+  ping();
+});
+btnTest?.addEventListener('click', ping);
 
-if (btnSave) {
-  btnSave.addEventListener('click', async () => {
-    const url = (urlEl.value || '').trim().replace(/\/$/, '');
-    const token = (tokEl.value || '').trim();
-    if (globalThis.MLBackendSync) await globalThis.MLBackendSync.setConfig(url, token);
-    if (mlsStatus) { mlsStatus.textContent = 'Guardado.'; setTimeout(() => { mlsStatus.textContent = ''; }, 2000); }
-    ping();
-  });
-}
+// === Auto-sync de leads extraidos ===
+(function initAutoSync() {
+  const SENT_KEY = 'mls_sent_keys';
+  let syncing = false;
 
-if (btnTest) {
-  btnTest.addEventListener('click', ping);
-}
+  function leadKey(l) {
+    return [
+      (l.phone || '').replace(/\D+/g, ''),
+      (l.name || '').toLowerCase().trim(),
+      (l.address || '').toLowerCase().trim(),
+    ].join('|');
+  }
 
-setInterval(ping, 30000);
+  async function autoSync() {
+    if (syncing) return;
+    syncing = true;
+    try {
+      const cfg = await chrome.storage.local.get([
+        'mls_backend_url', 'mls_backend_token', SENT_KEY,
+      ]);
+      const url = (cfg.mls_backend_url || '').trim().replace(/\/$/, '');
+      const token = (cfg.mls_backend_token || '').trim();
+      if (!url || !token) return;
 
+      let res;
+      try { res = await sendToContent('GET_LEADS'); } catch { return; }
+      const leads = res?.leads || [];
+      if (!leads.length) return;
+
+      const sent = new Set(cfg[SENT_KEY] || []);
+      const pending = leads.filter((l) => {
+        const k = leadKey(l);
+        return k && !sent.has(k);
+      });
+      if (!pending.length) return;
+
+      let totalInserted = 0;
+      for (let i = 0; i < pending.length; i += 100) {
+        const batch = pending.slice(i, i + 100);
+        try {
+          const r = await fetch(url + '/api/public/mapleads/ingest', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Mapleads-Token': token,
+            },
+            body: JSON.stringify({ leads: batch }),
+          });
+          if (r.ok) {
+            const d = await r.json().catch(() => ({}));
+            totalInserted += Number(d.inserted || batch.length);
+            batch.forEach((l) => sent.add(leadKey(l)));
+          } else {
+            console.warn('[mapleads] ingest fail', r.status, await r.text());
+          }
+        } catch (e) {
+          console.warn('[mapleads] ingest error', e);
+        }
+      }
+      if (mlsStatus && totalInserted) {
+        mlsStatus.textContent = 'Sync: +' + totalInserted + ' (' + sent.size + ' total)';
+      }
+      const arr = Array.from(sent).slice(-5000);
+      await chrome.storage.local.set({ [SENT_KEY]: arr });
+    } finally {
+      syncing = false;
+    }
+  }
+
+  setInterval(autoSync, 5000);
+  setTimeout(autoSync, 1500);
+})();
