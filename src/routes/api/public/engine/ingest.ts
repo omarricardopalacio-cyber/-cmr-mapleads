@@ -258,7 +258,7 @@ async function maybeAutoReply(
   const { data: rules } = await supabaseAdmin
     .from('auto_replies')
     .select(
-      'id, match_type, match_value, reply_text, cooldown_seconds, last_triggered_at, session_id, trigger_type, media_url, mime_type, action_add_tags, action_remove_tags, action_ai_behavior',
+      'id, match_type, match_value, reply_text, cooldown_seconds, last_triggered_at, session_id, trigger_type, media_url, mime_type, action_add_tags, action_remove_tags, action_ai_behavior, limit_per_contact',
     )
     .eq('org_id', orgId)
     .eq('is_active', true);
@@ -304,6 +304,15 @@ async function maybeAutoReply(
     if (raw.last_triggered_at) {
       const diff = (Date.now() - new Date(raw.last_triggered_at).getTime()) / 1000;
       if (diff < (raw.cooldown_seconds ?? 0)) continue;
+    }
+
+    if (raw.limit_per_contact && raw.limit_per_contact > 0) {
+      const { count } = await supabaseAdmin
+        .from('auto_reply_triggers')
+        .select('id', { count: 'exact', head: true })
+        .eq('rule_id', raw.id)
+        .eq('contact_id', contactId);
+      if ((count ?? 0) >= raw.limit_per_contact) continue;
     }
 
     // Fetch steps
@@ -369,6 +378,13 @@ async function maybeAutoReply(
       .from('auto_replies')
       .update({ last_triggered_at: new Date().toISOString() })
       .eq('id', raw.id);
+
+    await supabaseAdmin.from('auto_reply_triggers').insert({
+      org_id: orgId,
+      rule_id: raw.id,
+      contact_id: contactId,
+    });
+
     return { aiDisabled };
   }
   return { aiDisabled: false };

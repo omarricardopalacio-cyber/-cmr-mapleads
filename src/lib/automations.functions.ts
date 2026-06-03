@@ -51,6 +51,7 @@ export const upsertAutoReply = createServerFn({ method: "POST" })
         action_remove_tags: z.array(z.string().uuid()).nullable().optional(),
         action_ai_behavior: z.enum(["no_change", "disable_ai", "enable_ai"]).default("no_change"),
         chain_to_rule_id: z.string().uuid().nullable().optional(),
+        limit_per_contact: z.number().int().min(0).nullable().optional(),
         steps: z
           .array(
             z.object({

@@ -55,10 +55,16 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                     .from('auto-reply-media')
                     .createSignedUrl(p.mediaUrl, 3600);
                   if (signed?.signedUrl) {
-                    return { ...c, payload: { ...p, mediaUrl: signed.signedUrl } };
+                    const res = await fetch(signed.signedUrl);
+                    if (res.ok) {
+                      const arrayBuffer = await res.arrayBuffer();
+                      const base64 = Buffer.from(arrayBuffer).toString('base64');
+                      const mimeType = res.headers.get("content-type") || p.mimeType;
+                      return { ...c, payload: { ...p, base64, mimeType, mediaUrl: undefined } };
+                    }
                   }
                 } catch (err) {
-                  console.error('[commands] error signing url:', err);
+                  console.error('[commands] error signing/fetching url:', err);
                 }
               }
             }

@@ -156,6 +156,7 @@ function AutoRepliesTab() {
     action_remove_tags: [] as string[],
     action_ai_behavior: "no_change" as "no_change" | "disable_ai" | "enable_ai",
     chain_to_rule_id: null as string | null,
+    limit_per_contact: null as number | null,
   };
   const [form, setForm] = useState(defaultForm);
   const [steps, setSteps] = useState<Step[]>([emptyStep()]);
@@ -179,6 +180,7 @@ function AutoRepliesTab() {
       action_remove_tags: r.action_remove_tags ?? [],
       action_ai_behavior: r.action_ai_behavior ?? "no_change",
       chain_to_rule_id: r.chain_to_rule_id ?? null,
+      limit_per_contact: r.limit_per_contact ?? null,
     });
     const loaded: Step[] = await Promise.all((r.steps ?? []).map(async (s: any) => {
       let previewUrl = s.media_url ?? "";
@@ -472,6 +474,18 @@ function AutoRepliesTab() {
                   ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Limit per contact */}
+          <div className="space-y-1">
+            <Label className="text-xs">Límite de veces por usuario</Label>
+            <Input
+              type="number"
+              placeholder="0 para ilimitado"
+              value={form.limit_per_contact || ""}
+              onChange={(e) => setForm({ ...form, limit_per_contact: e.target.value ? parseInt(e.target.value, 10) : null })}
+            />
+            <p className="text-[10px] text-muted-foreground">Dejar en 0 o vacío para no limitar</p>
           </div>
 
           {/* Additional actions */}
