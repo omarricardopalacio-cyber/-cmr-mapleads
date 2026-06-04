@@ -417,13 +417,31 @@ export async function executeToolCall(
         const query = String(args.query || "");
         let products = await searchCatalog(catalogCfg, query, limit);
         
-        if (!products.length && query.includes(" ")) {
-          // Búsqueda inteligente: si la frase falla, intentamos con la primera palabra principal
-          const firstWord = query.split(" ")[0];
-          if (firstWord && firstWord.length > 2) {
-            products = await searchCatalog(catalogCfg, firstWord, limit);
+        if (!products.length) {
+          // Búsqueda inteligente 1: Singular/Plural. Quitar 's' o 'es' de las palabras.
+          const singularQuery = query.split(" ").map(w => {
+            if (w.length > 3) {
+              if (w.endsWith("es")) return w.slice(0, -2);
+              if (w.endsWith("s")) return w.slice(0, -1);
+            }
+            return w;
+          }).join(" ");
+
+          if (singularQuery !== query && singularQuery.trim().length > 2) {
+            products = await searchCatalog(catalogCfg, singularQuery, limit);
             if (products.length > 0) {
-              result = `No hay resultados exactos para "${query}", pero SÍ hay alternativas para "${firstWord}". Productos encontrados (usa el id con send_product_to_customer):\n` + products.map((p) => formatProductForPrompt(p)).join("\n") + `\n\nIMPORTANTE: Dile al cliente que no tienes exactamente "${query}", pero ofrécele estas opciones similares y pregúntale si le gusta alguna.`;
+              result = `No hay resultados exactos para "${query}", pero SÍ hay para "${singularQuery}". Productos encontrados (usa el id con send_product_to_customer):\n` + products.map((p) => formatProductForPrompt(p)).join("\n") + `\n\nIMPORTANTE: Dile al cliente que no tienes exactamente "${query}", pero ofrécele estas opciones similares y pregúntale si le gusta alguna.`;
+            }
+          }
+
+          // Búsqueda inteligente 2: Si era una frase larga y aún no hay resultados, intentar con la primera palabra clave
+          if (!products.length && query.includes(" ")) {
+            const firstWord = singularQuery.split(" ")[0];
+            if (firstWord && firstWord.length > 2) {
+              products = await searchCatalog(catalogCfg, firstWord, limit);
+              if (products.length > 0) {
+                result = `No hay resultados exactos para "${query}", pero SÍ hay alternativas para "${firstWord}". Productos encontrados:\n` + products.map((p) => formatProductForPrompt(p)).join("\n") + `\n\nIMPORTANTE: Ofrécele estas opciones similares.`;
+              }
             }
           }
         }
