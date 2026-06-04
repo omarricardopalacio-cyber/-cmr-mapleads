@@ -417,47 +417,68 @@ export type Database = {
       }
       catalog_integrations: {
         Row: {
-          api_token: string
-          base_url: string
           cached_tenant_id: string | null
-          catalog_slug: string
-          enabled: boolean
+          id: string
+          is_active: boolean
+          last_sync_count: number | null
+          last_sync_error: string | null
+          last_synced_at: string | null
           last_test_at: string | null
           last_test_message: string | null
           last_test_ok: boolean | null
+          name: string
           org_id: string
           products_table: string
+          publishable_key: string
           send_media: boolean
+          slug: string
+          status: string
+          supabase_url: string
+          tenant_id: string | null
           tenants_table: string
           updated_at: string
         }
         Insert: {
-          api_token?: string
-          base_url?: string
           cached_tenant_id?: string | null
-          catalog_slug?: string
-          enabled?: boolean
+          id?: string
+          is_active?: boolean
+          last_sync_count?: number | null
+          last_sync_error?: string | null
+          last_synced_at?: string | null
           last_test_at?: string | null
           last_test_message?: string | null
           last_test_ok?: boolean | null
+          name?: string
           org_id: string
           products_table?: string
+          publishable_key?: string
           send_media?: boolean
+          slug?: string
+          status?: string
+          supabase_url?: string
+          tenant_id?: string | null
           tenants_table?: string
           updated_at?: string
         }
         Update: {
-          api_token?: string
-          base_url?: string
           cached_tenant_id?: string | null
-          catalog_slug?: string
-          enabled?: boolean
+          id?: string
+          is_active?: boolean
+          last_sync_count?: number | null
+          last_sync_error?: string | null
+          last_synced_at?: string | null
           last_test_at?: string | null
           last_test_message?: string | null
           last_test_ok?: boolean | null
+          name?: string
           org_id?: string
           products_table?: string
+          publishable_key?: string
           send_media?: boolean
+          slug?: string
+          status?: string
+          supabase_url?: string
+          tenant_id?: string | null
           tenants_table?: string
           updated_at?: string
         }
@@ -465,7 +486,58 @@ export type Database = {
           {
             foreignKeyName: "catalog_integrations_org_id_fkey"
             columns: ["org_id"]
-            isOneToOne: true
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_sync_logs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          integration_id: string
+          org_id: string
+          products_failed: number | null
+          products_synced: number | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          integration_id: string
+          org_id: string
+          products_failed?: number | null
+          products_synced?: number | null
+          status: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          integration_id?: string
+          org_id?: string
+          products_failed?: number | null
+          products_synced?: number | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_sync_logs_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "catalog_sync_logs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -1135,6 +1207,74 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "pipeline_stages_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      products: {
+        Row: {
+          badge: string | null
+          created_at: string | null
+          description: string | null
+          external_id: string
+          id: string
+          image_url: string | null
+          integration_id: string | null
+          is_active: boolean | null
+          name: string
+          org_id: string
+          price: number | null
+          raw: Json | null
+          sku: string | null
+          slug: string | null
+          stock: number | null
+          updated_at: string | null
+          video_url: string | null
+        }
+        Insert: {
+          badge?: string | null
+          created_at?: string | null
+          description?: string | null
+          external_id: string
+          id?: string
+          image_url?: string | null
+          integration_id?: string | null
+          is_active?: boolean | null
+          name: string
+          org_id: string
+          price?: number | null
+          raw?: Json | null
+          sku?: string | null
+          slug?: string | null
+          stock?: number | null
+          updated_at?: string | null
+          video_url?: string | null
+        }
+        Update: {
+          badge?: string | null
+          created_at?: string | null
+          description?: string | null
+          external_id?: string
+          id?: string
+          image_url?: string | null
+          integration_id?: string | null
+          is_active?: boolean | null
+          name?: string
+          org_id?: string
+          price?: number | null
+          raw?: Json | null
+          sku?: string | null
+          slug?: string | null
+          stock?: number | null
+          updated_at?: string | null
+          video_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
