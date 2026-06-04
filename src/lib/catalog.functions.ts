@@ -189,6 +189,7 @@ function mapRow(row: any): Record<string, any> {
     price: row.base_price ?? row.price ?? null,
     stock: row.warehouse_stock ?? row.stock ?? null,
     image_url: row.main_image_url ?? row.image_url ?? null,
+    video_url: row.main_video_url ?? row.video_url ?? (Array.isArray(row.videos) && row.videos[0]?.url) ?? null,
     slug: row.slug ?? null,
     sku: row.sku ?? null,
     badge: row.badge ?? null,
@@ -334,7 +335,7 @@ export const searchCatalogProducts = createServerFn({ method: "GET" })
     // Búsqueda por ilike en nombre y descripción
     const { data: products, error } = await (supabaseAdmin as any)
       .from("products")
-      .select("id, name, description, price, stock, image_url, slug, sku, badge")
+      .select("id, name, description, price, stock, image_url, video_url, slug, sku, badge")
       .eq("org_id", orgId)
       .eq("is_active", true)
       .or(`name.ilike.%${data.q}%,description.ilike.%${data.q}%,sku.ilike.%${data.q}%`)

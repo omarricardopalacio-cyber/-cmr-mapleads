@@ -180,97 +180,77 @@ export async function pingCatalog(cfg: CatalogConfig): Promise<{
 }
 
 /**
- * Busca productos en el catálogo externo vía PostgREST.
- * Usa ilike sobre name y (si existe) description.
+ * Busca productos en el catálogo sincronizado local.
+ * Usa ilike sobre name, description y sku.
  */
 export async function searchCatalog(
   cfg: CatalogConfig,
   query: string,
   limit = 6,
 ): Promise<CatalogProduct[]> {
-  const tenantId = await resolveTenantId(cfg);
-  if (!tenantId) return [];
+  let builder = (supabaseAdmin as any)
+    .from("products")
+    .select("*")
+    .eq("org_id", cfg.org_id)
+    .eq("is_active", true)
+    .limit(Math.min(limit, 10));
 
-  const table = cfg.products_table || "master_products";
-  const url = new URL(pgRestUrl(cfg, table));
-
-  url.searchParams.set("tenant_id", `eq.${tenantId}`);
-  url.searchParams.set("is_active", "eq.true");
-  url.searchParams.set("limit", String(Math.min(limit, 10)));
-  url.searchParams.set("select", "*");
-
-  if (query.trim()) {
-    const terms = expandSearchTerms(query.trim());
-    const clauses: string[] = [];
-    for (const term of terms) {
-      const q = term.replace(/[%_]/g, "");
-      if (!q) continue;
-      clauses.push(`name.ilike.*${q}*`);
-      clauses.push(`description.ilike.*${q}*`);
-      clauses.push(`sku.ilike.*${q}*`);
-    }
-    if (clauses.length) {
-      url.searchParams.set("or", `(${clauses.join(",")})`);
-    } else {
-      const q = query.trim().replace(/[%_]/g, "");
-      url.searchParams.set("name", `ilike.*${q}*`);
-    }
+  const q = query.trim();
+  if (q) {
+    builder = builder.or(`name.ilike.%${q}%,description.ilike.%${q}%,sku.ilike.%${q}%`).order("name", { ascending: true });
   } else {
-    // No query = return latest products
-    url.searchParams.set("order", "id.desc");
+    builder = builder.order("created_at", { ascending: false });
   }
 
-  const res = await fetch(url.toString(), { headers: anonHeaders(cfg) });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Catalog search [${res.status}]: ${txt.slice(0, 300)}`);
+  const { data: rows, error } = await builder;
+
+  if (error || !rows) {
+    return [];
   }
 
-  const rows: any[] = await res.json();
-
-  return rows.map((r) => ({
-    id: String(r.id),
-    name: String(r.name || ""),
-    description: r.long_description || r.description || undefined,
-    price: r.base_price ?? r.price ?? undefined,
-    stock: r.warehouse_stock ?? r.stock ?? null,
-    image_url: r.main_image_url || r.image_url || undefined,
-    video_url: r.main_video_url ?? r.video_url ?? (Array.isArray(r.videos) && r.videos[0]?.url) ?? undefined,
-    url: r.slug ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}` : undefined,
-    sku: r.sku || undefined,
-    badge: r.badge || undefined,
-  }));
+  return rows.map((r: any) => {
+    const raw = r.raw || {};
+    return {
+      id: String(r.id),
+      name: String(r.name || ""),
+      description: r.description || undefined,
+      price: r.price ?? undefined,
+      stock: r.stock ?? null,
+      image_url: r.image_url || undefined,
+      video_url: raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
+      url: r.slug ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}` : undefined,
+      sku: r.sku || undefined,
+      badge: r.badge || undefined,
+    };
+  });
 }
 
 /**
- * Obtiene un producto por id del catálogo externo.
+ * Obtiene un producto por id del catálogo local.
  */
 export async function getCatalogProduct(
   cfg: CatalogConfig,
   productId: string,
 ): Promise<CatalogProduct | null> {
-  const table = cfg.products_table || "master_products";
-  const url = new URL(pgRestUrl(cfg, table));
-  url.searchParams.set("id", `eq.${productId}`);
-  url.searchParams.set("is_active", "eq.true");
-  url.searchParams.set("select", "*");
-  url.searchParams.set("limit", "1");
+  const { data: r, error } = await (supabaseAdmin as any)
+    .from("products")
+    .select("*")
+    .eq("org_id", cfg.org_id)
+    .eq("id", productId)
+    .eq("is_active", true)
+    .maybeSingle();
 
-  const res = await fetch(url.toString(), { headers: anonHeaders(cfg) });
-  if (!res.ok) return null;
+  if (error || !r) return null;
 
-  const rows: any[] = await res.json();
-  if (!rows.length) return null;
-
-  const r = rows[0];
+  const raw = r.raw || {};
   return {
     id: String(r.id),
     name: String(r.name || ""),
-    description: r.long_description || r.description || undefined,
-    price: r.base_price ?? r.price ?? undefined,
-    stock: r.warehouse_stock ?? r.stock ?? null,
-    image_url: r.main_image_url || r.image_url || undefined,
-    video_url: r.main_video_url ?? r.video_url ?? (Array.isArray(r.videos) && r.videos[0]?.url) ?? undefined,
+    description: r.description || undefined,
+    price: r.price ?? undefined,
+    stock: r.stock ?? null,
+    image_url: r.image_url || undefined,
+    video_url: raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
     sku: r.sku || undefined,
     badge: r.badge || undefined,
   };
