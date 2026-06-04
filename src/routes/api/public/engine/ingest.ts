@@ -977,24 +977,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
-            // Disparar IA/auto-respuestas para mensajes entrantes con texto O con multimedia
-            const msgDirection = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
-            const triggerText = e.text || (e.media ? '[multimedia]' : null)
-            if (msgDirection === 'in' && triggerText) {
+            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && (e.text || e.media)) {
               // Use phone@c.us when we have a real phone (avoids @lid issues)
               const sendChatId = e.contact?.phone
                 ? `${e.contact.phone}@c.us`
                 : /^\d+$/.test(waId)
                   ? `${waId}@c.us`
                   : e.chatId
-              // Auto-replies solo para mensajes con texto real (no multimedia puro)
-              let aiDisabled = false
-              if (e.text) {
-                const result = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
-                aiDisabled = result.aiDisabled
-              }
+                  
+              const messageText = e.text ?? (e.media ? '[Archivo multimedia]' : '')
+              
+              const { aiDisabled } = await maybeAutoReply(session.org_id, session.id, sendChatId, messageText, thread.id, contactId)
               if (!aiDisabled) {
-                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, triggerText)
+                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, messageText)
               }
 
               // Keyword flow enrollment (wrapped to avoid breaking bridge on DB errors)
@@ -1015,7 +1010,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     .limit(1)
                     .maybeSingle();
                   if (!firstStep) continue;
-                  const lowerText = e.text.toLowerCase();
+                  const lowerText = (e.text || '').toLowerCase();
                   const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
                   if (triggerVal && lowerText.includes(triggerVal)) {
                     await dyn()
