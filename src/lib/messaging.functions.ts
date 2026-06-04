@@ -216,36 +216,31 @@ export const sendMessage = createServerFn({ method: "POST" })
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
+    // Build payload and resolve media (including signed URLs)
     const payload: Record<string, unknown> = {
       chatId,
       text: data.text.trim() || data.caption || "",
     };
 
-    if (data.media_url || data.media_storage_path) {
-      payload.mediaUrl = data.media_url;
-      payload.storagePath = data.media_storage_path;
-      payload.mimeType = data.mime_type;
-      payload.caption = data.caption || data.text || undefined;
-    } else if (data.media_base64) {
-      const raw = data.media_base64.trim();
-      const smallEnough = raw.length <= 48_000;
-      if (smallEnough) {
-        payload.media = raw.startsWith("data:")
-          ? raw
-          : `data:${data.mime_type || "application/octet-stream"};base64,${raw}`;
-        payload.mimeType = data.mime_type;
-        payload.caption = data.caption || data.text || undefined;
-      } else if (data.media_storage_path && data.media_url) {
-        payload.mediaUrl = data.media_url;
-        payload.storagePath = data.media_storage_path;
-        payload.mimeType = data.mime_type;
-        payload.caption = data.caption || data.text || undefined;
+    // Use helper to resolve media URL or base64, handling signed URLs for storage paths
+    const resolved = await resolveMediaForCommand({
+      media_url: data.media_url,
+      media_base64: data.media_base64,
+      media_storage_path: data.media_storage_path,
+      mime_type: data.mime_type,
+      caption: data.caption,
+      text: data.text,
+    });
+
+    if (resolved.media) {
+      if (resolved.media.startsWith("data:")) {
+        payload.media = resolved.media;
       } else {
-        throw new Error(
-          "El archivo es demasiado grande. Vuelve a adjuntarlo o espera a que termine la subida."
-        );
+        payload.mediaUrl = resolved.media;
       }
+      if (resolved.caption) payload.caption = resolved.caption;
     }
+
 
     const displayText = sanitizeMessageText(
       data.caption || data.text,
