@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
@@ -126,17 +126,22 @@ function RootComponent() {
 function AuthContextSync() {
   const auth = useAuth();
   const router = useRouter();
+  const qc = useQueryClient();
   useEffect(() => {
     router.update({ context: { ...router.options.context, auth } });
     if (auth.isReady) router.invalidate();
   }, [auth, router]);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        // Limpiar todo el caché para que al re-login se haga fetch fresco
+        qc.clear();
+      }
       router.invalidate();
     });
     return () => subscription.unsubscribe();
-  }, [router]);
+  }, [router, qc]);
 
   return null;
 }

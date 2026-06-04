@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { ensureOrg } from "@/lib/org.functions";
 import { getPendingRemindersCount, getPendingReminders } from "@/lib/reminders.functions";
@@ -124,12 +124,14 @@ function AppSidebar() {
 
 function SignOutButton() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   return (
     <Button
       variant="ghost"
       size="sm"
       className="justify-start gap-2"
       onClick={async () => {
+        queryClient.clear();
         await supabase.auth.signOut();
         navigate({ to: "/login" });
       }}

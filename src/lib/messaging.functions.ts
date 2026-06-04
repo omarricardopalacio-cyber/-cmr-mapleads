@@ -397,6 +397,8 @@ export const clearThreadMessages = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+// ADVERTENCIA: Esta función es extremadamente destructiva.
+// Borra TODOS los mensajes, threads y contactos de la organización completa.
 export const clearAllChats = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {

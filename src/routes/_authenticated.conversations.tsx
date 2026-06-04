@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { listThreads } from "@/lib/crm.functions";
-import { clearAllChats, sendDirectMessage } from "@/lib/messaging.functions";
+import { sendDirectMessage } from "@/lib/messaging.functions";
 import { listSessions } from "@/lib/sessions.functions";
 import { getOrgStats, syncWaSessions, syncThreads, syncContacts } from "@/lib/org.functions";
 import { Input } from "@/components/ui/input";
@@ -39,7 +39,6 @@ export const Route = createFileRoute("/_authenticated/conversations")({
 
 function ConversationsLayout() {
   const fn = useServerFn(listThreads);
-  const clearAll = useServerFn(clearAllChats);
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [filterTab, setFilterTab] = useState<"all" | "mine" | "unassigned">("all");
@@ -59,15 +58,6 @@ function ConversationsLayout() {
     return hay.includes(q.toLowerCase());
   });
 
-  const clearAllMut = useMutation({
-    mutationFn: () => clearAll(),
-    onSuccess: () => {
-      toast.success("Todos los chats fueron borrados");
-      qc.invalidateQueries({ queryKey: ["threads"] });
-      qc.invalidateQueries({ queryKey: ["thread"] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
 
   return (
     <div className="flex h-[calc(100vh-5rem)] min-h-0 -m-4 md:-m-6 border-t overflow-hidden">
@@ -75,32 +65,6 @@ function ConversationsLayout() {
       <aside className="w-full md:w-80 lg:w-96 border-r flex flex-col bg-card">
         <div className="p-3 border-b flex items-center gap-2">
           <h1 className="font-semibold flex-1">Chats</h1>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                title="Borrar todos los chats"
-                disabled={clearAllMut.isPending}
-              >
-                <Trash2 className="h-4 w-4 text-destructive" />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Borrar todos los chats</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Esto eliminará conversaciones, mensajes y contactos guardados para empezar de cero.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction onClick={() => clearAllMut.mutate()}>
-                  Sí, borrar todo
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
           <NewChatDialog />
         </div>
         {/* DiagnosticsPanel oculto temporalmente */}
