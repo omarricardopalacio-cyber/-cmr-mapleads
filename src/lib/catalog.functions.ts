@@ -21,7 +21,11 @@ const DEFAULTS = {
   catalog_slug: "",
   api_token: "",
   send_media: true,
+  tenants_table: "tenants",
+  products_table: "master_products",
 };
+
+// ── GET ──────────────────────────────────────────────────────
 
 export const getCatalogIntegration = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -35,12 +39,16 @@ export const getCatalogIntegration = createServerFn({ method: "GET" })
     return { config: data ?? { org_id: orgId, ...DEFAULTS } };
   });
 
+// ── SAVE ─────────────────────────────────────────────────────
+
 const SaveSchema = z.object({
   enabled: z.boolean(),
   base_url: z.string().max(300).default(""),
   catalog_slug: z.string().max(200).default(""),
-  api_token: z.string().max(300).default(""),
+  api_token: z.string().max(600).default(""),
   send_media: z.boolean().default(true),
+  tenants_table: z.string().max(100).default("tenants"),
+  products_table: z.string().max(100).default("master_products"),
 });
 
 export const saveCatalogIntegration = createServerFn({ method: "POST" })
@@ -48,12 +56,23 @@ export const saveCatalogIntegration = createServerFn({ method: "POST" })
   .inputValidator((d) => SaveSchema.parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
+    // Normalise base_url: strip trailing slash, ensure no /rest/v1 suffix
+    const base_url = data.base_url.replace(/\/+$/, "").replace(/\/rest\/v1$/, "");
     const { error } = await (supabaseAdmin as any)
       .from("catalog_integrations")
-      .upsert({ org_id: orgId, ...data, updated_at: new Date().toISOString() });
+      .upsert({
+        org_id: orgId,
+        ...data,
+        base_url,
+        // Reset cache when config changes so next query re-resolves tenant
+        cached_tenant_id: null,
+        updated_at: new Date().toISOString(),
+      });
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+// ── TEST ─────────────────────────────────────────────────────
 
 export const testCatalogIntegration = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -65,26 +84,39 @@ export const testCatalogIntegration = createServerFn({ method: "POST" })
       .eq("org_id", orgId)
       .maybeSingle();
 
-    if (!data?.base_url || !data?.catalog_slug) {
-      return { ok: false, message: "Configura base_url y catalog_slug primero" };
+    if (!data?.base_url || !data?.catalog_slug || !data?.api_token) {
+      return {
+        ok: false,
+        message: "Completa URL de Supabase, slug y publishable key antes de probar",
+      };
     }
 
-    const cfg = data as CatalogConfig;
-    const ping = await pingCatalog(cfg);
-    let sample: Array<{ id: string; name: string }> = [];
+    const cfg: CatalogConfig = {
+      org_id: orgId,
+      enabled: data.enabled,
+      base_url: data.base_url,
+      catalog_slug: data.catalog_slug,
+      api_token: data.api_token,
+      send_media: data.send_media ?? true,
+      tenants_table: data.tenants_table || "tenants",
+      products_table: data.products_table || "master_products",
+      cached_tenant_id: null, // force fresh resolve on test
+    };
 
+    const ping = await pingCatalog(cfg);
+
+    // Fetch a small sample of products if ping succeeded
+    let sample: Array<{ id: string; name: string; price?: any }> = [];
     if (ping.ok) {
       try {
         const products = await searchCatalog(cfg, "", 3);
-        sample = products.map((p) => ({ id: String(p.id), name: String(p.name) }));
-      } catch (e) {
-        return {
-          ok: false,
-          message: `Conectado a /health pero /search falló: ${(e as Error).message}`,
-        };
+        sample = products.map((p) => ({ id: p.id, name: p.name, price: p.price }));
+      } catch {
+        // sample is optional, don't fail the test
       }
     }
 
+    // Persist test result
     await (supabaseAdmin as any)
       .from("catalog_integrations")
       .update({
@@ -94,5 +126,10 @@ export const testCatalogIntegration = createServerFn({ method: "POST" })
       })
       .eq("org_id", orgId);
 
-    return { ok: ping.ok, message: ping.message, sample };
+    return {
+      ok: ping.ok,
+      message: ping.message,
+      productCount: ping.productCount,
+      sample,
+    };
   });

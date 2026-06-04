@@ -1,336 +1,253 @@
 # Manual de integración del Catálogo con el CRM (Maple)
 
-Este manual describe **los endpoints HTTP públicos** que el proyecto de catálogo (ej. `https://sincro3.netlify.app/catalogo/<slug>`) debe exponer para que el CRM Maple pueda permitir que su IA busque productos y envíe imágenes, precios y descripciones al cliente por WhatsApp.
-
-Está escrito para que **otra IA pueda implementarlo automáticamente** en el proyecto de catálogo (TanStack Start / Lovable Cloud — mismo stack que Maple).
-
----
-
-## 1. Contrato general
-
-El CRM llama al catálogo por HTTP. Las URLs siguen este patrón:
-
-```
-{BASE_URL}/api/public/catalog/{SLUG}/{ACCIÓN}
-```
-
-- `BASE_URL`: dominio de tu catálogo (ej. `https://sincro3.netlify.app`)
-- `SLUG`: identificador de la bodega/catálogo tal como aparece en la URL pública (ej. `bodega-central-demo`)
-- `ACCIÓN`: `health`, `search`, `product/{id}`
-
-**Autenticación opcional**: si el CRM envía el header `X-Catalog-Token`, valida que coincida con un token previamente compartido (puede guardarse en una tabla `catalog_api_tokens(slug, token)` o en `bodega.api_token`). Si no hay token configurado del lado del catálogo, ignora el header.
-
-Todos los endpoints devuelven `Content-Type: application/json` y deben aceptar `OPTIONS` con CORS abierto:
-```
-Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, OPTIONS
-Access-Control-Allow-Headers: Content-Type, X-Catalog-Token
-```
+> **ACTUALIZADO: El CRM ya NO necesita endpoints HTTP propios en el catálogo.**
+> Ahora consulta el Supabase del catálogo **directamente por PostgREST** usando
+> la publishable (anon) key. Solo se necesitan permisos RLS correctos.
 
 ---
 
-## 2. Endpoints requeridos
+## 1. ¿Qué datos necesita el CRM?
 
-### 2.1 `GET /api/public/catalog/{slug}/health`
-Comprobación de que el slug existe y el catálogo está activo.
+El operador ingresa **4 datos** en el CRM → *Integración Catálogo*:
 
-**Respuesta 200**
-```json
-{
-  "ok": true,
-  "slug": "bodega-central-demo",
-  "name": "Electro Pepe",
-  "products_count": 142
-}
+| # | Campo | Ejemplo |
+|---|-------|---------|
+| ① | URL Supabase del catálogo | `https://leqjedeupuikzjqlfzpx.supabase.co` |
+| ② | Publishable Key (anon) | `sb_publishable_fExI6u...` ó `eyJhbGciOi...` |
+| ③ | Slug de la bodega | `tv-market` |
+| ④ | *(Avanzado)* Tabla tenants | `tenants` (default) |
+| ④ | *(Avanzado)* Tabla productos | `master_products` (default) |
+
+> **⚠️ La URL ① es la URL de Supabase** (`xxxx.supabase.co`), **NO** la URL del
+> sitio web de catálogo (`sincro3.netlify.app`).
+
+---
+
+## 2. Qué hace el CRM con esos datos
+
+### Al pulsar "Probar conexión"
+
+**Paso 1 — Resolver slug → tenant_id**
 ```
-**Respuesta 404** si el slug no existe:
-```json
-{
-  "ok": false,
-  "error": "slug not found"
-}
+GET https://{supabase_url}/rest/v1/{tenants_table}
+    ?slug=eq.{slug}&select=id,slug,name&limit=1
+Headers:
+  apikey: {anon_key}
+  Authorization: Bearer {anon_key}
 ```
+Espera: un array con exactamente 1 fila. Si devuelve `[]` → el slug no existe o RLS bloquea.
 
-### 2.2 `GET /api/public/catalog/{slug}/search?q=&limit=`
-Busca productos por palabra clave en `name`, `description`, `category`, `sku`.
-
-Parámetros:
-- `q` (string, opcional): texto a buscar. Si va vacío, devuelve los más recientes/destacados.
-- `limit` (number, opcional, default 6, máx 20).
-
-**Respuesta 200**
-```json
-{
-  "products": [
-    {
-      "id": "abc123",
-      "name": "Cable HDMI 1.5m Guaya J-8",
-      "description": "Cable HDMI macho-macho reforzado de 1,5 metros.",
-      "price": 8000,
-      "currency": "COP",
-      "category": "ELECTRODOMESTICOS",
-      "image_url": "https://cdn.tu-catalogo.com/products/abc123-1.jpg",
-      "images": [
-        "https://cdn.tu-catalogo.com/products/abc123-1.jpg",
-        "https://cdn.tu-catalogo.com/products/abc123-2.jpg"
-      ],
-      "video_url": null,
-      "stock": 25,
-      "url": "https://sincro3.netlify.app/catalogo/bodega-central-demo/p/abc123",
-      "attributes": {
-        "marca": "Guaya",
-        "color": "negro"
-      }
-    }
-  ]
-}
+**Paso 2 — Contar productos activos**
 ```
-Campos mínimos obligatorios: `id`, `name`. Todos los demás son opcionales pero recomendados — la IA los usará para componer el mensaje al cliente.
-
-### 2.3 `GET /api/public/catalog/{slug}/product/{id}`
-Devuelve la ficha completa de un producto.
-
-**Respuesta 200**
-```json
-{
-  "product": { ...mismo shape que en search... }
-}
+GET https://{supabase_url}/rest/v1/{products_table}
+    ?tenant_id=eq.{tenantId}&is_active=eq.true&select=id&limit=1
+Headers:
+  apikey: {anon_key}
+  Authorization: Bearer {anon_key}
+  Prefer: count=exact
+  Range-Unit: items
+  Range: 0-0
 ```
-**Respuesta 404**
-```json
-{
-  "product": null
-}
+Espera: Header `Content-Range: 0-0/287` con el total de productos.
+
+### Al buscar (IA en tiempo real)
+
+```
+GET https://{supabase_url}/rest/v1/{products_table}
+    ?tenant_id=eq.{tenantId}&is_active=eq.true
+    &or=(name.ilike.*{query}*,long_description.ilike.*{query}*)
+    &select=id,name,slug,sku,badge,base_price,warehouse_stock,main_image_url,long_description,category_id
+    &limit=6
+Headers:
+  apikey: {anon_key}
+  Authorization: Bearer {anon_key}
 ```
 
 ---
 
-## 3. Implementación recomendada (TanStack Start)
+## 3. Requisitos mínimos en el Supabase del catálogo
 
-Crea estos archivos en el proyecto de catálogo:
+### Tabla `tenants` (o la que configures)
 
-### `src/routes/api/public/catalog/$slug/health.ts`
-```typescript
-import { createFileRoute } from "@tanstack/react-router";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
-
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Catalog-Token",
-};
-
-export const Route = createFileRoute("/api/public/catalog/$slug/health")({
-  server: {
-    handlers: {
-      OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
-      GET: async ({ params }) => {
-        const slug = params.slug;
-        const { data: bodega } = await supabaseAdmin
-          .from("bodegas")
-          .select("id, name")
-          .eq("slug", slug)
-          .maybeSingle();
-
-        if (!bodega) {
-          return Response.json(
-            { ok: false, error: "slug not found" },
-            { status: 404, headers: CORS },
-          );
-        }
-
-        const { count } = await supabaseAdmin
-          .from("products")
-          .select("id", { count: "exact", head: true })
-          .eq("bodega_id", bodega.id);
-
-        return Response.json(
-          { ok: true, slug, name: bodega.name, products_count: count ?? 0 },
-          { headers: CORS },
-        );
-      },
-    },
-  },
-});
-```
-
-### `src/routes/api/public/catalog/$slug/search.ts`
-```typescript
-import { createFileRoute } from "@tanstack/react-router";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
-
-const CORS = {
-  /* mismo bloque que arriba */
-};
-
-function mapProduct(row: any, slug: string) {
-  const baseUrl = process.env.CATALOG_PUBLIC_URL ?? "";
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description ?? "",
-    price: row.price,
-    currency: row.currency ?? "COP",
-    category: row.category ?? null,
-    image_url: row.image_url ?? row.images?.[0] ?? null,
-    images: row.images ?? [],
-    video_url: row.video_url ?? null,
-    stock: row.stock ?? null,
-    url: baseUrl ? `${baseUrl}/catalogo/${slug}/p/${row.id}` : null,
-    attributes: row.attributes ?? {},
-  };
-}
-
-export const Route = createFileRoute("/api/public/catalog/$slug/search")({
-  server: {
-    handlers: {
-      OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
-      GET: async ({ params, request }) => {
-        const url = new URL(request.url);
-        const q = (url.searchParams.get("q") ?? "").trim();
-        const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 6, 1), 20);
-
-        const { data: bodega } = await supabaseAdmin
-          .from("bodegas").select("id").eq("slug", params.slug).maybeSingle();
-
-        if (!bodega) return Response.json({ products: [] }, { headers: CORS });
-
-        let query = supabaseAdmin
-          .from("products")
-          .select("*")
-          .eq("bodega_id", bodega.id)
-          .limit(limit);
-
-        if (q) {
-          // Búsqueda básica en varios campos (ajusta según tu esquema)
-          query = query.or(
-            `name.ilike.%${q}%,description.ilike.%${q}%,category.ilike.%${q}%,sku.ilike.%${q}%`,
-          );
-        } else {
-          query = query.order("created_at", { ascending: false });
-        }
-
-        const { data: rows } = await query;
-
-        return Response.json(
-          { products: (rows ?? []).map((r) => mapProduct(r, params.slug)) },
-          { headers: CORS },
-        );
-      },
-    },
-  },
-});
-```
-
-### `src/routes/api/public/catalog/$slug/product.$id.ts`
-```typescript
-import { createFileRoute } from "@tanstack/react-router";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
-
-const CORS = {
-  /* mismo bloque */
-};
-
-export const Route = createFileRoute("/api/public/catalog/$slug/product/$id")({
-  server: {
-    handlers: {
-      OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
-      GET: async ({ params }) => {
-        const { data: bodega } = await supabaseAdmin
-          .from("bodegas").select("id").eq("slug", params.slug).maybeSingle();
-
-        if (!bodega) return Response.json({ product: null }, { status: 404, headers: CORS });
-
-        const { data: row } = await supabaseAdmin
-          .from("products")
-          .select("*")
-          .eq("bodega_id", bodega.id)
-          .eq("id", params.id)
-          .maybeSingle();
-
-        if (!row) return Response.json({ product: null }, { status: 404, headers: CORS });
-
-        // reutiliza mapProduct
-        return Response.json({ product: mapProduct(row, params.slug) }, { headers: CORS });
-      },
-    },
-  },
-});
-```
-
-> Ajusta los nombres de tabla/columna (`bodegas`, `products`, `slug`, `images`,
-> `price`, etc.) al esquema real del proyecto. Lo importante es **devolver el
-> JSON con el shape descrito en la sección 2**.
-
----
-
-## 4. Validación de token (opcional pero recomendado)
-
-Si quieres restringir el acceso, agrega al inicio de cada handler:
-```typescript
-const token = request.headers.get("X-Catalog-Token");
-
-const { data: tk } = await supabaseAdmin
-  .from("catalog_api_tokens")
-  .select("token")
-  .eq("slug", params.slug)
-  .maybeSingle();
-
-if (tk?.token && tk.token !== token) {
-  return new Response("Unauthorized", { status: 401, headers: CORS });
-}
-```
-
-Y crea la tabla:
+Columnas requeridas:
 ```sql
-create table public.catalog_api_tokens (
-  slug text primary key,
-  token text not null,
-  created_at timestamptz default now()
-);
-grant select on public.catalog_api_tokens to service_role;
+id   uuid primary key
+slug text unique not null
+name text
 ```
-El mismo token se pega en el CRM Maple en *Configuración IA → Integración Catálogo → Token API*.
+
+RLS + Grant para anon:
+```sql
+-- Habilitar RLS (si no está ya)
+alter table public.tenants enable row level security;
+
+-- Política de lectura pública
+create policy "tenants public read"
+  on public.tenants for select
+  to anon, authenticated
+  using (true);
+
+-- Grant
+grant select on public.tenants to anon, authenticated;
+```
+
+### Tabla `master_products` (o la que configures)
+
+Columnas que usa el CRM (acepta alias):
+
+| Columna buscada | Alternativa aceptada |
+|-----------------|---------------------|
+| `id` | — |
+| `name` | `title` |
+| `long_description` | `description` |
+| `base_price` | `price` |
+| `warehouse_stock` | `stock` |
+| `main_image_url` | `image_url` |
+| `tenant_id` | — (obligatoria para filtrar) |
+| `is_active` | — (obligatoria para filtrar activos) |
+| `slug` | — (opcional, para URL del producto) |
+| `sku` | — (opcional) |
+| `badge` | — (opcional) |
+
+RLS + Grant:
+```sql
+alter table public.master_products enable row level security;
+
+create policy "master_products public read active"
+  on public.master_products for select
+  to anon, authenticated
+  using (is_active = true);
+
+grant select on public.master_products to anon, authenticated;
+```
+
+### Índices recomendados (rendimiento)
+
+```sql
+create index if not exists idx_mp_tenant_active
+  on public.master_products(tenant_id) where is_active = true;
+
+create index if not exists idx_tenants_slug
+  on public.tenants(slug);
+```
 
 ---
 
-## 5. Cómo se conecta el CRM Maple
+## 4. SQL de migración completo (pega en Supabase SQL Editor del catálogo)
 
-En el CRM Maple (este proyecto) el usuario abre:
-> **Configuración IA → Integración Catálogo**
+```sql
+-- ============================================================
+-- CRM Catalog Integration Access — aplica en el Supabase del catálogo
+-- ============================================================
 
-y configura:
-- **URL base**: `https://sincro3.netlify.app`
-- **Slug del catálogo**: `bodega-central-demo`
-- **Token API**: el que generaste en `catalog_api_tokens` (opcional)
-- **Permitir enviar imágenes**: ✅
-- **Activar integración**: ✅
+-- 1. Grants directos para anon
+grant select on public.tenants         to anon, authenticated;
+grant select on public.master_products to anon, authenticated;
 
-Luego pulsa **Probar conexión**. El CRM llama a `/health` y luego a `/search?q=&limit=3`. Si responde 200, se marca como **Conectado** (punto verde).
+-- 2. RLS en tenants
+alter table public.tenants enable row level security;
 
-A partir de ese momento, cada vez que la IA del CRM responda a un cliente, tendrá disponibles dos herramientas:
+do $$ begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'tenants' and policyname = 'tenants public read'
+  ) then
+    create policy "tenants public read"
+      on public.tenants for select
+      to anon, authenticated
+      using (true);
+  end if;
+end $$;
 
-| Tool | Acción |
-|----------------------------|------------------------------------------------------------------------|
-| `search_catalog` | Llama `/search?q=...` y devuelve los productos al modelo |
-| `send_product_to_customer` | Llama `/product/{id}` y envía imagen + caption por WhatsApp al cliente |
+-- 3. RLS en master_products
+alter table public.master_products enable row level security;
 
-La IA decide automáticamente cuándo usarlas según lo que escriba el cliente (“¿tienen cables HDMI?”, “precio del saltarín”, “quiero ver el adaptador”, etc.).
+do $$ begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'master_products' and policyname = 'master_products public read active'
+  ) then
+    create policy "master_products public read active"
+      on public.master_products for select
+      to anon, authenticated
+      using (is_active = true);
+  end if;
+end $$;
+
+-- 4. Índices de rendimiento
+create index if not exists idx_mp_tenant_active
+  on public.master_products(tenant_id) where is_active = true;
+
+create index if not exists idx_tenants_slug
+  on public.tenants(slug);
+```
 
 ---
 
-## 6. Checklist final para la otra IA
+## 5. Verificación con curl
 
-- [ ] Crear los 3 endpoints `/api/public/catalog/{slug}/{health|search|product/{id}}`.
-- [ ] Devolver JSON con el shape de la sección 2 (mínimo `id`, `name`).
-- [ ] Habilitar CORS (`Access-Control-Allow-Origin: *`).
-- [ ] Probar manualmente:
-  ```
-  curl https://TU-DOMINIO/api/public/catalog/SLUG/health
-  curl "https://TU-DOMINIO/api/public/catalog/SLUG/search?q=cable&limit=3"
-  curl https://TU-DOMINIO/api/public/catalog/SLUG/product/ID
-  ```
-- [ ] (Opcional) Crear `catalog_api_tokens` y validar `X-Catalog-Token`.
-- [ ] Compartir URL base, slug y token con el usuario del CRM Maple.
+```bash
+# Variables
+SUPA_URL="https://leqjedeupuikzjqlfzpx.supabase.co"
+ANON_KEY="tu-anon-key"
+SLUG="tv-market"
 
-Listo: la IA del CRM ya puede vender productos reales del catálogo, con imágenes, precios y descripciones, y mantiene el historial completo de la conversación para responder con coherencia.
+# Test 1: resolver slug
+curl "$SUPA_URL/rest/v1/tenants?slug=eq.$SLUG&select=id,slug,name" \
+  -H "apikey: $ANON_KEY" \
+  -H "Authorization: Bearer $ANON_KEY"
+# Debe devolver: [{"id":"uuid...","slug":"tv-market","name":"..."}]
+
+# Test 2: contar productos (necesitas el tenant_id del test 1)
+TENANT_ID="pega-el-uuid-del-test-1"
+curl "$SUPA_URL/rest/v1/master_products?tenant_id=eq.$TENANT_ID&is_active=eq.true&select=id&limit=1" \
+  -H "apikey: $ANON_KEY" \
+  -H "Authorization: Bearer $ANON_KEY" \
+  -H "Prefer: count=exact" \
+  -H "Range-Unit: items" \
+  -H "Range: 0-0" \
+  -I
+# Debe devolver header: content-range: 0-0/287
+
+# Test 3: búsqueda de productos
+curl "$SUPA_URL/rest/v1/master_products?tenant_id=eq.$TENANT_ID&is_active=eq.true&or=(name.ilike.*television*,long_description.ilike.*television*)&select=id,name,base_price,warehouse_stock&limit=3" \
+  -H "apikey: $ANON_KEY" \
+  -H "Authorization: Bearer $ANON_KEY"
+```
+
+---
+
+## 6. Flujo completo
+
+```
+[Plataforma catálogo Supabase]
+  └─ tabla: tenants (slug → id)
+  └─ tabla: master_products (tenant_id, is_active, name, base_price...)
+          ↑
+     PostgREST (anon key)
+          ↓
+[CRM — catalog.server.ts]
+  resolveTenantId() → cachea tenant_id
+  searchCatalog()   → ilike query
+  getCatalogProduct() → by id
+          ↓
+[IA del CRM — ai.server.ts]
+  tool: search_catalog         → llama searchCatalog()
+  tool: send_product_to_customer → llama getCatalogProduct() + engine_commands
+          ↓
+[WhatsApp cliente]
+  imagen + precio + descripción
+```
+
+---
+
+## 7. Checklist para el equipo del catálogo
+
+- [ ] Aplicar el SQL de la sección 4 en el SQL Editor de Supabase del catálogo
+- [ ] Verificar con los curls de la sección 5
+- [ ] Entregar al operador del CRM:
+  - URL Supabase (`https://xxxx.supabase.co`)
+  - Publishable (anon) Key
+  - Slug de la bodega
+- [ ] El operador ingresa los datos en el CRM → *Integración Catálogo* → Guardar → Probar
+- [ ] Con estado **Conectado** (punto verde) la IA ya puede vender productos reales

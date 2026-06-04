@@ -419,37 +419,46 @@ export type Database = {
         Row: {
           api_token: string
           base_url: string
+          cached_tenant_id: string | null
           catalog_slug: string
           enabled: boolean
           last_test_at: string | null
           last_test_message: string | null
           last_test_ok: boolean | null
           org_id: string
+          products_table: string
           send_media: boolean
+          tenants_table: string
           updated_at: string
         }
         Insert: {
           api_token?: string
           base_url?: string
+          cached_tenant_id?: string | null
           catalog_slug?: string
           enabled?: boolean
           last_test_at?: string | null
           last_test_message?: string | null
           last_test_ok?: boolean | null
           org_id: string
+          products_table?: string
           send_media?: boolean
+          tenants_table?: string
           updated_at?: string
         }
         Update: {
           api_token?: string
           base_url?: string
+          cached_tenant_id?: string | null
           catalog_slug?: string
           enabled?: boolean
           last_test_at?: string | null
           last_test_message?: string | null
           last_test_ok?: boolean | null
           org_id?: string
+          products_table?: string
           send_media?: boolean
+          tenants_table?: string
           updated_at?: string
         }
         Relationships: [
