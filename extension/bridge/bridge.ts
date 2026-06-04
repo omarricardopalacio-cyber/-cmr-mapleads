@@ -104,7 +104,7 @@ export class ContentBridge {
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(msg.id!);
         reject(new Error("[ContentBridge] Timeout esperando respuesta del injected script"));
-      }, 15000);
+      }, 150000);
 
       this.pendingResponses.set(msg.id!, (payload) => {
         clearTimeout(timeout);
