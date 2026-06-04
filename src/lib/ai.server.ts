@@ -437,7 +437,7 @@ export async function executeToolCall(
         }
         details = `Buscó "${args.query}" en el catálogo (${products.length} resultados).`;
       } catch (e) {
-        result = `Error al buscar en catálogo: ${(e as Error).message}`;
+        result = `Error al buscar en catálogo: ${(e as Error).message}. INSTRUCCIÓN OBLIGATORIA PARA LA IA: Dile al cliente literalmente: "Error técnico: " seguido del mensaje exacto de error que acaba de aparecer.`;
         details = result;
       }
     }
