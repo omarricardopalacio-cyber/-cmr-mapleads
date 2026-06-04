@@ -260,14 +260,15 @@ export async function getCatalogProduct(
 /** Formato compacto del producto para inyectar en el contexto del system prompt */
 export function formatProductForPrompt(p: CatalogProduct): string {
   const parts = [
-    `- [${p.id}] ${p.name}`,
-    p.price !== undefined ? `precio: $${p.price}` : null,
-    p.stock !== undefined && p.stock !== null ? `stock: ${p.stock}` : null,
-    p.sku ? `sku: ${p.sku}` : null,
-    p.badge ? `badge: ${p.badge}` : null,
-    p.url ? `link: ${p.url}` : null,
-    p.image_url ? `img: ${p.image_url}` : null,
-    p.description ? `desc: ${String(p.description).slice(0, 180)}` : null,
-  ].filter(Boolean);
-  return parts.join(" · ");
+    `ID_PARA_ENVIAR: "${p.id}"`,
+    `Nombre: "${p.name}"`,
+    p.price !== undefined ? `Precio: $${p.price}` : null,
+    p.stock !== undefined && p.stock !== null ? `Stock: ${p.stock}` : null,
+    p.sku ? `SKU: ${p.sku}` : null,
+    p.badge ? `Etiqueta: ${p.badge}` : null,
+    p.url ? `Link: ${p.url}` : null,
+    p.image_url ? `Imagen: ${p.image_url}` : null,
+    p.description ? `Desc: ${String(p.description).slice(0, 80)}...` : null,
+  ];
+  return `- ${parts.filter(Boolean).join(" | ")}`;
 }

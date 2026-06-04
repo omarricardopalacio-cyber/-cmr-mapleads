@@ -74,11 +74,11 @@ export const CATALOG_TOOLS = [
     type: "function" as const,
     function: {
       name: "send_product_to_customer",
-      description: "Envía al cliente la ficha de un producto del catálogo: imagen + nombre + precio + breve descripción. Úsalo después de search_catalog cuando quieras mostrar el producto.",
+      description: "Envía al cliente la ficha de un producto del catálogo: imagen + nombre + precio + breve descripción. Úsalo después de search_catalog cuando el cliente te pida ver el producto.",
       parameters: {
         type: "object",
         properties: {
-          product_id: { type: "string", description: "id del producto devuelto por search_catalog" },
+          product_id: { type: "string", description: "El valor EXACTO que dice 'ID_PARA_ENVIAR' en los resultados. NUNCA envíes el nombre." },
           caption: {
             type: "string",
             description: "Mensaje breve que acompaña la imagen (opcional)",
