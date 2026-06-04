@@ -24,6 +24,7 @@ import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
 import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
+import { Route as AuthenticatedCatalogIntegrationsRouteImport } from './routes/_authenticated.catalog-integrations'
 import { Route as AuthenticatedCatalogIntegrationRouteImport } from './routes/_authenticated.catalog-integration'
 import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
 import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenticated.auto-replies'
@@ -115,6 +116,12 @@ const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
   path: '/contacts',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedCatalogIntegrationsRoute =
+  AuthenticatedCatalogIntegrationsRouteImport.update({
+    id: '/catalog-integrations',
+    path: '/catalog-integrations',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedCatalogIntegrationRoute =
   AuthenticatedCatalogIntegrationRouteImport.update({
     id: '/catalog-integration',
@@ -189,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
+  '/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/dashboard': typeof AuthenticatedDashboardRoute
@@ -217,6 +225,7 @@ export interface FileRoutesByTo {
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
+  '/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
@@ -246,6 +255,7 @@ export interface FileRoutesById {
   '/_authenticated/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/_authenticated/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/_authenticated/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
+  '/_authenticated/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
   '/_authenticated/conversations': typeof AuthenticatedConversationsRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
@@ -276,6 +286,7 @@ export interface FileRouteTypes {
     | '/auto-replies'
     | '/broadcasts'
     | '/catalog-integration'
+    | '/catalog-integrations'
     | '/contacts'
     | '/conversations'
     | '/dashboard'
@@ -304,6 +315,7 @@ export interface FileRouteTypes {
     | '/auto-replies'
     | '/broadcasts'
     | '/catalog-integration'
+    | '/catalog-integrations'
     | '/contacts'
     | '/dashboard'
     | '/flows'
@@ -332,6 +344,7 @@ export interface FileRouteTypes {
     | '/_authenticated/auto-replies'
     | '/_authenticated/broadcasts'
     | '/_authenticated/catalog-integration'
+    | '/_authenticated/catalog-integrations'
     | '/_authenticated/contacts'
     | '/_authenticated/conversations'
     | '/_authenticated/dashboard'
@@ -475,6 +488,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedContactsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/catalog-integrations': {
+      id: '/_authenticated/catalog-integrations'
+      path: '/catalog-integrations'
+      fullPath: '/catalog-integrations'
+      preLoaderRoute: typeof AuthenticatedCatalogIntegrationsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/catalog-integration': {
       id: '/_authenticated/catalog-integration'
       path: '/catalog-integration'
@@ -583,6 +603,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedAutoRepliesRoute: typeof AuthenticatedAutoRepliesRoute
   AuthenticatedBroadcastsRoute: typeof AuthenticatedBroadcastsRoute
   AuthenticatedCatalogIntegrationRoute: typeof AuthenticatedCatalogIntegrationRoute
+  AuthenticatedCatalogIntegrationsRoute: typeof AuthenticatedCatalogIntegrationsRoute
   AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
   AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRouteWithChildren
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
@@ -600,6 +621,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAutoRepliesRoute: AuthenticatedAutoRepliesRoute,
   AuthenticatedBroadcastsRoute: AuthenticatedBroadcastsRoute,
   AuthenticatedCatalogIntegrationRoute: AuthenticatedCatalogIntegrationRoute,
+  AuthenticatedCatalogIntegrationsRoute: AuthenticatedCatalogIntegrationsRoute,
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
   AuthenticatedConversationsRoute: AuthenticatedConversationsRouteWithChildren,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
