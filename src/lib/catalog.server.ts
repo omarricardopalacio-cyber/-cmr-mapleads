@@ -218,6 +218,7 @@ export async function searchCatalog(
     price: r.base_price ?? r.price ?? undefined,
     stock: r.warehouse_stock ?? r.stock ?? null,
     image_url: r.main_image_url || r.image_url || undefined,
+    video_url: r.main_video_url ?? r.video_url ?? (Array.isArray(r.videos) && r.videos[0]?.url) ?? undefined,
     url: r.slug ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}` : undefined,
     sku: r.sku || undefined,
     badge: r.badge || undefined,
@@ -252,6 +253,7 @@ export async function getCatalogProduct(
     price: r.base_price ?? r.price ?? undefined,
     stock: r.warehouse_stock ?? r.stock ?? null,
     image_url: r.main_image_url || r.image_url || undefined,
+    video_url: r.main_video_url ?? r.video_url ?? (Array.isArray(r.videos) && r.videos[0]?.url) ?? undefined,
     sku: r.sku || undefined,
     badge: r.badge || undefined,
   };
@@ -267,6 +269,7 @@ export function formatProductForPrompt(p: CatalogProduct): string {
     p.badge ? `Etiqueta: ${p.badge}` : null,
     p.url ? `Link: ${p.url}` : null,
     p.image_url ? `Imagen: ${p.image_url}` : null,
+    p.video_url ? `Video: ${p.video_url}` : null,
     p.description ? `Desc: ${String(p.description).slice(0, 80)}...` : null,
   ];
   return `- ${parts.filter(Boolean).join(" | ")}`;

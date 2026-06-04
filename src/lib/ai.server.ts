@@ -58,31 +58,49 @@ export const CATALOG_TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "search_catalog",
-      description: "Busca productos en el catálogo de la tienda por palabra clave o nombre. Úsalo cuando el cliente pregunta por un producto, precio, disponibilidad o categoría.",
+      name: "search_products",
+      description:
+        "Busca productos en el catálogo de la tienda. Devuelve productos con id, nombre, descripción, precio, stock e indica si tienen imagen/video disponible. Llama SIEMPRE esta herramienta antes de hablar de productos, precios o características.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Palabra clave del producto" },
-          limit: { type: "number", description: "Cantidad de resultados (1-6)" },
+          query: {
+            type: "string",
+            description:
+              "Texto a buscar (p.ej. 'zapatero', 'organizador'). Vacío = devolver destacados.",
+          },
+          limit: { type: "number", description: "Máx productos (1-5). Default 5." },
         },
-        required: ["query"],
       },
     },
   },
   {
     type: "function" as const,
     function: {
-      name: "send_product_to_customer",
-      description: "Envía al cliente la ficha de un producto del catálogo: imagen + nombre + precio + breve descripción. Úsalo después de search_catalog cuando el cliente te pida ver el producto.",
+      name: "send_product_image",
+      description:
+        "Envía la imagen del producto al cliente por WhatsApp con un caption corto. Úsala apenas el cliente muestre interés en un producto concreto. Usa product_id devuelto por search_products.",
       parameters: {
         type: "object",
         properties: {
-          product_id: { type: "string", description: "El valor EXACTO que dice 'ID_PARA_ENVIAR' en los resultados. NUNCA envíes el nombre." },
-          caption: {
-            type: "string",
-            description: "Mensaje breve que acompaña la imagen (opcional)",
-          },
+          product_id: { type: "string", description: "id del producto devuelto por search_products" },
+          caption: { type: "string", description: "Texto opcional debajo de la imagen" },
+        },
+        required: ["product_id"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "send_product_video",
+      description:
+        "Envía el video del producto al cliente por WhatsApp. Úsala cuando el cliente pida ver el video o más detalle visual. Devuelve error si el producto no tiene video.",
+      parameters: {
+        type: "object",
+        properties: {
+          product_id: { type: "string", description: "id del producto devuelto por search_products" },
+          caption: { type: "string", description: "Texto opcional debajo del video" },
         },
         required: ["product_id"],
       },
@@ -345,6 +363,46 @@ export type ToolExecCtx = {
   catalogCfg?: CatalogConfig | null;
 };
 
+async function queueOutgoingMedia(
+  ctx: ToolExecCtx,
+  kind: "image" | "video",
+  mediaUrl: string,
+  caption?: string,
+) {
+  if (!ctx.sessionId || !ctx.chatId) {
+    return "Falta sessionId/chatId; no se puede enviar media.";
+  }
+  const mimeType = kind === "video" ? "video/mp4" : "image/jpeg";
+  const payload: Record<string, unknown> = {
+    chatId: ctx.chatId,
+    mediaUrl,
+    mimeType,
+    caption: caption || "",
+    text: caption || "",
+  };
+  const cmdId = (globalThis.crypto?.randomUUID?.() ?? `cmd_${Date.now()}_${Math.random()}`) as string;
+  // Echo en la conversación para que el operador lo vea en el CRM
+  await (supabaseAdmin as any).from("messages").insert({
+    org_id: ctx.orgId,
+    thread_id: ctx.threadId,
+    direction: "out",
+    text: caption || "",
+    media: { url: mediaUrl, mimeType, mime_type: mimeType },
+    wa_message_id: `pending-${cmdId}`,
+    sent_at: new Date().toISOString(),
+  });
+  const { error } = await (supabaseAdmin as any).from("engine_commands").insert({
+    id: cmdId,
+    org_id: ctx.orgId,
+    session_id: ctx.sessionId,
+    type: "SEND_MESSAGE",
+    payload,
+    status: "pending",
+  });
+  if (error) return `Error encolando ${kind}: ${error.message}`;
+  return `${kind === "video" ? "Video" : "Imagen"} enviado al cliente.`;
+}
+
 export async function executeToolCall(
   toolCall: { id: string; function: { name: string; arguments: string } },
   ctx: ToolExecCtx,
@@ -407,97 +465,69 @@ export async function executeToolCall(
     }
     result = "Conversacion transferida a agente humano. IA desactivada.";
     details = "Transfirio la conversacion a un agente humano (IA apagada).";
-  } else if (name === "search_catalog") {
+  } else if (name === "search_products") {
     if (!catalogCfg) {
       result = "Catálogo no configurado.";
       details = "Intentó buscar en el catálogo pero no hay integración activa.";
     } else {
       try {
-        const limit = Math.min(Math.max(Number(args.limit) || 4, 1), 6);
-        const query = String(args.query || "");
-        let products = await searchCatalog(catalogCfg, query, limit);
+        const q = (args.query || "").toString().trim();
+        const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 5);
+        const products = await searchCatalog(catalogCfg, q, limit);
         
         if (!products.length) {
-          // Búsqueda inteligente 1: Singular/Plural. Quitar 's' o 'es' de las palabras.
-          const singularQuery = query.split(" ").map(w => {
-            if (w.length > 3) {
-              if (w.endsWith("es")) return w.slice(0, -2);
-              if (w.endsWith("s")) return w.slice(0, -1);
-            }
-            return w;
-          }).join(" ");
-
-          if (singularQuery !== query && singularQuery.trim().length > 2) {
-            products = await searchCatalog(catalogCfg, singularQuery, limit);
-            if (products.length > 0) {
-              result = `No hay resultados exactos para "${query}", pero SÍ hay para "${singularQuery}". Productos encontrados (usa el id con send_product_to_customer):\n` + products.map((p) => formatProductForPrompt(p)).join("\n") + `\n\nIMPORTANTE: Dile al cliente que no tienes exactamente "${query}", pero ofrécele estas opciones similares y pregúntale si le gusta alguna.`;
-            }
-          }
-
-          // Búsqueda inteligente 2: Si era una frase larga y aún no hay resultados, intentar con la primera palabra clave
-          if (!products.length && query.includes(" ")) {
-            const firstWord = singularQuery.split(" ")[0];
-            if (firstWord && firstWord.length > 2) {
-              products = await searchCatalog(catalogCfg, firstWord, limit);
-              if (products.length > 0) {
-                result = `No hay resultados exactos para "${query}", pero SÍ hay alternativas para "${firstWord}". Productos encontrados:\n` + products.map((p) => formatProductForPrompt(p)).join("\n") + `\n\nIMPORTANTE: Ofrécele estas opciones similares.`;
-              }
-            }
-          }
+          // Fallback: traer destacados sin filtro
+          const fallback = await searchCatalog(catalogCfg, "", limit);
+          result = JSON.stringify({
+            found: 0,
+            message: "No hay coincidencias exactas. Estos son alternativos:",
+            products: fallback.map((p: any) => ({
+              id: p.id, name: p.name, price: p.price, stock: p.stock,
+              description: (p.description ?? "").slice(0, 220),
+              has_image: !!p.image_url, has_video: !!p.video_url, badge: p.badge,
+            })),
+          });
+        } else {
+          result = JSON.stringify({
+            found: products.length,
+            products: products.map((p: any) => ({
+              id: p.id, name: p.name, price: p.price, stock: p.stock,
+              description: (p.description ?? "").slice(0, 220),
+              has_image: !!p.image_url, has_video: !!p.video_url, badge: p.badge,
+            })),
+          });
         }
-        
-        if (!result) {
-          if (!products.length) {
-            result = "Sin resultados en el catálogo para esa búsqueda. (0 productos)";
-          } else {
-            result = "Productos encontrados (usa el id con send_product_to_customer):\n" + products.map((p) => formatProductForPrompt(p)).join("\n");
-          }
-        }
-        details = `Buscó "${args.query}" en el catálogo (${products.length} resultados).`;
+        details = `Buscó productos: "${q}" (${products.length} resultados)`;
       } catch (e) {
-        result = `Error al buscar en catálogo: ${(e as Error).message}. INSTRUCCIÓN OBLIGATORIA PARA LA IA: Dile al cliente literalmente: "Error técnico: " seguido del mensaje exacto de error que acaba de aparecer.`;
+        result = `Error al buscar en catálogo: ${(e as Error).message}`;
         details = result;
       }
     }
-  } else if (name === "send_product_to_customer") {
+  } else if (name === "send_product_image" || name === "send_product_video") {
     if (!catalogCfg || !sessionId || !chatId) {
       result = "No puedo enviar productos: falta sesión/chat o catálogo.";
       details = result;
     } else {
       try {
-        const prod = await getCatalogProduct(catalogCfg, String(args.product_id));
-        if (!prod) {
-          result = `Producto ${args.product_id} no encontrado en catálogo.`;
+        const productId = args.product_id;
+        const p = await getCatalogProduct(catalogCfg, String(productId));
+        if (!p) {
+          result = "Producto no encontrado.";
           details = result;
         } else {
-          const caption = (args.caption ? String(args.caption) + "\n\n" : "") +
-            `*${prod.name}*` +
-            (prod.price !== undefined ? `\nPrecio: ${prod.currency ?? "$"} ${prod.price}` : "") +
-            (prod.description ? `\n${String(prod.description).slice(0, 300)}` : "") +
-            (prod.url ? `\n${prod.url}` : "");
-          const media = prod.image_url || prod.images?.[0];
-          if (catalogCfg.send_media && media) {
-            await (supabaseAdmin as any).from("engine_commands").insert({
-              org_id: orgId,
-              session_id: sessionId,
-              type: "send_media",
-              payload: { chatId, media_url: media, caption },
-              status: "pending",
-            });
+          const kind = name === "send_product_video" ? "video" : "image";
+          const url = kind === "video" ? p.video_url : p.image_url;
+          if (!url) {
+            result = `El producto "${p.name}" no tiene ${kind === "video" ? "video" : "imagen"} disponible.`;
+            details = result;
           } else {
-            await (supabaseAdmin as any).from("engine_commands").insert({
-              org_id: orgId,
-              session_id: sessionId,
-              type: "send_message",
-              payload: { chatId, text: caption },
-              status: "pending",
-            });
+            const caption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
+            result = await queueOutgoingMedia(ctx, kind, url, caption);
+            details = `${name}: ${productId} a ${chatId}`;
           }
-          result = `Enviado al cliente: ${prod.name}.`;
-          details = `Envió producto ${prod.id} (${prod.name}) al chat ${chatId}.`;
         }
       } catch (e) {
-        result = `Error enviando producto: ${(e as Error).message}`;
+        result = `Error enviando media: ${(e as Error).message}`;
         details = result;
       }
     }
@@ -541,21 +571,26 @@ export async function runAiAgent({
   const catalogCfg = await getCatalogConfig(orgId);
   const tools = catalogCfg ? [...CRM_TOOLS, ...CATALOG_TOOLS] : CRM_TOOLS;
 
+  const PRODUCT_FLOW_GUIDE = `
+Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente menciona producto, precio, características, stock, foto o video:
+1. SIEMPRE llama primero la herramienta "search_products" con la palabra clave del cliente. Nunca inventes precios ni características.
+2. Si search_products devuelve productos, responde mostrando 3 a 5 productos así (uno por línea):
+   • *NOMBRE* — $PRECIO  (badge si hay)
+     Características clave en una frase.
+3. Pregunta cuál le interesa.
+4. Cuando el cliente elija uno o pida "foto"/"imagen"/"ver", llama "send_product_image" con el product_id correcto y luego pregunta si desea ver el video.
+5. Si pide video, llama "send_product_video". Si has_video=false, dilo claramente y ofrece más imágenes o alternativos.
+6. Si search_products devuelve found=0, sugiere los alternativos que devuelva el JSON y pregunta si alguno le sirve.
+7. Nunca digas "no puedo enviar imágenes": SIEMPRE usa send_product_image cuando el cliente quiera verla.
+`.trim();
+
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     (cfg.knowledge_base as string)?.trim()
       ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${(cfg.knowledge_base as string).trim()}`
       : "",
-    "\n\nHERRAMIENTAS DISPONIBLES: CRM (assign_tag, create_reminder, transfer_to_human) y CATÁLOGO (search_catalog, send_product_to_customer).",
-    "\n\nREGLAS DE CATÁLOGO (OBLIGATORIAS):",
-    "\n1. Cuando el cliente mencione cualquier producto, precio, talla, color o categoría, llama PRIMERO a search_catalog con el término completo.",
-    "\n2. Si search_catalog devuelve count=0, NO te quedes callado. Vuelve a llamar a search_catalog con la palabra CLAVE genérica (ej. 'zapatero de tela' → 'zapatero'; 'mesa de centro de vidrio' → 'mesa'). Hasta 2 reintentos.",
-    "\n3. Cuando encuentres productos relevantes (ya sea en la primera búsqueda o en reintentos), USA INMEDIATAMENTE la herramienta send_product_to_customer (hasta un máximo de 3 veces) para enviarle al cliente la foto y los detalles de las mejores opciones. NO le pidas permiso para mostrarle la foto, envíasela de una vez.",
-    "\n4. Acompaña el envío de los productos con un mensaje natural invitando al cliente a comprarlos o preguntando qué le parecen. ¡Tu objetivo es VENDER!",
-    "\n5. Si ambas búsquedas dan 0, di amablemente que no tenemos ese producto y ofrece tomar sus datos para avisarle cuando llegue.",
-    "\n6. NUNCA inventes productos ni precios: solo usa los devueltos por search_catalog.",
-    "\n7. Cuando el cliente muestre interés real en comprar, pídele nombre, ciudad y horario preferido para agendar y crea un recordatorio con create_reminder.",
-    "\n8. Sé breve (2-4 líneas máx por mensaje) y conversacional.",
+    "\n\nTienes acceso a herramientas para ayudar al cliente. Usalas cuando sea necesario.",
+    "\n\n" + PRODUCT_FLOW_GUIDE,
   ].join("");
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
