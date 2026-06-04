@@ -2,7 +2,13 @@ import { SignJWT, importPKCS8 } from "jose";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getCatalogConfig, searchCatalog, getCatalogProduct, formatProductForPrompt, type CatalogConfig } from "./catalog.server";
 
-export type Msg = { role: "system" | "user" | "assistant"; content: string };
+export type Msg = { 
+  role: "system" | "user" | "assistant" | "tool"; 
+  content: string; 
+  tool_calls?: any[]; 
+  tool_call_id?: string; 
+  name?: string; 
+};
 
 /* ============================================================
    1. TOOL SCHEMAS (OpenAI format)
@@ -407,11 +413,26 @@ export async function executeToolCall(
     } else {
       try {
         const limit = Math.min(Math.max(Number(args.limit) || 4, 1), 6);
-        const products = await searchCatalog(catalogCfg, String(args.query || ""), limit);
-        if (!products.length) {
-          result = "Sin resultados en el catálogo para esa búsqueda.";
-        } else {
-          result = "Productos encontrados (usa el id con send_product_to_customer):\n" + products.map((p) => formatProductForPrompt(p)).join("\n");
+        const query = String(args.query || "");
+        let products = await searchCatalog(catalogCfg, query, limit);
+        
+        if (!products.length && query.includes(" ")) {
+          // Búsqueda inteligente: si la frase falla, intentamos con la primera palabra principal
+          const firstWord = query.split(" ")[0];
+          if (firstWord && firstWord.length > 2) {
+            products = await searchCatalog(catalogCfg, firstWord, limit);
+            if (products.length > 0) {
+              result = `No hay resultados exactos para "${query}", pero SÍ hay alternativas para "${firstWord}". Productos encontrados (usa el id con send_product_to_customer):\n` + products.map((p) => formatProductForPrompt(p)).join("\n") + `\n\nIMPORTANTE: Dile al cliente que no tienes exactamente "${query}", pero ofrécele estas opciones similares y pregúntale si le gusta alguna.`;
+            }
+          }
+        }
+        
+        if (!result) {
+          if (!products.length) {
+            result = "Sin resultados en el catálogo para esa búsqueda. (0 productos)";
+          } else {
+            result = "Productos encontrados (usa el id con send_product_to_customer):\n" + products.map((p) => formatProductForPrompt(p)).join("\n");
+          }
         }
         details = `Buscó "${args.query}" en el catálogo (${products.length} resultados).`;
       } catch (e) {
@@ -541,14 +562,14 @@ export async function runAiAgent({
       return { reply: text || lastText, actions };
     }
 
-    // Anexar mensaje del asistente con tool_calls
-    msgs.push({ role: "assistant", content: text || "" });
+    // Anexar mensaje del asistente con tool_calls (obligatorio para APIs tipo OpenAI)
+    msgs.push({ role: "assistant", content: text || "", tool_calls: toolCalls });
 
     // Ejecutar cada tool call y anexar resultados
     for (const tc of toolCalls) {
       const exec = await executeToolCall(tc, ctx);
       actions.push(exec.name);
-      msgs.push({ role: "tool" as any, content: exec.result } as Msg);
+      msgs.push({ role: "tool", tool_call_id: tc.id, name: exec.name, content: exec.result });
     }
   }
 
