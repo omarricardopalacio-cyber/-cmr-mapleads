@@ -493,35 +493,18 @@ async function maybeAiReply(
     .maybeSingle()
   if (!cfg || !cfg.enabled) return
 
-  // respond_to === 'new'  → solo responder si es el PRIMER mensaje de TODA la conversación
-  // respond_to === 'all'  → responder siempre (por defecto)
-  // Cualquier otro valor  → responder siempre
-  if (cfg.respond_to === 'new') {
-    // Contar mensajes salientes ANTERIORES (excluye el que acabamos de guardar en este ciclo,
-    // que tiene wa_message_id pending-*, verificamos solo los confirmados por WhatsApp)
-    const { count } = await supabaseAdmin
-      .from('messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('thread_id', threadId)
-      .eq('direction', 'out')
-      .not('wa_message_id', 'like', 'pending-%')
-    if ((count ?? 0) > 0) {
-      console.log('[ai-reply] respond_to=new: ya hay mensajes salientes confirmados, IA silenciada para este thread:', threadId)
-      return
-    }
-  }
-
-  // Historial completo de la conversación (últimos 200 mensajes con texto)
+  // Historial completo de la conversación (últimos 12 mensajes con texto)
   const { data: hist } = await supabaseAdmin
     .from('messages')
     .select('direction, text')
     .eq('thread_id', threadId)
     .not('text', 'is', null)
     .order('sent_at', { ascending: false })
-    .limit(200)
+    .limit(12)
     
   const fullHistory = (hist ?? [])
     .reverse()
+    .slice(0, -1)
     .map((m: unknown) => ({
       role: ((m as { direction: string }).direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
       content: String((m as { text: unknown }).text),
@@ -537,6 +520,14 @@ async function maybeAiReply(
 
   try {
     const { runAiAgent } = await import('@/lib/ai.server')
+    
+    // Forzar modelo rápido por defecto si no hay uno definido y el provider es lovable
+    const cfgFast = { ...(cfg as Record<string, unknown>) };
+    const provider = (cfgFast.selected_provider as string) || (cfgFast.provider as string) || 'lovable';
+    if (provider === 'lovable' && (!cfgFast.model || String(cfgFast.model).startsWith('gpt-'))) {
+      cfgFast.model = 'google/gemini-3-flash-preview';
+    }
+    
     const { reply } = await runAiAgent({
       orgId,
       threadId,
@@ -544,7 +535,7 @@ async function maybeAiReply(
       sessionId,
       chatId,
       messages: history,
-      cfg: cfg as Record<string, unknown>,
+      cfg: cfgFast,
     })
     
     if (!reply?.trim()) return

@@ -838,9 +838,9 @@ function ThreadPage() {
         </form>
       </div>
 
-      {data?.thread?.id && (
-        <aside className="w-80 border-l bg-card flex-col shrink-0 hidden md:flex overflow-hidden">
-          <ContactContextPanel contactId={data.thread.contactId ?? ''} threadId={data.thread.id} />
+      {data?.thread?.contactId && data?.thread?.id && (
+        <aside className="hidden md:flex w-72 lg:w-80 border-l bg-card flex-col shrink-0 overflow-hidden">
+          <ContactContextPanel contactId={data.thread.contactId} threadId={data.thread.id} />
         </aside>
       )}
 
