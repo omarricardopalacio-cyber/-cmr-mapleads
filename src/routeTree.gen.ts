@@ -25,7 +25,6 @@ import { Route as AuthenticatedDashboardRouteImport } from './routes/_authentica
 import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
 import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
 import { Route as AuthenticatedCatalogIntegrationsRouteImport } from './routes/_authenticated.catalog-integrations'
-import { Route as AuthenticatedCatalogIntegrationRouteImport } from './routes/_authenticated.catalog-integration'
 import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
 import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenticated.auto-replies'
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
@@ -122,12 +121,6 @@ const AuthenticatedCatalogIntegrationsRoute =
     path: '/catalog-integrations',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedCatalogIntegrationRoute =
-  AuthenticatedCatalogIntegrationRouteImport.update({
-    id: '/catalog-integration',
-    path: '/catalog-integration',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
 const AuthenticatedBroadcastsRoute = AuthenticatedBroadcastsRouteImport.update({
   id: '/broadcasts',
   path: '/broadcasts',
@@ -195,7 +188,6 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
-  '/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
   '/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/conversations': typeof AuthenticatedConversationsRouteWithChildren
@@ -224,7 +216,6 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
-  '/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
   '/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
   '/contacts': typeof AuthenticatedContactsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
@@ -254,7 +245,6 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_authenticated/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/_authenticated/broadcasts': typeof AuthenticatedBroadcastsRoute
-  '/_authenticated/catalog-integration': typeof AuthenticatedCatalogIntegrationRoute
   '/_authenticated/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
   '/_authenticated/contacts': typeof AuthenticatedContactsRoute
   '/_authenticated/conversations': typeof AuthenticatedConversationsRouteWithChildren
@@ -285,7 +275,6 @@ export interface FileRouteTypes {
     | '/signup'
     | '/auto-replies'
     | '/broadcasts'
-    | '/catalog-integration'
     | '/catalog-integrations'
     | '/contacts'
     | '/conversations'
@@ -314,7 +303,6 @@ export interface FileRouteTypes {
     | '/signup'
     | '/auto-replies'
     | '/broadcasts'
-    | '/catalog-integration'
     | '/catalog-integrations'
     | '/contacts'
     | '/dashboard'
@@ -343,7 +331,6 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_authenticated/auto-replies'
     | '/_authenticated/broadcasts'
-    | '/_authenticated/catalog-integration'
     | '/_authenticated/catalog-integrations'
     | '/_authenticated/contacts'
     | '/_authenticated/conversations'
@@ -495,13 +482,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCatalogIntegrationsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/catalog-integration': {
-      id: '/_authenticated/catalog-integration'
-      path: '/catalog-integration'
-      fullPath: '/catalog-integration'
-      preLoaderRoute: typeof AuthenticatedCatalogIntegrationRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
     '/_authenticated/broadcasts': {
       id: '/_authenticated/broadcasts'
       path: '/broadcasts'
@@ -602,7 +582,6 @@ const AuthenticatedConversationsRouteWithChildren =
 interface AuthenticatedRouteChildren {
   AuthenticatedAutoRepliesRoute: typeof AuthenticatedAutoRepliesRoute
   AuthenticatedBroadcastsRoute: typeof AuthenticatedBroadcastsRoute
-  AuthenticatedCatalogIntegrationRoute: typeof AuthenticatedCatalogIntegrationRoute
   AuthenticatedCatalogIntegrationsRoute: typeof AuthenticatedCatalogIntegrationsRoute
   AuthenticatedContactsRoute: typeof AuthenticatedContactsRoute
   AuthenticatedConversationsRoute: typeof AuthenticatedConversationsRouteWithChildren
@@ -620,7 +599,6 @@ interface AuthenticatedRouteChildren {
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAutoRepliesRoute: AuthenticatedAutoRepliesRoute,
   AuthenticatedBroadcastsRoute: AuthenticatedBroadcastsRoute,
-  AuthenticatedCatalogIntegrationRoute: AuthenticatedCatalogIntegrationRoute,
   AuthenticatedCatalogIntegrationsRoute: AuthenticatedCatalogIntegrationsRoute,
   AuthenticatedContactsRoute: AuthenticatedContactsRoute,
   AuthenticatedConversationsRoute: AuthenticatedConversationsRouteWithChildren,
@@ -655,13 +633,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
