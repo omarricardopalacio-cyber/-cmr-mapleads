@@ -5,6 +5,7 @@
 // accesibles con la publishable (anon) key vía PostgREST.
 // ============================================================
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { expandSearchTerms } from "./catalog-search";
 
 export type CatalogConfig = {
   org_id: string;
@@ -195,9 +196,21 @@ export async function searchCatalog(
   url.searchParams.set("select", "*");
 
   if (query.trim()) {
-    // PostgREST filter for name containing the query
-    const q = query.trim().replace(/[%_]/g, "\\$&"); // escape wildcards
-    url.searchParams.set("name", `ilike.*${q}*`);
+    const terms = expandSearchTerms(query.trim());
+    const clauses: string[] = [];
+    for (const term of terms) {
+      const q = term.replace(/[%_]/g, "");
+      if (!q) continue;
+      clauses.push(`name.ilike.*${q}*`);
+      clauses.push(`description.ilike.*${q}*`);
+      clauses.push(`sku.ilike.*${q}*`);
+    }
+    if (clauses.length) {
+      url.searchParams.set("or", `(${clauses.join(",")})`);
+    } else {
+      const q = query.trim().replace(/[%_]/g, "");
+      url.searchParams.set("name", `ilike.*${q}*`);
+    }
   } else {
     // No query = return latest products
     url.searchParams.set("order", "id.desc");

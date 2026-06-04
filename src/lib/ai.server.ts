@@ -1,6 +1,7 @@
 import { SignJWT, importPKCS8 } from "jose";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { getCatalogConfig, searchCatalog, getCatalogProduct, formatProductForPrompt, type CatalogConfig } from "./catalog.server";
+import { getCatalogConfig, searchCatalog, getCatalogProduct, type CatalogConfig, type CatalogProduct } from "./catalog.server";
+import { resolveProductFromReference } from "./catalog-search";
 
 export type Msg = { 
   role: "system" | "user" | "assistant" | "tool"; 
@@ -67,7 +68,7 @@ export const CATALOG_TOOLS = [
           query: {
             type: "string",
             description:
-              "Texto a buscar (p.ej. 'zapatero', 'organizador'). Vacío = devolver destacados.",
+              "Palabra clave en singular si es posible (ej. 'zapatero' no 'zapateros', 'silla' no 'sillas'). El sistema corrige plurales y typos. Vacío = destacados.",
           },
           limit: { type: "number", description: "Máx productos (1-5). Default 5." },
         },
@@ -83,10 +84,14 @@ export const CATALOG_TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          product_id: { type: "string", description: "id del producto devuelto por search_products" },
+          product_id: { type: "string", description: "id UUID del producto (preferido)" },
+          product_reference: {
+            type: "string",
+            description:
+              "Si el cliente dice 'el 6 niveles', 'JDM-128' o parte del nombre, pásalo aquí. El sistema lo vincula al producto de la lista anterior.",
+          },
           caption: { type: "string", description: "Texto opcional debajo de la imagen" },
         },
-        required: ["product_id"],
       },
     },
   },
@@ -99,10 +104,13 @@ export const CATALOG_TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          product_id: { type: "string", description: "id del producto devuelto por search_products" },
+          product_id: { type: "string", description: "id UUID del producto (preferido)" },
+          product_reference: {
+            type: "string",
+            description: "Referencia del cliente al producto de la lista (ej. '6 niveles', 'JDM-62')",
+          },
           caption: { type: "string", description: "Texto opcional debajo del video" },
         },
-        required: ["product_id"],
       },
     },
   },
@@ -361,7 +369,58 @@ export type ToolExecCtx = {
   sessionId?: string;
   chatId?: string;
   catalogCfg?: CatalogConfig | null;
+  /** Últimos productos devueltos por search_products (para resolver "el 6 niveles"). */
+  lastProducts?: CatalogProduct[];
 };
+
+function mapProductsForTool(products: CatalogProduct[]) {
+  return products.map((p, index) => ({
+    list_index: index + 1,
+    id: p.id,
+    name: p.name,
+    price: p.price,
+    stock: p.stock,
+    sku: p.sku,
+    description: (p.description ?? "").slice(0, 220),
+    has_image: !!p.image_url,
+    has_video: !!p.video_url,
+    badge: p.badge,
+  }));
+}
+
+async function resolveProductForSend(
+  args: Record<string, unknown>,
+  ctx: ToolExecCtx,
+): Promise<CatalogProduct | null> {
+  if (!ctx.catalogCfg) return null;
+  const ref = String(args.product_reference || args.product_id || "").trim();
+  if (!ref) return null;
+
+  const fromList = resolveProductFromReference(ref, ctx.lastProducts ?? []);
+  if (fromList) return fromList;
+
+  if (/^[0-9a-f-]{36}$/i.test(ref)) {
+    const byId = await getCatalogProduct(ctx.catalogCfg, ref);
+    if (byId) return byId;
+  }
+
+  const hits = await searchCatalog(ctx.catalogCfg, ref, 8);
+  ctx.lastProducts = hits;
+  return resolveProductFromReference(ref, hits) ?? hits[0] ?? null;
+}
+
+function mimeFromProductUrl(url: string, kind: "image" | "video"): string {
+  const lower = url.split("?")[0].toLowerCase();
+  if (kind === "video") {
+    if (lower.endsWith(".webm")) return "video/webm";
+    if (lower.endsWith(".mov")) return "video/quicktime";
+    return "video/mp4";
+  }
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
+}
 
 async function queueOutgoingMedia(
   ctx: ToolExecCtx,
@@ -372,7 +431,7 @@ async function queueOutgoingMedia(
   if (!ctx.sessionId || !ctx.chatId) {
     return "Falta sessionId/chatId; no se puede enviar media.";
   }
-  const mimeType = kind === "video" ? "video/mp4" : "image/jpeg";
+  const mimeType = mimeFromProductUrl(mediaUrl, kind);
   const payload: Record<string, unknown> = {
     chatId: ctx.chatId,
     mediaUrl,
@@ -474,27 +533,21 @@ export async function executeToolCall(
         const q = (args.query || "").toString().trim();
         const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 5);
         const products = await searchCatalog(catalogCfg, q, limit);
-        
+        ctx.lastProducts = products;
+
         if (!products.length) {
-          // Fallback: traer destacados sin filtro
           const fallback = await searchCatalog(catalogCfg, "", limit);
+          ctx.lastProducts = fallback;
           result = JSON.stringify({
             found: 0,
             message: "No hay coincidencias exactas. Estos son alternativos:",
-            products: fallback.map((p: any) => ({
-              id: p.id, name: p.name, price: p.price, stock: p.stock,
-              description: (p.description ?? "").slice(0, 220),
-              has_image: !!p.image_url, has_video: !!p.video_url, badge: p.badge,
-            })),
+            products: mapProductsForTool(fallback),
           });
         } else {
           result = JSON.stringify({
             found: products.length,
-            products: products.map((p: any) => ({
-              id: p.id, name: p.name, price: p.price, stock: p.stock,
-              description: (p.description ?? "").slice(0, 220),
-              has_image: !!p.image_url, has_video: !!p.video_url, badge: p.badge,
-            })),
+            products: mapProductsForTool(products),
+            hint: "Si el cliente elige por descripción (ej. 'el de 6 niveles'), usa product_reference con esa frase en send_product_image.",
           });
         }
         details = `Buscó productos: "${q}" (${products.length} resultados)`;
@@ -509,10 +562,10 @@ export async function executeToolCall(
       details = result;
     } else {
       try {
-        const productId = args.product_id;
-        const p = await getCatalogProduct(catalogCfg, String(productId));
+        const p = await resolveProductForSend(args, ctx);
         if (!p) {
-          result = "Producto no encontrado.";
+          result =
+            "Producto no encontrado. Usa product_id de la última búsqueda o product_reference (ej. '6 niveles', 'JDM-128').";
           details = result;
         } else {
           const kind = name === "send_product_video" ? "video" : "image";
@@ -523,7 +576,7 @@ export async function executeToolCall(
           } else {
             const caption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
             result = await queueOutgoingMedia(ctx, kind, url, caption);
-            details = `${name}: ${productId} a ${chatId}`;
+            details = `${name}: ${p.id} (${p.name}) a ${chatId}`;
           }
         }
       } catch (e) {
@@ -577,11 +630,12 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 2. Si search_products devuelve productos, responde mostrando 3 a 5 productos así (uno por línea):
    • *NOMBRE* — $PRECIO  (badge si hay)
      Características clave en una frase.
-3. Pregunta cuál le interesa.
-4. Cuando el cliente elija uno o pida "foto"/"imagen"/"ver", llama "send_product_image" con el product_id correcto y luego pregunta si desea ver el video.
-5. Si pide video, llama "send_product_video". Si has_video=false, dilo claramente y ofrece más imágenes o alternativos.
-6. Si search_products devuelve found=0, sugiere los alternativos que devuelva el JSON y pregunta si alguno le sirve.
-7. Nunca digas "no puedo enviar imágenes": SIEMPRE usa send_product_image cuando el cliente quiera verla.
+3. Pregunta cuál le interesa. Guarda mentalmente el id de cada producto del JSON.
+4. Si el cliente dice "el de 6 niveles", "el JDM-128" o similar, NO busques de nuevo: usa send_product_image con product_reference exactamente con lo que dijo el cliente (el sistema lo vincula al producto correcto de la lista).
+5. Cuando pida "foto"/"imagen"/"ver", llama send_product_image (product_id o product_reference). Luego ofrece el video.
+6. Si pide video, llama send_product_video. Si has_video=false, dilo y ofrece la imagen.
+7. Búsquedas: usa singular (zapatero, silla). El sistema corrige plurales (zapateros→zapatero) y typos (siyas→silla).
+8. Nunca digas que no puedes enviar imágenes si has_image=true en el JSON.
 `.trim();
 
   const system = [
