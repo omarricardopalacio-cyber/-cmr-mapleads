@@ -5,7 +5,6 @@ import { generateReply } from '@/lib/ai.server'
 import { sanitizeMessageText } from '@/lib/message-text'
 import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
 import { z } from 'zod'
-import { triggerFlows } from '@/lib/flow-trigger.server'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
 
@@ -255,7 +254,7 @@ async function maybeAutoReply(
   text: string,
   threadId: string,
   contactId: string,
-): Promise<{ aiDisabled: boolean; replied: boolean }> {
+): Promise<{ aiDisabled: boolean }> {
   const { data: rules } = await supabaseAdmin
     .from('auto_replies')
     .select(
@@ -263,7 +262,7 @@ async function maybeAutoReply(
     )
     .eq('org_id', orgId)
     .eq('is_active', true);
-  if (!rules?.length) return { aiDisabled: false, replied: false };
+  if (!rules?.length) return { aiDisabled: false };
 
   const lower = text.toLowerCase();
   for (const raw of rules as unknown[] as AutoReplyRule[]) {
@@ -386,9 +385,9 @@ async function maybeAutoReply(
       contact_id: contactId,
     });
 
-    return { aiDisabled, replied: true };
+    return { aiDisabled };
   }
-  return { aiDisabled: false, replied: false };
+  return { aiDisabled: false };
 }
 
 async function resolvePhoneForLidMessage(args: {
@@ -481,7 +480,6 @@ async function maybeAiReply(
     .eq('id', threadId)
     .maybeSingle();
 
-  // Si la IA está explícitamente desactivada para este thread, no responder
   if ((thread as unknown as { ai_enabled?: boolean })?.ai_enabled === false) {
     return;
   }
@@ -493,7 +491,15 @@ async function maybeAiReply(
     .maybeSingle()
   if (!cfg || !cfg.enabled) return
 
-  // Historial completo de la conversación (últimos 12 mensajes con texto)
+  if (cfg.respond_to === 'new') {
+    const { count } = await supabaseAdmin
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('thread_id', threadId)
+      .eq('direction', 'out')
+    if ((count ?? 0) > 0) return
+  }
+
   const { data: hist } = await supabaseAdmin
     .from('messages')
     .select('direction, text')
@@ -501,7 +507,7 @@ async function maybeAiReply(
     .not('text', 'is', null)
     .order('sent_at', { ascending: false })
     .limit(12)
-    
+
   const fullHistory = (hist ?? [])
     .reverse()
     .slice(0, -1)
@@ -510,25 +516,22 @@ async function maybeAiReply(
       content: String((m as { text: unknown }).text),
     }))
 
-  // El último mensaje ya está en el historial (es el mensaje entrante que disparó la IA)
-  // Si por timing no está, lo agregamos como respaldo
-  const lastIsCurrent = fullHistory.length > 0 && 
-    fullHistory[fullHistory.length - 1].role === 'user' && 
+  const lastIsCurrent =
+    fullHistory.length > 0 &&
+    fullHistory[fullHistory.length - 1].role === 'user' &&
     fullHistory[fullHistory.length - 1].content.trim() === text.trim()
-    
+
   const history = lastIsCurrent ? fullHistory : [...fullHistory, { role: 'user' as const, content: text }]
 
   try {
     const { runAiAgent } = await import('@/lib/ai.server')
-    
-    // Forzar modelo rápido por defecto si no hay uno definido y el provider es lovable
-    const cfgFast = { ...(cfg as Record<string, unknown>) };
-    const provider = (cfgFast.selected_provider as string) || (cfgFast.provider as string) || 'lovable';
+    const cfgFast = { ...(cfg as Record<string, unknown>) }
+    const provider = (cfgFast.selected_provider as string) || (cfgFast.provider as string) || 'lovable'
     if (provider === 'lovable' && (!cfgFast.model || String(cfgFast.model).startsWith('gpt-'))) {
-      cfgFast.model = 'google/gemini-3-flash-preview';
+      cfgFast.model = 'google/gemini-3-flash-preview'
     }
-    
-    const { reply } = await runAiAgent({
+
+    const { reply, actions } = await runAiAgent({
       orgId,
       threadId,
       contactId,
@@ -537,12 +540,16 @@ async function maybeAiReply(
       messages: history,
       cfg: cfgFast,
     })
-    
+
+    if (actions.some((a) => a === 'send_product_image' || a === 'send_product_video')) {
+      return
+    }
+
     if (!reply?.trim()) return
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,
       session_id: sessionId,
-      type: 'send_message',
+      type: 'SEND_MESSAGE',
       payload: { chatId, text: reply.trim() },
       status: 'pending',
     })
@@ -787,18 +794,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.error('[ingest] default flow enrollment error (non-fatal):', flowErr.message);
               }
             }
-
-            // --- NUEVO: Motor de Flujos v2 ---
-            // Si el contacto existe, y es un mensaje entrante o saliente, podemos disparar eventos
-            if (contactId && e.type === 'message-in') {
-              // triggerFlows("wa_new_message")
-              // Si el thread ya existía y el contacto responde a algo, se podría asumir wa_customer_reply
-              // Simplificado: llamamos a wa_new_message siempre, y wa_customer_reply si ya había mensajes previos (esto se podría refinar).
-              triggerFlows({ orgId: session.org_id, contactId, triggerType: 'wa_new_message' }).catch(console.error);
-              triggerFlows({ orgId: session.org_id, contactId, triggerType: 'wa_customer_reply' }).catch(console.error);
-            }
-            // ---------------------------------
-
             // DIAGNÓSTICO: Loguear estructura completa del media para mensajes entrantes
             if (e.media && (e.direction === 'in' || e.type === 'message-in')) {
               const mediaKeys = Object.keys(e.media as object);
@@ -968,19 +963,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
-            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && (e.text || e.media)) {
+            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
               // Use phone@c.us when we have a real phone (avoids @lid issues)
               const sendChatId = e.contact?.phone
                 ? `${e.contact.phone}@c.us`
                 : /^\d+$/.test(waId)
                   ? `${waId}@c.us`
                   : e.chatId
-                  
-              const messageText = e.text ?? (e.media ? '[Archivo multimedia]' : '')
-              
-              const { aiDisabled, replied } = await maybeAutoReply(session.org_id, session.id, sendChatId, messageText, thread.id, contactId)
-              if (!aiDisabled && !replied) {
-                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, messageText)
+              const { aiDisabled } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
+              if (!aiDisabled) {
+                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
               }
 
               // Keyword flow enrollment (wrapped to avoid breaking bridge on DB errors)
@@ -1001,7 +993,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     .limit(1)
                     .maybeSingle();
                   if (!firstStep) continue;
-                  const lowerText = (e.text || '').toLowerCase();
+                  const lowerText = e.text.toLowerCase();
                   const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
                   if (triggerVal && lowerText.includes(triggerVal)) {
                     await dyn()
