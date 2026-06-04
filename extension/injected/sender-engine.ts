@@ -98,6 +98,22 @@ class SenderEngine {
     }
 
     const normalizedChatId = this.normalizeChatId(task.chatId);
+    let targetChatId = normalizedChatId;
+
+    // ── Fallback robusto para asegurar LID antes de enviar ──
+    try {
+      if (WPP.contact && typeof WPP.contact.queryExists === "function" && !normalizedChatId.endsWith("@g.us")) {
+        const result = await Promise.race([
+          WPP.contact.queryExists(normalizedChatId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), 8000))
+        ]);
+        if (result && (result as any).wid && (result as any).wid._serialized) {
+          targetChatId = (result as any).wid._serialized;
+        }
+      }
+    } catch (e) {
+      console.warn("[SenderEngine] Fallback queryExists timeout o error", e);
+    }
 
     const controller = new AbortController();
     this.activeTasks.set(task.taskId, controller);
@@ -110,7 +126,7 @@ class SenderEngine {
       if (task.media) {
         // Enviar archivo desde base64
         result = await WPP.chat.sendFileMessage(
-          normalizedChatId,
+          targetChatId,
           task.media,
           {
             type: task.options?.mimetype || "application/octet-stream",
@@ -122,7 +138,7 @@ class SenderEngine {
       } else {
         // Enviar texto
         result = await WPP.chat.sendTextMessage(
-          normalizedChatId,
+          targetChatId,
           task.text || "",
           {
             quotedMsg: task.quotedMsgId,

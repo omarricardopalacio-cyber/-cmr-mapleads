@@ -214,7 +214,17 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
       .eq("org_id", orgId)
       .maybeSingle();
     if (ie || !integ) throw new Error("Integración no encontrada");
-    if (!integ.tenant_id) throw new Error("Prueba la conexión primero para obtener el tenant_id");
+    if (!integ.tenant_id) {
+      // Auto-resolve tenant si no está en caché
+      const tenantsPath = `${integ.tenants_table}?slug=eq.${encodeURIComponent(integ.slug)}&select=id,slug,name&limit=1`;
+      const r1 = await externalFetch(integ.supabase_url, integ.publishable_key, tenantsPath);
+      if (!r1.ok) throw new Error(`Error HTTP al buscar tenant: ${r1.status}`);
+      const tenants = await r1.json();
+      if (!tenants?.length) throw new Error(`Slug de catálogo no encontrado: ${integ.slug}`);
+      integ.tenant_id = tenants[0].id;
+      // Actualizar en base de datos
+      await (supabaseAdmin as any).from("catalog_integrations").update({ tenant_id: integ.tenant_id }).eq("id", data.id);
+    }
 
     // Crear log de sincronización
     const { data: logRow } = await (supabaseAdmin as any)

@@ -8,6 +8,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { expandSearchTerms } from "./catalog-search";
 
 export type CatalogConfig = {
+  id: string;
   org_id: string;
   enabled: boolean;
   base_url: string;       // URL Supabase del catálogo: https://xxxx.supabase.co
@@ -16,7 +17,7 @@ export type CatalogConfig = {
   send_media: boolean;
   tenants_table: string;  // default: tenants
   products_table: string; // default: master_products
-  cached_tenant_id?: string | null;
+  tenant_id?: string | null;
 };
 
 export type CatalogProduct = {
@@ -55,7 +56,7 @@ function anonHeaders(cfg: CatalogConfig): Record<string, string> {
 
 async function resolveTenantId(cfg: CatalogConfig): Promise<string | null> {
   // Use cache if available
-  if (cfg.cached_tenant_id) return cfg.cached_tenant_id;
+  if (cfg.tenant_id) return cfg.tenant_id;
 
   const table = cfg.tenants_table || "tenants";
   const url = new URL(pgRestUrl(cfg, table));
@@ -79,8 +80,8 @@ async function resolveTenantId(cfg: CatalogConfig): Promise<string | null> {
   // Persist cache back to DB
   await (supabaseAdmin as any)
     .from("catalog_integrations")
-    .update({ cached_tenant_id: tenantId })
-    .eq("org_id", cfg.org_id);
+    .update({ tenant_id: tenantId })
+    .eq("id", cfg.id);
 
   return tenantId;
 }
@@ -92,22 +93,25 @@ export async function getCatalogConfig(orgId: string): Promise<CatalogConfig | n
     .from("catalog_integrations")
     .select("*")
     .eq("org_id", orgId)
+    .eq("is_active", true) // Ensure it's active
+    .limit(1)
     .maybeSingle();
 
-  if (!data || !data.enabled || !data.base_url || !data.catalog_slug || !data.api_token) {
+  if (!data || !data.is_active || !data.supabase_url || !data.slug || !data.publishable_key) {
     return null;
   }
 
   return {
+    id: data.id,
     org_id: orgId,
-    enabled: data.enabled,
-    base_url: data.base_url,
-    catalog_slug: data.catalog_slug,
-    api_token: data.api_token,
+    enabled: data.is_active,
+    base_url: data.supabase_url,
+    catalog_slug: data.slug,
+    api_token: data.publishable_key,
     send_media: data.send_media ?? true,
     tenants_table: data.tenants_table || "tenants",
     products_table: data.products_table || "master_products",
-    cached_tenant_id: data.cached_tenant_id ?? null,
+    tenant_id: data.tenant_id ?? null,
   } as CatalogConfig;
 }
 
