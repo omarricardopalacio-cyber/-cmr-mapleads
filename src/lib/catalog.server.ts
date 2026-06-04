@@ -263,7 +263,6 @@ export function formatProductForPrompt(p: CatalogProduct): string {
     `ID_PARA_ENVIAR: "${p.id}"`,
     `Nombre: "${p.name}"`,
     p.price !== undefined ? `Precio: $${p.price}` : null,
-    p.stock !== undefined && p.stock !== null ? `Stock: ${p.stock}` : null,
     p.sku ? `SKU: ${p.sku}` : null,
     p.badge ? `Etiqueta: ${p.badge}` : null,
     p.url ? `Link: ${p.url}` : null,
