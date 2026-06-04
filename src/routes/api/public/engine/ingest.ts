@@ -255,7 +255,7 @@ async function maybeAutoReply(
   text: string,
   threadId: string,
   contactId: string,
-): Promise<{ aiDisabled: boolean }> {
+): Promise<{ aiDisabled: boolean; replied: boolean }> {
   const { data: rules } = await supabaseAdmin
     .from('auto_replies')
     .select(
@@ -263,7 +263,7 @@ async function maybeAutoReply(
     )
     .eq('org_id', orgId)
     .eq('is_active', true);
-  if (!rules?.length) return { aiDisabled: false };
+  if (!rules?.length) return { aiDisabled: false, replied: false };
 
   const lower = text.toLowerCase();
   for (const raw of rules as unknown[] as AutoReplyRule[]) {
@@ -386,9 +386,9 @@ async function maybeAutoReply(
       contact_id: contactId,
     });
 
-    return { aiDisabled };
+    return { aiDisabled, replied: true };
   }
-  return { aiDisabled: false };
+  return { aiDisabled: false, replied: false };
 }
 
 async function resolvePhoneForLidMessage(args: {
@@ -978,8 +978,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   
               const messageText = e.text ?? (e.media ? '[Archivo multimedia]' : '')
               
-              const { aiDisabled } = await maybeAutoReply(session.org_id, session.id, sendChatId, messageText, thread.id, contactId)
-              if (!aiDisabled) {
+              const { aiDisabled, replied } = await maybeAutoReply(session.org_id, session.id, sendChatId, messageText, thread.id, contactId)
+              if (!aiDisabled && !replied) {
                 await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, messageText)
               }
 

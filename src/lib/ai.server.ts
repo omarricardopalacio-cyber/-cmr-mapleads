@@ -109,6 +109,7 @@ export async function callLovableAI(opts: {
       "Content-Type": "application/json",
       "Lovable-API-Key": key,
       "X-Lovable-AIG-SDK": "vercel-ai-sdk",
+      Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify(body),
   });
