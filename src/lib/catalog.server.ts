@@ -192,15 +192,12 @@ export async function searchCatalog(
   url.searchParams.set("tenant_id", `eq.${tenantId}`);
   url.searchParams.set("is_active", "eq.true");
   url.searchParams.set("limit", String(Math.min(limit, 10)));
-  url.searchParams.set(
-    "select",
-    "id,name,slug,sku,badge,base_price,warehouse_stock,main_image_url,long_description,category_id",
-  );
+  url.searchParams.set("select", "*");
 
   if (query.trim()) {
-    // PostgREST OR filter for name or description containing the query
+    // PostgREST filter for name containing the query
     const q = query.trim().replace(/[%_]/g, "\\$&"); // escape wildcards
-    url.searchParams.set("or", `(name.ilike.*${q}*,long_description.ilike.*${q}*)`);
+    url.searchParams.set("name", `ilike.*${q}*`);
   } else {
     // No query = return latest products
     url.searchParams.set("order", "id.desc");
@@ -238,10 +235,7 @@ export async function getCatalogProduct(
   const url = new URL(pgRestUrl(cfg, table));
   url.searchParams.set("id", `eq.${productId}`);
   url.searchParams.set("is_active", "eq.true");
-  url.searchParams.set(
-    "select",
-    "id,name,slug,sku,badge,base_price,warehouse_stock,main_image_url,long_description",
-  );
+  url.searchParams.set("select", "*");
   url.searchParams.set("limit", "1");
 
   const res = await fetch(url.toString(), { headers: anonHeaders(cfg) });
