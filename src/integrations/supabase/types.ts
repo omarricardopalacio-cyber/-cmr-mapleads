@@ -418,6 +418,7 @@ export type Database = {
       catalog_integrations: {
         Row: {
           cached_tenant_id: string | null
+          created_at: string
           id: string
           is_active: boolean
           last_sync_count: number | null
@@ -440,6 +441,7 @@ export type Database = {
         }
         Insert: {
           cached_tenant_id?: string | null
+          created_at?: string
           id?: string
           is_active?: boolean
           last_sync_count?: number | null
@@ -462,6 +464,7 @@ export type Database = {
         }
         Update: {
           cached_tenant_id?: string | null
+          created_at?: string
           id?: string
           is_active?: boolean
           last_sync_count?: number | null
@@ -1466,6 +1469,7 @@ export type Database = {
       }
       threads: {
         Row: {
+          ai_enabled: boolean
           assigned_to_user_id: string | null
           contact_id: string
           created_at: string
@@ -1476,6 +1480,7 @@ export type Database = {
           unread_count: number
         }
         Insert: {
+          ai_enabled?: boolean
           assigned_to_user_id?: string | null
           contact_id: string
           created_at?: string
@@ -1486,6 +1491,7 @@ export type Database = {
           unread_count?: number
         }
         Update: {
+          ai_enabled?: boolean
           assigned_to_user_id?: string | null
           contact_id?: string
           created_at?: string
