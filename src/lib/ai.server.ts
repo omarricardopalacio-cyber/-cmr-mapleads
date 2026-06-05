@@ -52,6 +52,20 @@ export const CRM_TOOLS = [
       parameters: { type: "object", properties: {} },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "confirm_order",
+      description: "Guarda los datos del pedido en el sistema una vez que el cliente los ha confirmado todos. Pasa los datos recopilados como un objeto JSON stringificado.",
+      parameters: {
+        type: "object",
+        properties: {
+          form_data: { type: "string", description: "Objeto JSON (como string) con los datos recopilados (ej. '{\"Nombre\": \"Juan\", \"Ciudad\": \"Bogota\"}')" },
+        },
+        required: ["form_data"],
+      },
+    },
+  },
 ];
 
 /* Catalog tools — solo se incluyen cuando hay integración activa */
@@ -524,6 +538,24 @@ export async function executeToolCall(
     }
     result = "Conversacion transferida a agente humano. IA desactivada.";
     details = "Transfirio la conversacion a un agente humano (IA apagada).";
+  } else if (name === "confirm_order") {
+    try {
+      const formData = JSON.parse(args.form_data || "{}");
+      await (supabaseAdmin as any).from("orders").insert({
+        org_id: orgId,
+        contact_id: contactId ?? null,
+        thread_id: threadId,
+        status: "confirmed",
+        form_data: formData,
+      });
+      // Cambiar estado de compra
+      await (supabaseAdmin as any).from("threads").update({ purchase_intent: "compro" }).eq("id", threadId);
+      result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+      details = "Pedido guardado con datos: " + args.form_data;
+    } catch (e) {
+      result = "Error guardando el pedido.";
+      details = result;
+    }
   } else if (name === "search_products") {
     if (!catalogCfg) {
       result = "Catálogo no configurado.";
@@ -638,6 +670,18 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 8. Nunca digas que no puedes enviar imágenes si has_image=true en el JSON.
 `.trim();
 
+  // Load order fields
+  const { data: orderFieldsData } = await supabaseAdmin
+    .from("order_fields")
+    .select("name, is_required")
+    .eq("org_id", orgId)
+    .order("display_order", { ascending: true });
+    
+  const orderFields = orderFieldsData ?? [];
+  const orderFieldsText = orderFields.length 
+    ? `\n\n=== RECOPILACIÓN DE PEDIDOS ===\n1. Sutilmente, cada 2 o 3 intercambios o cuando haya intención de compra, pregunta si desea agendar o hacer pedido.\n2. Si dice que SÍ, envíale EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. Insiste amablemente si faltan datos obligatorios.\n4. Cuando tengas todos los datos, muestra un resumen y pide confirmación ("Tus datos son... ¿Confirmas?").\n5. Solo cuando el cliente confirme explícitamente, llama a la herramienta "confirm_order" con los datos en formato JSON.`
+    : "";
+
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     (cfg.knowledge_base as string)?.trim()
@@ -645,6 +689,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
       : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usalas cuando sea necesario.",
     "\n\n" + PRODUCT_FLOW_GUIDE,
+    orderFieldsText,
   ].join("");
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];

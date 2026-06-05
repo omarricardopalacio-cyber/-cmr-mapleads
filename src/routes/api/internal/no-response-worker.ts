@@ -24,6 +24,7 @@ export const Route = createFileRoute('/api/internal/no-response-worker')({
 
     try {
       const result = await runNoResponseWorker()
+      await processAbandonedOrders()
       return new Response(JSON.stringify({ ok: true, ...result }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -37,6 +38,67 @@ export const Route = createFileRoute('/api/internal/no-response-worker')({
     }
   },
 })
+
+async function processAbandonedOrders() {
+  const now = new Date()
+  const tenMinsAgo = new Date(now.getTime() - 10 * 60000).toISOString()
+  const twentyMinsAgo = new Date(now.getTime() - 20 * 60000).toISOString()
+  const oneHourAgo = new Date(now.getTime() - 60 * 60000).toISOString()
+
+  // 1. One hour ago -> no_compro
+  await supabaseAdmin
+    .from('threads')
+    .update({ purchase_intent: 'no_compro' })
+    .in('purchase_intent', ['collecting_data', 'collecting_data_reminded_1', 'collecting_data_reminded_2'])
+    .lt('last_message_at', oneHourAgo)
+
+  // 2. Twenty mins ago -> reminder 2
+  const { data: threads20 } = await supabaseAdmin
+    .from('threads')
+    .select('id, org_id, session_id, contact_id, wa_sessions(phone_number), contacts(phone)')
+    .eq('purchase_intent', 'collecting_data_reminded_1')
+    .lt('last_message_at', twentyMinsAgo)
+    .gt('last_message_at', oneHourAgo)
+
+  if (threads20?.length) {
+    for (const t of threads20) {
+      const chatId = t.contacts?.phone ? `${t.contacts.phone}@s.whatsapp.net` : null
+      if (!chatId) continue
+      await supabaseAdmin.from('engine_commands').insert({
+        org_id: t.org_id,
+        session_id: t.session_id,
+        type: 'send_message',
+        payload: { chatId, text: 'Hola, ¿pudiste revisar los datos de tu pedido? Avisame si tienes alguna duda para agendarlo. 😊' },
+        status: 'pending',
+      })
+      await supabaseAdmin.from('threads').update({ purchase_intent: 'collecting_data_reminded_2' }).eq('id', t.id)
+    }
+  }
+
+  // 3. Ten mins ago -> reminder 1
+  const { data: threads10 } = await supabaseAdmin
+    .from('threads')
+    .select('id, org_id, session_id, contact_id, wa_sessions(phone_number), contacts(phone)')
+    .eq('purchase_intent', 'collecting_data')
+    .lt('last_message_at', tenMinsAgo)
+    .gt('last_message_at', twentyMinsAgo)
+
+  if (threads10?.length) {
+    for (const t of threads10) {
+      const chatId = t.contacts?.phone ? `${t.contacts.phone}@s.whatsapp.net` : null
+      if (!chatId) continue
+      await supabaseAdmin.from('engine_commands').insert({
+        org_id: t.org_id,
+        session_id: t.session_id,
+        type: 'send_message',
+        payload: { chatId, text: 'Veo que empezamos a agendar tu pedido. Por favor confirmame los datos cuando puedas para dejarlo listo.' },
+        status: 'pending',
+      })
+      await supabaseAdmin.from('threads').update({ purchase_intent: 'collecting_data_reminded_1' }).eq('id', t.id)
+    }
+  }
+}
+
 
 async function runNoResponseWorker(): Promise<{ fired: number; skipped: number }> {
   const now = new Date().toISOString()

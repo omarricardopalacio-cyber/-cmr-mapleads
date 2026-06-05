@@ -13,7 +13,7 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 
@@ -44,6 +44,7 @@ function AppSidebar() {
     { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
     { title: "Chats en Vivo", url: "/conversations", icon: MessagesSquare },
     { title: "Contactos y Clientes", url: "/contacts", icon: Users },
+    { title: "Pedidos", url: "/orders", icon: ClipboardList },
   ];
 
   const automate = [

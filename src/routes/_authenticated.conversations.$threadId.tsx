@@ -210,6 +210,18 @@ function ThreadPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const setIntentMut = useMutation({
+    mutationFn: async (intent: string) => {
+      const { error } = await supabase.from('threads').update({ purchase_intent: intent }).eq('id', threadId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["thread", threadId] });
+      toast.success("Estado de compra actualizado");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const syncMut = useMutation({
     mutationFn: () => syncThreadMessages({ data: { threadId } }),
     onSuccess: (res) => {
@@ -407,38 +419,41 @@ function ThreadPage() {
           </div>
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="sm" className="text-xs gap-1" disabled={assignMut.isPending}>
-                <User className="h-3 w-3" />
-                <span className="hidden sm:inline">
-                  {(() => {
-                    const assignedId = (data as unknown as Record<string, unknown>)?.thread?.assigned_to_user_id as string | undefined;
-                    if (!assignedId) return "Sin asignar";
-                    const m = (membersData?.members ?? []).find((x: { id: string }) => x.id === assignedId);
-                    return m?.displayName ?? "Asignado";
-                  })()}
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className={`text-xs gap-1 ${(data as any)?.thread?.purchase_intent === 'compro' ? 'text-green-600 bg-green-100 hover:bg-green-200' : (data as any)?.thread?.purchase_intent === 'no_compro' ? 'text-red-600 bg-red-100 hover:bg-red-200' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'}`} 
+                disabled={setIntentMut.isPending}
+              >
+                <span className="hidden sm:inline font-semibold">
+                  {(data as any)?.thread?.purchase_intent === 'compro' ? '🛒 Compró' : (data as any)?.thread?.purchase_intent === 'no_compro' ? '🔴 No compró' : '⚪ Hay interés (Pdte)'}
                 </span>
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-56 p-0" align="end">
-              <div className="p-2 border-b text-xs text-muted-foreground">Asignar chat a</div>
+            <PopoverContent className="w-48 p-0" align="end">
+              <div className="p-2 border-b text-xs text-muted-foreground">Estado del pedido</div>
               <div className="p-1 space-y-0.5">
                 <button
                   type="button"
-                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted flex items-center gap-2"
-                  onClick={() => assignMut.mutate(null)}
+                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted"
+                  onClick={() => setIntentMut.mutate('compro')}
                 >
-                  <span className="text-muted-foreground">Sin asignar</span>
+                  🛒 Compró
                 </button>
-                {(membersData?.members ?? []).map((m: { id: string; displayName: string }) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted flex items-center gap-2"
-                    onClick={() => assignMut.mutate(m.id)}
-                  >
-                    <span>{m.displayName}</span>
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted"
+                  onClick={() => setIntentMut.mutate('no_compro')}
+                >
+                  🔴 No compró
+                </button>
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted"
+                  onClick={() => setIntentMut.mutate('pending')}
+                >
+                  ⚪ Pendiente
+                </button>
               </div>
             </PopoverContent>
           </Popover>

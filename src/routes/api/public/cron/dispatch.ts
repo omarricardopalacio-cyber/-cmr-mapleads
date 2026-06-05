@@ -112,6 +112,12 @@ async function handler({ request }: { request: Request }) {
       .eq("status", "pending")
       .limit(batch);
 
+    // Helper: normalize wa_id to WhatsApp JID format (e.g. 573... → 573...@c.us)
+    function normalizeWaIdForBroadcast(rawWaId: string): string {
+      const stripped = rawWaId.split('@')[0].replace(/\D/g, '');
+      return stripped ? `${stripped}@c.us` : rawWaId;
+    }
+
     if (!pending?.length) {
       const { data: remaining } = await supabaseAdmin
         .from("broadcast_recipients")
@@ -178,7 +184,7 @@ async function handler({ request }: { request: Request }) {
           org_id: b.org_id,
           session_id: b.session_id,
           type,
-          payload,
+          payload: { ...payload, chatId: normalizeWaIdForBroadcast(r.wa_id) },
           status: "pending",
         })
         .select("id")
