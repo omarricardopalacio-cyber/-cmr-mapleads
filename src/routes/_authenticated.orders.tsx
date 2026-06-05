@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
+import { useServerFn } from "@tanstack/react-start"
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/lib/auth-context'
+import { ensureOrg } from "@/lib/org.functions"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -24,6 +26,8 @@ function OrdersModule() {
   const [newFieldName, setNewFieldName] = useState('')
   const [loading, setLoading] = useState(true)
 
+  const ensure = useServerFn(ensureOrg)
+
   useEffect(() => {
     async function initOrg() {
       if (!session?.user?.id) return;
@@ -32,9 +36,8 @@ function OrdersModule() {
         return;
       }
       try {
-        const { data, error } = await supabase.from('user_roles').select('org_id').eq('user_id', session.user.id).single();
-        if (error) throw error;
-        if (data?.org_id) setOrgId(data.org_id);
+        const res = await ensure({});
+        if (res?.orgId) setOrgId(res.orgId);
         else toast.error('No se pudo encontrar tu organización.');
       } catch (err: any) {
         console.error('Error initOrg:', err);
@@ -42,7 +45,7 @@ function OrdersModule() {
       }
     }
     initOrg();
-  }, [session])
+  }, [session, ensure])
 
   useEffect(() => {
     if (orgId) {
