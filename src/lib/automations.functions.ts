@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
+const dbDyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
 
 async function getUserOrg(userId: string) {
   const { data } = await supabaseAdmin
@@ -124,7 +124,7 @@ export const listQuickReplies = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data } = await dyn().from("quick_replies")
+    const { data } = await dbDyn().from("quick_replies")
       .select("*")
       .eq("org_id", orgId)
       .order("shortcut", { ascending: true });
@@ -147,7 +147,7 @@ export const upsertQuickReply = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
     const row = { ...data, org_id: orgId };
-    const { data: result, error } = await dyn().from("quick_replies")
+    const { data: result, error } = await dbDyn().from("quick_replies")
       .upsert(row)
       .select()
       .single();
@@ -160,7 +160,7 @@ export const deleteQuickReply = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    await dyn().from("quick_replies").delete().eq("id", data.id).eq("org_id", orgId);
+    await dbDyn().from("quick_replies").delete().eq("id", data.id).eq("org_id", orgId);
     return { ok: true };
   });
 
@@ -405,7 +405,7 @@ export const listFlows = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data } = await dyn()
+    const { data } = await dbDyn()
       .from("flows")
       .select("*, flow_steps(*), flow_runs(count)")
       .eq("org_id", orgId)
@@ -462,7 +462,7 @@ export const upsertFlow = createServerFn({ method: "POST" })
       ai_custom_system_prompt: data.ai_custom_system_prompt ?? null,
     };
     if (data.id) {
-      const { data: row, error } = await dyn()
+      const { data: row, error } = await dbDyn()
         .from("flows")
         .update(payload)
         .eq("id", data.id)
@@ -472,7 +472,7 @@ export const upsertFlow = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return { flow: row };
     }
-    const { data: row, error } = await dyn()
+    const { data: row, error } = await dbDyn()
       .from("flows")
       .insert(payload)
       .select()
@@ -504,7 +504,7 @@ export const listFlowSteps = createServerFn({ method: "GET" })
   .inputValidator((d) => z.object({ flowId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data: rows } = await dyn()
+    const { data: rows } = await dbDyn()
       .from("flow_steps")
       .select("*")
       .eq("flow_id", data.flowId)
@@ -529,7 +529,7 @@ export const upsertFlowStep = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data: flow } = await dyn()
+    const { data: flow } = await dbDyn()
       .from("flows")
       .select("id")
       .eq("id", data.flow_id)
@@ -545,7 +545,7 @@ export const upsertFlowStep = createServerFn({ method: "POST" })
       branch: data.branch ?? null,
     };
     if (data.id) {
-      const { data: row, error } = await dyn()
+      const { data: row, error } = await dbDyn()
         .from("flow_steps")
         .update(payload)
         .eq("id", data.id)
@@ -554,7 +554,7 @@ export const upsertFlowStep = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return { step: row };
     }
-    const { data: row, error } = await dyn()
+    const { data: row, error } = await dbDyn()
       .from("flow_steps")
       .insert(payload)
       .select()
@@ -577,7 +577,7 @@ export const listKnowledgeSources = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data } = await dyn()
+    const { data } = await dbDyn()
       .from("knowledge_sources")
       .select("*")
       .eq("org_id", orgId)
@@ -610,7 +610,7 @@ export const upsertKnowledgeSource = createServerFn({ method: "POST" })
       is_active: data.is_active,
     };
     if (data.id) {
-      const { data: row, error } = await dyn()
+      const { data: row, error } = await dbDyn()
         .from("knowledge_sources")
         .update(payload)
         .eq("id", data.id)
@@ -620,7 +620,7 @@ export const upsertKnowledgeSource = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return { item: row };
     }
-    const { data: row, error } = await dyn()
+    const { data: row, error } = await dbDyn()
       .from("knowledge_sources")
       .insert(payload)
       .select()
@@ -634,7 +634,7 @@ export const deleteKnowledgeSource = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    await dyn().from("knowledge_sources").delete().eq("id", data.id).eq("org_id", orgId);
+    await dbDyn().from("knowledge_sources").delete().eq("id", data.id).eq("org_id", orgId);
     return { ok: true };
   });
 
@@ -643,7 +643,7 @@ export const listTransferRules = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data } = await dyn()
+    const { data } = await dbDyn()
       .from("transfer_rules")
       .select("*")
       .eq("org_id", orgId)
@@ -674,7 +674,7 @@ export const upsertTransferRule = createServerFn({ method: "POST" })
       is_active: data.is_active,
     };
     if (data.id) {
-      const { data: row, error } = await dyn()
+      const { data: row, error } = await dbDyn()
         .from("transfer_rules")
         .update(payload)
         .eq("id", data.id)
@@ -684,7 +684,7 @@ export const upsertTransferRule = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return { item: row };
     }
-    const { data: row, error } = await dyn()
+    const { data: row, error } = await dbDyn()
       .from("transfer_rules")
       .insert(payload)
       .select()
@@ -698,6 +698,6 @@ export const deleteTransferRule = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    await dyn().from("transfer_rules").delete().eq("id", data.id).eq("org_id", orgId);
+    await dbDyn().from("transfer_rules").delete().eq("id", data.id).eq("org_id", orgId);
     return { ok: true };
   });
