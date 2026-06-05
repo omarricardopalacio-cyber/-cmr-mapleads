@@ -682,6 +682,19 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     ? `\n\n=== RECOPILACIÓN DE PEDIDOS ===\n1. Sutilmente, cada 2 o 3 intercambios o cuando haya intención de compra, pregunta si desea agendar o hacer pedido.\n2. Si dice que SÍ, envíale EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. Insiste amablemente si faltan datos obligatorios.\n4. Cuando tengas todos los datos, muestra un resumen y pide confirmación ("Tus datos son... ¿Confirmas?").\n5. Solo cuando el cliente confirme explícitamente, llama a la herramienta "confirm_order" con los datos en formato JSON.`
     : "";
 
+  // Load knowledge sources
+  const { data: knowledgeSourcesData } = await supabaseAdmin
+    .from("knowledge_sources")
+    .select("name, source_type, content")
+    .eq("org_id", orgId)
+    .eq("is_active", true);
+
+  const knowledgeSourcesText = knowledgeSourcesData?.length
+    ? `\n\n=== FUENTES DE CONOCIMIENTO ADICIONALES ===\n${knowledgeSourcesData
+        .map((ks: any) => `[Tipo: ${ks.source_type} | Nombre: ${ks.name}]\n${ks.content}`)
+        .join('\n\n')}`
+    : "";
+
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     (cfg.knowledge_base as string)?.trim()
@@ -690,6 +703,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usalas cuando sea necesario.",
     "\n\n" + PRODUCT_FLOW_GUIDE,
     orderFieldsText,
+    knowledgeSourcesText,
   ].join("");
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
