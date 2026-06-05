@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { supabase } from '@/integrations/supabase/client'
-import { useAuth } from '@/hooks/useAuth'
+import { useAuth } from '@/lib/auth-context'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -219,7 +219,7 @@ function OrdersModule() {
                       {orders.map((o) => {
                         const fd = typeof o.form_data === 'string' ? JSON.parse(o.form_data) : (o.form_data || {})
                         // Mostramos un par de valores clave para no saturar la tabla
-                        const summary = Object.entries(fd).slice(0, 2).map(([k,v]) => \`\${k}: \${v}\`).join(', ')
+                        const summary = Object.entries(fd).slice(0, 2).map(([k,v]) => `${k}: ${v}`).join(', ')
                         
                         return (
                           <TableRow key={o.id}>
