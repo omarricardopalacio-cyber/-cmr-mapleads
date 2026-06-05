@@ -695,6 +695,12 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
         .join('\n\n')}`
     : "";
 
+  // Dynamic context variables
+  const now = new Date();
+  const diasSemana = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const dynamicContextText = `\n\n=== CONTEXTO ACTUAL ===\nfecha_actual: ${now.toISOString().split('T')[0]}\ndia_actual: ${diasSemana[now.getDay()]}\nfecha_legible: ${diasSemana[now.getDay()]}, ${now.getDate()} de ${meses[now.getMonth()]} de ${now.getFullYear()}\nhora_actual: ${now.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     (cfg.knowledge_base as string)?.trim()
@@ -704,6 +710,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     "\n\n" + PRODUCT_FLOW_GUIDE,
     orderFieldsText,
     knowledgeSourcesText,
+    dynamicContextText,
   ].join("");
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
