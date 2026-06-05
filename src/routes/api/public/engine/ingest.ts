@@ -495,10 +495,8 @@ async function maybeAiReply(
   }
 
   // Wait for all auto-reply steps to finish sending before AI enters
-  if (delayAfterAutoReplies > 0) {
-    // Add a small buffer (2s) on top of the auto-reply cooldown total
-    await new Promise((r) => setTimeout(r, (delayAfterAutoReplies + 2) * 1000));
-  }
+  // NOTE: auto-replies already awaited their steps synchronously, so NO extra delay needed here.
+  // The autoRepliesWereSent flag is enough to signal contextual-entry mode.
 
   const { data: cfg } = await supabaseAdmin
     .from('ai_configs')
@@ -1010,12 +1008,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
               const { aiDisabled, totalDelaySec } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
               if (!aiDisabled) {
-                // Fire the AI response asynchronously so it doesn't block the webhook.
-                // It will wait internally for all auto-reply steps to finish.
+                // auto-replies already ran synchronously above, so AI enters right after.
+                // Pass autoRepliesWereSent so the AI uses contextual-entry mode.
                 const autoRepliesWereSent = totalDelaySec > 0;
-                maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent).catch((err) => {
-                  console.error('[ai-reply] async error', err);
-                });
+                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, 0, autoRepliesWereSent);
               }
 
               // Schedule no-response pending entries for active no_response rules
