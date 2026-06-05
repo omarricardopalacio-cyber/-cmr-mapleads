@@ -31,8 +31,15 @@ function OrdersModule() {
         setOrgId(session.user.user_metadata.org_id);
         return;
       }
-      const { data } = await supabase.from('user_roles').select('org_id').eq('user_id', session.user.id).single();
-      if (data?.org_id) setOrgId(data.org_id);
+      try {
+        const { data, error } = await supabase.from('user_roles').select('org_id').eq('user_id', session.user.id).single();
+        if (error) throw error;
+        if (data?.org_id) setOrgId(data.org_id);
+        else toast.error('No se pudo encontrar tu organización.');
+      } catch (err: any) {
+        console.error('Error initOrg:', err);
+        toast.error('Error cargando organización: ' + err.message);
+      }
     }
     initOrg();
   }, [session])
@@ -70,7 +77,14 @@ function OrdersModule() {
 
   async function addField(e: React.FormEvent) {
     e.preventDefault()
-    if (!newFieldName.trim() || !orgId) return
+    if (!newFieldName.trim()) {
+      toast.error('El nombre del campo no puede estar vacío');
+      return;
+    }
+    if (!orgId) {
+      toast.error('No se ha cargado tu identificador de organización. Por favor, refresca la página.');
+      return;
+    }
     
     const { data, error } = await supabase.from('order_fields').insert({
       org_id: orgId,
