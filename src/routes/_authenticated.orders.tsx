@@ -17,12 +17,25 @@ export const Route = createFileRoute('/_authenticated/orders')({
 
 function OrdersModule() {
   const { session } = useAuth()
-  const orgId = session?.user?.user_metadata?.org_id
+  const [orgId, setOrgId] = useState<string | null>(null)
   
   const [orders, setOrders] = useState<any[]>([])
   const [fields, setFields] = useState<any[]>([])
   const [newFieldName, setNewFieldName] = useState('')
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function initOrg() {
+      if (!session?.user?.id) return;
+      if (session.user.user_metadata?.org_id) {
+        setOrgId(session.user.user_metadata.org_id);
+        return;
+      }
+      const { data } = await supabase.from('user_roles').select('org_id').eq('user_id', session.user.id).single();
+      if (data?.org_id) setOrgId(data.org_id);
+    }
+    initOrg();
+  }, [session])
 
   useEffect(() => {
     if (orgId) {
