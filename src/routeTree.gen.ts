@@ -17,6 +17,7 @@ import { Route as AuthenticatedTransferRulesRouteImport } from './routes/_authen
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
 import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
+import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated.orders'
 import { Route as AuthenticatedMapleadsRouteImport } from './routes/_authenticated.mapleads'
 import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated.knowledge'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
@@ -28,6 +29,7 @@ import { Route as AuthenticatedCatalogIntegrationsRouteImport } from './routes/_
 import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
 import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenticated.auto-replies'
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
+import { Route as ApiInternalNoResponseWorkerRouteImport } from './routes/api/internal/no-response-worker'
 import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
 import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public/mapleads/ingest'
@@ -76,6 +78,11 @@ const AuthenticatedQuickRepliesRoute =
 const AuthenticatedPipelinesRoute = AuthenticatedPipelinesRouteImport.update({
   id: '/pipelines',
   path: '/pipelines',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedOrdersRoute = AuthenticatedOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedMapleadsRoute = AuthenticatedMapleadsRouteImport.update({
@@ -138,6 +145,12 @@ const AuthenticatedConversationsIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
+const ApiInternalNoResponseWorkerRoute =
+  ApiInternalNoResponseWorkerRouteImport.update({
+    id: '/api/internal/no-response-worker',
+    path: '/api/internal/no-response-worker',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiDebugMediaDiagRoute = ApiDebugMediaDiagRouteImport.update({
   id: '/api/debug/media-diag',
   path: '/api/debug/media-diag',
@@ -196,12 +209,14 @@ export interface FileRoutesByFullPath {
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/mapleads': typeof AuthenticatedMapleadsRoute
+  '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
   '/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
+  '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
@@ -223,12 +238,14 @@ export interface FileRoutesByTo {
   '/integrations': typeof AuthenticatedIntegrationsRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/mapleads': typeof AuthenticatedMapleadsRoute
+  '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/sessions': typeof AuthenticatedSessionsRoute
   '/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
+  '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
@@ -253,12 +270,14 @@ export interface FileRoutesById {
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
   '/_authenticated/knowledge': typeof AuthenticatedKnowledgeRoute
   '/_authenticated/mapleads': typeof AuthenticatedMapleadsRoute
+  '/_authenticated/orders': typeof AuthenticatedOrdersRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
   '/_authenticated/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/_authenticated/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
+  '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
@@ -283,12 +302,14 @@ export interface FileRouteTypes {
     | '/integrations'
     | '/knowledge'
     | '/mapleads'
+    | '/orders'
     | '/pipelines'
     | '/quick-replies'
     | '/sessions'
     | '/transfer-rules'
     | '/conversations/$threadId'
     | '/api/debug/media-diag'
+    | '/api/internal/no-response-worker'
     | '/conversations/'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
@@ -310,12 +331,14 @@ export interface FileRouteTypes {
     | '/integrations'
     | '/knowledge'
     | '/mapleads'
+    | '/orders'
     | '/pipelines'
     | '/quick-replies'
     | '/sessions'
     | '/transfer-rules'
     | '/conversations/$threadId'
     | '/api/debug/media-diag'
+    | '/api/internal/no-response-worker'
     | '/conversations'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
@@ -339,12 +362,14 @@ export interface FileRouteTypes {
     | '/_authenticated/integrations'
     | '/_authenticated/knowledge'
     | '/_authenticated/mapleads'
+    | '/_authenticated/orders'
     | '/_authenticated/pipelines'
     | '/_authenticated/quick-replies'
     | '/_authenticated/sessions'
     | '/_authenticated/transfer-rules'
     | '/_authenticated/conversations/$threadId'
     | '/api/debug/media-diag'
+    | '/api/internal/no-response-worker'
     | '/_authenticated/conversations/'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
@@ -360,6 +385,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
   ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
+  ApiInternalNoResponseWorkerRoute: typeof ApiInternalNoResponseWorkerRoute
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
@@ -424,6 +450,13 @@ declare module '@tanstack/react-router' {
       path: '/pipelines'
       fullPath: '/pipelines'
       preLoaderRoute: typeof AuthenticatedPipelinesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/orders': {
+      id: '/_authenticated/orders'
+      path: '/orders'
+      fullPath: '/orders'
+      preLoaderRoute: typeof AuthenticatedOrdersRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/mapleads': {
@@ -502,6 +535,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/conversations/'
       preLoaderRoute: typeof AuthenticatedConversationsIndexRouteImport
       parentRoute: typeof AuthenticatedConversationsRoute
+    }
+    '/api/internal/no-response-worker': {
+      id: '/api/internal/no-response-worker'
+      path: '/api/internal/no-response-worker'
+      fullPath: '/api/internal/no-response-worker'
+      preLoaderRoute: typeof ApiInternalNoResponseWorkerRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/debug/media-diag': {
       id: '/api/debug/media-diag'
@@ -590,6 +630,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
   AuthenticatedKnowledgeRoute: typeof AuthenticatedKnowledgeRoute
   AuthenticatedMapleadsRoute: typeof AuthenticatedMapleadsRoute
+  AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
   AuthenticatedQuickRepliesRoute: typeof AuthenticatedQuickRepliesRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
@@ -607,6 +648,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
   AuthenticatedKnowledgeRoute: AuthenticatedKnowledgeRoute,
   AuthenticatedMapleadsRoute: AuthenticatedMapleadsRoute,
+  AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedQuickRepliesRoute: AuthenticatedQuickRepliesRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
@@ -623,6 +665,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
   ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
+  ApiInternalNoResponseWorkerRoute: ApiInternalNoResponseWorkerRoute,
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
