@@ -147,7 +147,7 @@ function AutoRepliesTab() {
   const defaultForm = {
     id: undefined as string | undefined,
     name: "",
-    trigger_type: "keyword" as "keyword" | "first_message_overall" | "first_message_month",
+    trigger_type: "keyword" as "keyword" | "first_message_overall" | "first_message_month" | "no_response",
     match_type: "contains" as "contains" | "equals" | "starts" | "regex",
     match_value: "",
     is_active: true,
@@ -157,6 +157,10 @@ function AutoRepliesTab() {
     action_ai_behavior: "no_change" as "no_change" | "disable_ai" | "enable_ai",
     chain_to_rule_id: null as string | null,
     limit_per_contact: null as number | null,
+    // no_response fields
+    no_response_delay_seconds: 900 as number,
+    no_response_ai_scope: "always" as "always" | "ai_active" | "ai_inactive",
+    no_response_tag_id: null as string | null,
   };
   const [form, setForm] = useState(defaultForm);
   const [steps, setSteps] = useState<Step[]>([emptyStep()]);
@@ -181,6 +185,9 @@ function AutoRepliesTab() {
       action_ai_behavior: r.action_ai_behavior ?? "no_change",
       chain_to_rule_id: r.chain_to_rule_id ?? null,
       limit_per_contact: r.limit_per_contact ?? null,
+      no_response_delay_seconds: r.no_response_delay_seconds ?? 900,
+      no_response_ai_scope: r.no_response_ai_scope ?? "always",
+      no_response_tag_id: r.no_response_tag_id ?? null,
     });
     const loaded: Step[] = await Promise.all((r.steps ?? []).map(async (s: any) => {
       let previewUrl = s.media_url ?? "";
@@ -302,8 +309,58 @@ function AutoRepliesTab() {
               <SelectItem value="keyword">Palabra clave</SelectItem>
               <SelectItem value="first_message_overall">Primer mensaje (global)</SelectItem>
               <SelectItem value="first_message_month">Primer mensaje del mes</SelectItem>
+              <SelectItem value="no_response">⏱️ Sin respuesta del cliente</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* no_response: delay + AI scope + tag */}
+          {form.trigger_type === "no_response" && (
+            <div className="border rounded p-3 space-y-3 bg-amber-950/20 border-amber-800/40">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-amber-400" />
+                <span className="text-xs font-medium text-amber-300">Enviar si el cliente no responde en:</span>
+              </div>
+              <CooldownInput
+                value={form.no_response_delay_seconds}
+                onChange={(s) => setForm({ ...form, no_response_delay_seconds: s })}
+              />
+              <div className="space-y-1">
+                <Label className="text-xs">¿Cuándo aplica?</Label>
+                <Select
+                  value={form.no_response_ai_scope}
+                  onValueChange={(v: any) => setForm({ ...form, no_response_ai_scope: v })}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="always">Siempre enviar</SelectItem>
+                    <SelectItem value="ai_active">Solo si la IA está activa</SelectItem>
+                    <SelectItem value="ai_inactive">Solo si la IA está inactiva</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {tags.length > 0 && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Etiquetar contacto si no responde (opcional)</Label>
+                  <Select
+                    value={form.no_response_tag_id ?? "none"}
+                    onValueChange={(v) => setForm({ ...form, no_response_tag_id: v === "none" ? null : v })}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue placeholder="Sin etiqueta" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin etiqueta</SelectItem>
+                      {tags.map((t: any) => (
+                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Match type + value */}
           {form.trigger_type === "keyword" && (

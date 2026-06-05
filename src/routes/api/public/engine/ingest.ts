@@ -269,6 +269,8 @@ async function maybeAutoReply(
     if (raw.session_id && raw.session_id !== sessionId) continue;
 
     const triggerType = raw.trigger_type || 'keyword';
+    // no_response triggers are handled by the no-response-worker, not here
+    if (triggerType === 'no_response') continue;
     let hit = false;
 
     if (triggerType === 'first_message_overall') {
@@ -970,10 +972,64 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 : /^\d+$/.test(waId)
                   ? `${waId}@c.us`
                   : e.chatId
+
+              // Cancel any pending no-response timers for this thread (client responded)
+              try {
+                await supabaseAdmin
+                  .from('no_response_pending')
+                  .update({ cancelled_at: new Date().toISOString() })
+                  .eq('thread_id', thread.id)
+                  .is('fired_at', null)
+                  .is('cancelled_at', null)
+              } catch (_) { /* ignore */ }
+
               const { aiDisabled } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
               if (!aiDisabled) {
                 await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
               }
+
+              // Schedule no-response pending entries for active no_response rules
+              try {
+                const { data: noRespRules } = await supabaseAdmin
+                  .from('auto_replies')
+                  .select('id, no_response_delay_seconds, no_response_ai_scope, limit_per_contact')
+                  .eq('org_id', session.org_id)
+                  .eq('is_active', true)
+                  .eq('trigger_type', 'no_response')
+                for (const rule of noRespRules ?? []) {
+                  const delaySeconds = rule.no_response_delay_seconds ?? 900
+                  const firesAt = new Date(Date.now() + delaySeconds * 1000).toISOString()
+                  // Check limit_per_contact
+                  if (rule.limit_per_contact && rule.limit_per_contact > 0) {
+                    const { count } = await supabaseAdmin
+                      .from('no_response_pending')
+                      .select('id', { count: 'exact', head: true })
+                      .eq('rule_id', rule.id)
+                      .eq('thread_id', thread.id)
+                      .not('fired_at', 'is', null)
+                    if ((count ?? 0) >= rule.limit_per_contact) continue
+                  }
+                  // Only insert if there isn't already a pending entry for this rule+thread
+                  const { count: existing } = await supabaseAdmin
+                    .from('no_response_pending')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('rule_id', rule.id)
+                    .eq('thread_id', thread.id)
+                    .is('fired_at', null)
+                    .is('cancelled_at', null)
+                  if ((existing ?? 0) === 0) {
+                    await supabaseAdmin.from('no_response_pending').insert({
+                      org_id: session.org_id,
+                      rule_id: rule.id,
+                      thread_id: thread.id,
+                      contact_id: contactId,
+                      session_id: session.id,
+                      chat_id: sendChatId,
+                      fires_at: firesAt,
+                    })
+                  }
+                }
+              } catch (_) { /* ignore — don't break main flow */ }
 
               // Keyword flow enrollment (wrapped to avoid breaking bridge on DB errors)
               try {

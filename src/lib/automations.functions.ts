@@ -42,16 +42,20 @@ export const upsertAutoReply = createServerFn({ method: "POST" })
       .object({
         id: z.string().uuid().optional(),
         name: z.string().min(1).max(100),
-        match_type: z.enum(["contains", "equals", "starts", "regex"]),
-        match_value: z.string().min(1).max(500),
+        match_type: z.enum(["contains", "equals", "starts", "regex"]).default("contains"),
+        match_value: z.string().max(500).default(""),
         is_active: z.boolean().default(true),
-        trigger_type: z.enum(["keyword", "first_message_overall", "first_message_month"]).default("keyword"),
+        trigger_type: z.enum(["keyword", "first_message_overall", "first_message_month", "no_response"]).default("keyword"),
         session_id: z.string().uuid().nullable().optional(),
         action_add_tags: z.array(z.string().uuid()).nullable().optional(),
         action_remove_tags: z.array(z.string().uuid()).nullable().optional(),
         action_ai_behavior: z.enum(["no_change", "disable_ai", "enable_ai"]).default("no_change"),
         chain_to_rule_id: z.string().uuid().nullable().optional(),
         limit_per_contact: z.number().int().min(0).nullable().optional(),
+        // no_response specific
+        no_response_delay_seconds: z.number().int().min(60).max(2592000).default(900),
+        no_response_ai_scope: z.enum(["always", "ai_active", "ai_inactive"]).default("always"),
+        no_response_tag_id: z.string().uuid().nullable().optional(),
         steps: z
           .array(
             z.object({
