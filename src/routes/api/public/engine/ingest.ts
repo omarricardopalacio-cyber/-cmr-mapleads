@@ -291,12 +291,13 @@ async function maybeAutoReply(
         .gte('sent_at', startOfMonth.toISOString());
       hit = (count ?? 0) <= 1;
     } else {
-      const v = (raw.match_value || '').toLowerCase();
+      const v = (raw.match_value || '').toLowerCase().trim();
       try {
-        if (raw.match_type === 'equals') hit = lower === v;
-        else if (raw.match_type === 'starts') hit = lower.startsWith(v);
+        const cleanText = lower.trim();
+        if (raw.match_type === 'equals') hit = cleanText === v;
+        else if (raw.match_type === 'starts') hit = cleanText.startsWith(v);
         else if (raw.match_type === 'regex') hit = new RegExp(raw.match_value, 'i').test(text);
-        else hit = lower.includes(v);
+        else hit = cleanText.includes(v);
       } catch {
         hit = false;
       }
