@@ -254,7 +254,7 @@ async function maybeAutoReply(
   text: string,
   threadId: string,
   contactId: string,
-): Promise<{ aiDisabled: boolean }> {
+): Promise<{ aiDisabled: boolean; totalDelaySec: number }> {
   const { data: rules } = await supabaseAdmin
     .from('auto_replies')
     .select(

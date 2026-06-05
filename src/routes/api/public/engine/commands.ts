@@ -34,11 +34,13 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
           .eq('id', session.id)
 
+        const now = new Date().toISOString()
         const { data: pending } = await supabaseAdmin
           .from('engine_commands')
           .select('id, type, payload, attempts')
           .eq('session_id', session.id)
           .eq('status', 'pending')
+          .or(`scheduled_for.is.null,scheduled_for.lte.${now}`)
           .order('created_at', { ascending: true })
           .limit(20)
 
