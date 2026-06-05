@@ -356,6 +356,11 @@ async function maybeAutoReply(
       }
     }
 
+    // Calculate total cooldown so AI knows how long to wait after auto-replies
+    const totalDelaySec = (steps ?? []).reduce((acc: number, step: any) => {
+      return acc + (step.cooldown_seconds && step.cooldown_seconds > 0 ? Math.min(step.cooldown_seconds, 10) : 0);
+    }, 0);
+
     // Tags actions
     if (raw.action_add_tags?.length) {
       const inserts = raw.action_add_tags.map((tagId) => ({
@@ -388,9 +393,9 @@ async function maybeAutoReply(
       contact_id: contactId,
     });
 
-    return { aiDisabled };
+    return { aiDisabled, totalDelaySec };
   }
-  return { aiDisabled: false };
+  return { aiDisabled: false, totalDelaySec: 0 };
 }
 
 async function resolvePhoneForLidMessage(args: {
@@ -476,6 +481,8 @@ async function maybeAiReply(
   contactId: string,
   threadId: string,
   text: string,
+  delayAfterAutoReplies: number = 0,
+  autoRepliesWereSent: boolean = false,
 ) {
   const { data: thread } = await supabaseAdmin
     .from('threads')
@@ -485,6 +492,12 @@ async function maybeAiReply(
 
   if ((thread as unknown as { ai_enabled?: boolean })?.ai_enabled === false) {
     return;
+  }
+
+  // Wait for all auto-reply steps to finish sending before AI enters
+  if (delayAfterAutoReplies > 0) {
+    // Add a small buffer (2s) on top of the auto-reply cooldown total
+    await new Promise((r) => setTimeout(r, (delayAfterAutoReplies + 2) * 1000));
   }
 
   const { data: cfg } = await supabaseAdmin
@@ -509,7 +522,7 @@ async function maybeAiReply(
     .eq('thread_id', threadId)
     .not('text', 'is', null)
     .order('sent_at', { ascending: false })
-    .limit(12)
+    .limit(30)
 
   const fullHistory = (hist ?? [])
     .reverse()
@@ -526,6 +539,17 @@ async function maybeAiReply(
 
   const history = lastIsCurrent ? fullHistory : [...fullHistory, { role: 'user' as const, content: text }]
 
+  // If auto-replies were sent before us, inject a contextual-entry instruction so the AI
+  // reads the conversation naturally and continues it instead of opening cold.
+  let historyWithContext = history;
+  if (autoRepliesWereSent && history.length > 1) {
+    const systemNote = {
+      role: 'user' as const,
+      content: '[INSTRUCCIÓN INTERNA – NO MOSTRAR AL CLIENTE]: El sistema ya envió mensajes de bienvenida automáticos al cliente. Lee TODO el historial anterior y CONTINÚA la conversación con naturalidad. NO te presentes de nuevo, NO hagas preguntas repetidas. Entra con una anotación breve e inteligente que fluya desde lo que ya se dijo. Usa toda la información del catálogo, base de conocimiento y contexto disponible.'
+    };
+    historyWithContext = [...history, systemNote];
+  }
+
   try {
     const { runAiAgent } = await import('@/lib/ai.server')
     const cfgFast = { ...(cfg as Record<string, unknown>) }
@@ -540,7 +564,7 @@ async function maybeAiReply(
       contactId,
       sessionId,
       chatId,
-      messages: history,
+      messages: historyWithContext,
       cfg: cfgFast,
     })
 
@@ -984,9 +1008,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .is('cancelled_at', null)
               } catch (_) { /* ignore */ }
 
-              const { aiDisabled } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
+              const { aiDisabled, totalDelaySec } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
               if (!aiDisabled) {
-                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text)
+                // Fire the AI response asynchronously so it doesn't block the webhook.
+                // It will wait internally for all auto-reply steps to finish.
+                const autoRepliesWereSent = totalDelaySec > 0;
+                maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent).catch((err) => {
+                  console.error('[ai-reply] async error', err);
+                });
               }
 
               // Schedule no-response pending entries for active no_response rules
