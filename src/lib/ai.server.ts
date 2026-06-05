@@ -701,8 +701,16 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
   const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
   const dynamicContextText = `\n\n=== CONTEXTO ACTUAL ===\nfecha_actual: ${now.toISOString().split('T')[0]}\ndia_actual: ${diasSemana[now.getDay()]}\nfecha_legible: ${diasSemana[now.getDay()]}, ${now.getDate()} de ${meses[now.getMonth()]} de ${now.getFullYear()}\nhora_actual: ${now.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
 
+  const conversationRulesText = `\n\n=== REGLAS DE CONVERSACIÓN (OBLIGATORIO) ===
+- Haz MÁXIMO UNA (1) pregunta por mensaje. NUNCA hagas dos preguntas en el mismo mensaje.
+- Sé breve y directo. Respuestas cortas. No más de 3 líneas salvo que el cliente pida detalle.
+- NUNCA te presentes ni digas tu nombre si ya hay mensajes previos en la conversación.
+- NUNCA repitas preguntas que ya hiciste antes en el historial.
+- Si el cliente ya mostró interés en algo, continúa desde ahí sin empezar de cero.`;
+
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
+    conversationRulesText,
     (cfg.knowledge_base as string)?.trim()
       ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${(cfg.knowledge_base as string).trim()}`
       : "",

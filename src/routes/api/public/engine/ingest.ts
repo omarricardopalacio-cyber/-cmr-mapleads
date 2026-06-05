@@ -543,7 +543,15 @@ async function maybeAiReply(
   if (autoRepliesWereSent && history.length > 1) {
     const systemNote = {
       role: 'user' as const,
-      content: '[INSTRUCCIÓN INTERNA – NO MOSTRAR AL CLIENTE]: El sistema ya envió mensajes de bienvenida automáticos al cliente. Lee TODO el historial anterior y CONTINÚA la conversación con naturalidad. NO te presentes de nuevo, NO hagas preguntas repetidas. Entra con una anotación breve e inteligente que fluya desde lo que ya se dijo. Usa toda la información del catálogo, base de conocimiento y contexto disponible.'
+      content: `[INSTRUCCIÓN DEL SISTEMA - CRÍTICA - NO MOSTRAR AL CLIENTE]
+REGLAS ESTRICTAS PARA ESTA RESPUESTA:
+1. PROHIBIDO presentarte o decir quién eres. Ya hay mensajes previos.
+2. PROHIBIDO hacer más de UNA pregunta en esta respuesta.
+3. PROHIBIDO ignorar el historial. Lee los mensajes anteriores y CONTINÚA desde ahí.
+4. Tu respuesta debe ser CORTA (máximo 2 líneas) y hacer SOLO UNA pregunta breve y directa.
+5. Entra a la conversación de forma NATURAL, como si ya conocieras al cliente.
+6. Usa el historial, catálogo y base de conocimiento para dar contexto a tu respuesta.
+ACCIÓN REQUERIDA: Genera UNA respuesta corta y contextual que continúe la conversación.`
     };
     historyWithContext = [...history, systemNote];
   }
