@@ -1161,6 +1161,102 @@ export type Database = {
           },
         ]
       }
+      order_fields: {
+        Row: {
+          created_at: string | null
+          display_order: number | null
+          field_type: string | null
+          id: string
+          is_required: boolean | null
+          name: string
+          org_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          display_order?: number | null
+          field_type?: string | null
+          id?: string
+          is_required?: boolean | null
+          name: string
+          org_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          display_order?: number | null
+          field_type?: string | null
+          id?: string
+          is_required?: boolean | null
+          name?: string
+          org_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_fields_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          contact_id: string | null
+          created_at: string | null
+          form_data: Json | null
+          id: string
+          org_id: string
+          status: string | null
+          thread_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string | null
+          form_data?: Json | null
+          id?: string
+          org_id: string
+          status?: string | null
+          thread_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string | null
+          form_data?: Json | null
+          id?: string
+          org_id?: string
+          status?: string | null
+          thread_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           created_at: string
@@ -1476,6 +1572,7 @@ export type Database = {
           id: string
           last_message_at: string | null
           org_id: string
+          purchase_intent: string | null
           session_id: string
           unread_count: number
         }
@@ -1487,6 +1584,7 @@ export type Database = {
           id?: string
           last_message_at?: string | null
           org_id: string
+          purchase_intent?: string | null
           session_id: string
           unread_count?: number
         }
@@ -1498,6 +1596,7 @@ export type Database = {
           id?: string
           last_message_at?: string | null
           org_id?: string
+          purchase_intent?: string | null
           session_id?: string
           unread_count?: number
         }
