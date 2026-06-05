@@ -219,7 +219,7 @@ function OrdersModule() {
                       {orders.map((o) => {
                         const fd = typeof o.form_data === 'string' ? JSON.parse(o.form_data) : (o.form_data || {})
                         // Mostramos un par de valores clave para no saturar la tabla
-                        const summary = Object.entries(fd).slice(0, 2).map(([k,v]) => \`\${k}: \${v}\`).join(', ')
+                        const summary = Object.entries(fd).slice(0, 2).map(([k,v]) => `${k}: ${v}`).join(', ')
                         
                         return (
                           <TableRow key={o.id}>
