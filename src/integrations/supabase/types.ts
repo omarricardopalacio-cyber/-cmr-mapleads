@@ -136,6 +136,9 @@ export type Database = {
           media_url: string | null
           mime_type: string | null
           name: string
+          no_response_ai_scope: string
+          no_response_delay_seconds: number
+          no_response_tag_id: string | null
           org_id: string
           reply_text: string | null
           session_id: string | null
@@ -159,6 +162,9 @@ export type Database = {
           media_url?: string | null
           mime_type?: string | null
           name: string
+          no_response_ai_scope?: string
+          no_response_delay_seconds?: number
+          no_response_tag_id?: string | null
           org_id: string
           reply_text?: string | null
           session_id?: string | null
@@ -182,6 +188,9 @@ export type Database = {
           media_url?: string | null
           mime_type?: string | null
           name?: string
+          no_response_ai_scope?: string
+          no_response_delay_seconds?: number
+          no_response_tag_id?: string | null
           org_id?: string
           reply_text?: string | null
           session_id?: string | null
@@ -194,6 +203,13 @@ export type Database = {
             columns: ["chain_to_rule_id"]
             isOneToOne: false
             referencedRelation: "auto_replies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "auto_replies_no_response_tag_id_fkey"
+            columns: ["no_response_tag_id"]
+            isOneToOne: false
+            referencedRelation: "tags"
             referencedColumns: ["id"]
           },
         ]
@@ -1112,6 +1128,70 @@ export type Database = {
           },
           {
             foreignKeyName: "messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      no_response_pending: {
+        Row: {
+          cancelled_at: string | null
+          chat_id: string | null
+          contact_id: string | null
+          created_at: string
+          fired_at: string | null
+          fires_at: string
+          id: string
+          org_id: string
+          rule_id: string
+          session_id: string | null
+          thread_id: string
+        }
+        Insert: {
+          cancelled_at?: string | null
+          chat_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          fired_at?: string | null
+          fires_at: string
+          id?: string
+          org_id: string
+          rule_id: string
+          session_id?: string | null
+          thread_id: string
+        }
+        Update: {
+          cancelled_at?: string | null
+          chat_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          fired_at?: string | null
+          fires_at?: string
+          id?: string
+          org_id?: string
+          rule_id?: string
+          session_id?: string | null
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "no_response_pending_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "no_response_pending_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "auto_replies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "no_response_pending_thread_id_fkey"
             columns: ["thread_id"]
             isOneToOne: false
             referencedRelation: "threads"
