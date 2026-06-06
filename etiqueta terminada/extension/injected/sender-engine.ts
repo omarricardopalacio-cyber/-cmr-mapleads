@@ -30,6 +30,19 @@ const SEND_RETRY_DELAY = 2000;
 const LID_RESOLVE_ERROR =
   "El número no está registrado en WhatsApp o no se pudo resolver su LID.";
 
+function dataUriToBlob(dataUri: string): Blob | null {
+  const match = dataUri.match(/^data:([^;]+);base64,(.+)$/i);
+  if (!match) return null;
+  const mimeType = match[1] || "application/octet-stream";
+  const base64Data = match[2];
+  const binary = atob(base64Data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
 class SenderEngine {
   private queue: SendTask[] = [];
   private processing = false;
@@ -212,11 +225,30 @@ class SenderEngine {
           (task.options?.mimetype as string) ||
           "application/octet-stream";
         console.log(`[MAPLE SENDER] Calling sendFileMessage, type=${fileType}`);
-        result = await WPP.chat.sendFileMessage(targetChatId, task.media, {
-          type: fileType,
-          caption: task.caption || task.text,
-          ...sendOptions,
-        });
+        try {
+          result = await WPP.chat.sendFileMessage(targetChatId, task.media, {
+            type: fileType,
+            caption: task.caption || task.text,
+            ...sendOptions,
+          });
+        } catch (error: unknown) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          if (typeof task.media === "string" && task.media.startsWith("data:")) {
+            const fallbackBlob = dataUriToBlob(task.media);
+            if (fallbackBlob) {
+              console.warn("[MAPLE SENDER] sendFileMessage failed on data URI, retrying with Blob fallback:", errMsg);
+              result = await WPP.chat.sendFileMessage(targetChatId, fallbackBlob, {
+                type: fileType,
+                caption: task.caption || task.text,
+                ...sendOptions,
+              });
+            } else {
+              throw error;
+            }
+          } else {
+            throw error;
+          }
+        }
       } else {
         console.log(`[MAPLE SENDER] Calling sendTextMessage with text="${task.text || ""}"`);
         result = await WPP.chat.sendTextMessage(targetChatId, task.text || "", sendOptions);

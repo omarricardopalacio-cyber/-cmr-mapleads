@@ -494,7 +494,7 @@ async function queueOutgoingMedia(
     id: cmdId,
     org_id: ctx.orgId,
     session_id: ctx.sessionId,
-    type: "SEND_MESSAGE",
+    type: "SEND_MEDIA",
     payload,
     status: "pending",
   });

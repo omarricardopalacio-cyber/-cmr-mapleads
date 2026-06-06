@@ -9,6 +9,7 @@ import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../sha
 import {
   saveSession,
   updateSessionHeartbeat,
+  getActiveSession,
 } from "../storage/db";
 
 // Estado del service worker
@@ -49,6 +50,19 @@ async function loadConfig(): Promise<void> {
   backendUrl = (cfg.backendUrl || "").replace(/\/$/, "") || null;
   sessionToken = cfg.sessionToken || null;
   console.log("[ServiceWorker] Config cargada:", { backendUrl, hasToken: !!sessionToken });
+  await restoreSession();
+}
+
+async function restoreSession(): Promise<void> {
+  try {
+    const session = await getActiveSession();
+    if (session) {
+      activeSessions.set(session.sessionId, session);
+      console.log("[ServiceWorker] Sesión restaurada desde storage:", session.sessionId);
+    }
+  } catch (err) {
+    console.warn("[ServiceWorker] No se pudo restaurar sesión:", err);
+  }
 }
 
 async function saveConfig(url: string, token: string): Promise<void> {
@@ -211,6 +225,7 @@ async function dispatchCommand(cmd: BackendCommand): Promise<void> {
 
   if (tabs.length === 0) {
     console.warn("[ServiceWorker] No hay tabs de WhatsApp Web abiertas");
+    await sendCommandAck(command, { error: "no_whatsapp_tab" });
     return;
   }
 
@@ -224,7 +239,11 @@ async function dispatchCommand(cmd: BackendCommand): Promise<void> {
     if (matching) targetTab = matching;
   }
 
-  if (!targetTab.id) return;
+  if (!targetTab.id) {
+    console.warn("[ServiceWorker] No se encontró tab válida para el comando");
+    await sendCommandAck(command, { error: "invalid_target_tab" });
+    return;
+  }
 
   try {
     // Enviar comando y ESPERAR respuesta del content script
@@ -252,8 +271,10 @@ async function sendCommandAck(cmd: BackendCommand, result: any): Promise<void> {
   if (!backendUrl || !sessionToken) return;
 
   const ackStatus = result?.error ? "error" : "ok";
+  const ackSessionId =
+    cmd.targetSessionId || activeSessions.values().next().value?.sessionId || "default";
   const ackEvent = {
-    sessionId: cmd.targetSessionId || "default",
+    sessionId: ackSessionId,
     browserId: "chrome",
     deviceId: "",
     events: [{
@@ -358,7 +379,16 @@ async function flushIngestQueue(): Promise<void> {
     }
   }
 
-  const activeSession = activeSessions.values().next().value;
+  let activeSession = activeSessions.values().next().value;
+  if (!activeSession) {
+    const restored = await getActiveSession();
+    if (restored) {
+      activeSessions.set(restored.sessionId, restored);
+      activeSession = restored;
+      console.log("[ServiceWorker] Sesión restaurada antes de flushIngestQueue:", restored.sessionId);
+    }
+  }
+
   const sessionId = activeSession?.sessionId || "default";
   const phoneNumber = activeSession?.phoneNumber || "";
 
