@@ -31,11 +31,28 @@ function OrdersModule() {
   useEffect(() => {
     async function initOrg() {
       if (!session?.user?.id) return;
-      if (session.user.user_metadata?.org_id) {
-        setOrgId(session.user.user_metadata.org_id);
-        return;
-      }
+      
       try {
+        // Primero intentar obtener del user_metadata
+        if (session.user.user_metadata?.org_id) {
+          setOrgId(session.user.user_metadata.org_id);
+          return;
+        }
+        
+        // Si no, consultar directamente desde el cliente Supabase
+        const { data: existing } = await supabase
+          .from("user_roles")
+          .select("org_id")
+          .eq("user_id", session.user.id)
+          .limit(1)
+          .maybeSingle();
+        
+        if (existing?.org_id) {
+          setOrgId(existing.org_id);
+          return;
+        }
+        
+        // Si aún no existe, usar el serverFn para crear la organización
         const res = await ensure({});
         if (res?.orgId) setOrgId(res.orgId);
         else toast.error('No se pudo encontrar tu organización.');
