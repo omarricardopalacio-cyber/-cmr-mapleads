@@ -742,7 +742,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     
   const orderFields = orderFieldsData ?? [];
   const orderFieldsText = orderFields.length 
-    ? `\n\n=== RECOPILACIÓN DE PEDIDOS ===\n1. Sutilmente, cada 2 o 3 intercambios o cuando haya intención de compra, pregunta si desea agendar o hacer pedido.\n2. Si dice que SÍ, envíale EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. Insiste amablemente si faltan datos obligatorios.\n4. Cuando tengas todos los datos, muestra un resumen y pide confirmación ("Tus datos son... ¿Confirmas?").\n5. Solo cuando el cliente confirme explícitamente, llama a la herramienta "confirm_order" con los datos en formato JSON.`
+    ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si desea agendar o hacer pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. Si falta algún dato requerido, insiste amablemente pero no sigas sin él. Repite las preguntas solo cuando sean necesarias.\n4. Cuando tengas todos los datos, muestra un resumen claro y pregunta: "¿La información es correcta para confirmar su pedido?"\n5. SOLO cuando el cliente confirme explícitamente, ejecuta la herramienta \\`confirm_order\\` con \\`form_data\\` como JSON. NO digas \"pedido registrado\" ni confirmes el pedido si no ejecutas \\`confirm_order\\`.\n6. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta \\`confirm_order\\`. Si no la ejecutas, no puede considerarse pedido confirmado.\n7. Después de ejecutar \\`confirm_order\\`, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso."`
     : "";
 
   // Load knowledge sources
@@ -784,7 +784,8 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 - Sé breve y directo. Respuestas cortas. No más de 3 líneas salvo que el cliente pida detalle.
 - NUNCA te presentes ni digas tu nombre si ya hay mensajes previos en la conversación.
 - NUNCA repitas preguntas que ya hiciste antes en el historial.
-- Si el cliente ya mostró interés en algo, continúa desde ahí sin empezar de cero.`;
+- Si el cliente ya mostró interés en algo, continúa desde ahí sin empezar de cero.
+- Si el cliente confirma la información del pedido, llama obligatoriamente la herramienta \`confirm_order\` y no digas "pedido registrado" hasta que esa herramienta se ejecute.`;
 
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
@@ -805,6 +806,31 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
   const actions: string[] = [];
   let lastText = "";
 
+  const isOrderClaimWithoutConfirmation = (replyText: string) => {
+    const lower = String(replyText).toLowerCase();
+    const claims = [
+      "pedido registrado",
+      "pedido guardado",
+      "pedido confirmado",
+      "pedido está en proceso",
+      "pedido fue registrado",
+      "pedido se ha registrado",
+      "su pedido ha sido registrado",
+    ];
+    return claims.some((c) => lower.includes(c));
+  };
+
+  const buildSafeReply = (replyText: string) => {
+    if (isOrderClaimWithoutConfirmation(replyText) && !actions.includes("confirm_order")) {
+      return {
+        reply:
+          "No se ha ejecutado la herramienta confirm_order. No puedo confirmar el pedido hasta que se ejecute correctamente.",
+        actions,
+      };
+    }
+    return { reply: replyText, actions };
+  };
+
   // Loop de hasta 4 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
   for (let round = 0; round < 4; round++) {
     const { text, toolCalls } = await callAiProvider(cfg, msgs, tools);
@@ -812,7 +838,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
     if (!toolCalls?.length) {
       // Sin más tool-calls: respuesta final lista
-      return { reply: text || lastText, actions };
+      return buildSafeReply(text || lastText);
     }
 
     // Anexar mensaje del asistente con tool_calls (obligatorio para APIs tipo OpenAI)
@@ -828,7 +854,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
   // Pasada final sin tools para forzar respuesta en texto después de 4 rondas
   const { text: finalText } = await callAiProvider(cfg, msgs);
-  return { reply: finalText || lastText, actions };
+  return buildSafeReply(finalText || lastText);
 }
 
 /* ============================================================
