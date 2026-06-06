@@ -1,6 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
 
+async function toDataUriFromUrl(url: string, fallbackMime?: string) {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Failed to fetch media (${res.status})`)
+  const arrayBuffer = await res.arrayBuffer()
+  const base64 = Buffer.from(arrayBuffer).toString('base64')
+  const mimeType = res.headers.get('content-type') || fallbackMime || 'application/octet-stream'
+  return `data:${mimeType};base64,${base64}`
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -80,29 +89,48 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           ping: 'PING',
         };
 
-        // If a command is send_media and mediaUrl is a relative path in our bucket, sign it
+        // Resolve media before delivery so the extension receives inline data for videos
+        // and relative bucket paths signed/expanded server-side.
         commands = await Promise.all(
           commands.map(async (c) => {
             const normalizedType = typeof c.type === 'string' ? commandTypeMap[c.type] ?? c.type.toUpperCase() : c.type;
-            if (normalizedType === 'SEND_MEDIA' && c.payload && typeof c.payload === 'object') {
+            if ((normalizedType === 'SEND_MEDIA' || normalizedType === 'SEND_MESSAGE') && c.payload && typeof c.payload === 'object') {
               const p = c.payload as any;
-              if (p.mediaUrl && typeof p.mediaUrl === 'string' && !p.mediaUrl.startsWith('http')) {
+              const mediaUrl = typeof p.mediaUrl === 'string' ? p.mediaUrl : typeof p.media_url === 'string' ? p.media_url : null;
+              if (!mediaUrl) {
+                return { ...c, type: normalizedType };
+              }
+
+              const isVideo = String(p.mimeType || p.mime_type || '').toLowerCase().startsWith('video/');
+
+              if (!mediaUrl.startsWith('http')) {
                 try {
                   const { data: signed } = await supabaseAdmin.storage
                     .from('auto-reply-media')
-                    .createSignedUrl(p.mediaUrl, 3600);
+                    .createSignedUrl(mediaUrl, 3600);
                   if (signed?.signedUrl) {
-                    const res = await fetch(signed.signedUrl);
-                    if (res.ok) {
-                      const arrayBuffer = await res.arrayBuffer();
-                      const base64 = Buffer.from(arrayBuffer).toString('base64');
-                      const mimeType = res.headers.get("content-type") || p.mimeType;
-                      const dataUri = `data:${mimeType};base64,${base64}`;
-                      return { ...c, type: normalizedType, payload: { ...p, mediaUrl: dataUri } };
-                    }
+                    const dataUri = await toDataUriFromUrl(signed.signedUrl, p.mimeType || p.mime_type);
+                    return {
+                      ...c,
+                      type: normalizedType,
+                      payload: { ...p, media: dataUri, mediaUrl: dataUri, mimeType: p.mimeType || p.mime_type },
+                    };
                   }
                 } catch (err) {
                   console.error('[commands] error signing/fetching url:', err);
+                }
+              }
+
+              if (mediaUrl.startsWith('http') && isVideo) {
+                try {
+                  const dataUri = await toDataUriFromUrl(mediaUrl, p.mimeType || p.mime_type);
+                  return {
+                    ...c,
+                    type: normalizedType,
+                    payload: { ...p, media: dataUri, mediaUrl: dataUri, mimeType: p.mimeType || p.mime_type },
+                  };
+                } catch (err) {
+                  console.error('[commands] error inlining remote video:', err);
                 }
               }
             }
