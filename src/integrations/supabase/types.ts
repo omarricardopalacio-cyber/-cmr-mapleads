@@ -656,6 +656,7 @@ export type Database = {
           id: string
           org_id: string
           payload: Json
+          scheduled_for: string | null
           session_id: string
           status: Database["public"]["Enums"]["command_status"]
           type: string
@@ -669,6 +670,7 @@ export type Database = {
           id?: string
           org_id: string
           payload?: Json
+          scheduled_for?: string | null
           session_id: string
           status?: Database["public"]["Enums"]["command_status"]
           type: string
@@ -682,6 +684,7 @@ export type Database = {
           id?: string
           org_id?: string
           payload?: Json
+          scheduled_for?: string | null
           session_id?: string
           status?: Database["public"]["Enums"]["command_status"]
           type?: string
