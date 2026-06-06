@@ -35,7 +35,8 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           .eq('id', session.id)
 
         const now = new Date().toISOString()
-        const { data: pending } = await supabaseAdmin
+        console.log('[commands] polling pending engine_commands', { sessionId: session.id, now })
+        const { data: pending, error: queryError } = await supabaseAdmin
           .from('engine_commands')
           .select('id, type, payload, attempts')
           .eq('session_id', session.id)
@@ -43,6 +44,11 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           .or(`scheduled_for.is.null,scheduled_for.lte.${now}`)
           .order('created_at', { ascending: true })
           .limit(20)
+
+        if (queryError) {
+          console.error('[commands] error fetching engine_commands', queryError)
+          return json(500, { error: 'Failed to fetch engine commands' })
+        }
 
         let commands = pending ?? []
 
@@ -88,6 +94,7 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           })
         );
 
+        console.log('[commands] pending commands count', { count: commands.length })
         if (commands.length > 0) {
           const ids = commands.map((c) => c.id)
           await supabaseAdmin
