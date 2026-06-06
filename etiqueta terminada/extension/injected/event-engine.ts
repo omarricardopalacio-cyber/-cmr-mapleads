@@ -86,7 +86,14 @@ function registerNewMessage(WPP: NonNullable<typeof window.WPP>): void {
     }
   };
 
-  WPP.prependListener("chat.new_message", handler, { objectify: true });
+  if (typeof WPP.prependListener === "function") {
+    WPP.prependListener("chat.new_message", handler, { objectify: true });
+  } else if (typeof WPP.on === "function") {
+    console.warn("[EventEngine] WPP.prependListener no disponible, usando on() para chat.new_message");
+    WPP.on("chat.new_message", handler, { objectify: true });
+  } else {
+    console.warn("[EventEngine] WPP no soporta prependListener ni on para chat.new_message");
+  }
   cleanupFns.push(() => WPP.off("chat.new_message", handler));
 }
 
