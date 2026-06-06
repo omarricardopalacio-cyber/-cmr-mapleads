@@ -89,8 +89,8 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           ping: 'PING',
         };
 
-        // Resolve media before delivery so the extension receives inline data for videos
-        // and relative bucket paths signed/expanded server-side.
+        // Resolve media before delivery so the extension receives inline data only for
+        // non-http storage paths; public URLs pueden enviarse directamente desde WhatsApp.
         commands = await Promise.all(
           commands.map(async (c) => {
             const normalizedType = typeof c.type === 'string' ? commandTypeMap[c.type] ?? c.type.toUpperCase() : c.type;
@@ -100,8 +100,6 @@ export const Route = createFileRoute('/api/public/engine/commands')({
               if (!mediaUrl) {
                 return { ...c, type: normalizedType };
               }
-
-              const isVideo = String(p.mimeType || p.mime_type || '').toLowerCase().startsWith('video/');
 
               if (!mediaUrl.startsWith('http')) {
                 try {
@@ -118,19 +116,6 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                   }
                 } catch (err) {
                   console.error('[commands] error signing/fetching url:', err);
-                }
-              }
-
-              if (mediaUrl.startsWith('http') && isVideo) {
-                try {
-                  const dataUri = await toDataUriFromUrl(mediaUrl, p.mimeType || p.mime_type);
-                  return {
-                    ...c,
-                    type: normalizedType,
-                    payload: { ...p, media: dataUri, mediaUrl: dataUri, mimeType: p.mimeType || p.mime_type },
-                  };
-                } catch (err) {
-                  console.error('[commands] error inlining remote video:', err);
                 }
               }
             }

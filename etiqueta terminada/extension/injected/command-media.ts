@@ -18,22 +18,9 @@ export async function resolveCommandMedia(payload: Record<string, unknown>): Pro
     return {};
   }
 
-  const mimeType =
-    (payload.mimeType as string) ||
-    (payload.mime_type as string) ||
-    "application/octet-stream";
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`No se pudo descargar el archivo (${response.status})`);
-  }
-
-  const blob = await response.blob();
-  const dataUri = await blobToDataUri(blob);
-  return {
-    dataUri,
-    mimeType: blob.type || mimeType,
-  };
+  // No convertir URLs públicas a data URI en el navegador. Dejar que WhatsApp
+  // reciba la URL directamente para evitar retrasos y problemas de CORS.
+  return {};
 }
 
 function guessMimeFromDataUri(dataUri: string): string {
