@@ -445,10 +445,36 @@ async function queueOutgoingMedia(
   if (!ctx.sessionId || !ctx.chatId) {
     return "Falta sessionId/chatId; no se puede enviar media.";
   }
-  const mimeType = mimeFromProductUrl(mediaUrl, kind);
+  let mimeType = mimeFromProductUrl(mediaUrl, kind);
+  let finalUrl = mediaUrl;
+
+  // Si la URL es externa (no de nuestro Storage), descargarla server-side y subirla a Storage.
+  // Esto evita errores CORS ("Failed to fetch") al intentar bajarla desde web.whatsapp.com.
+  const isOurStorage = mediaUrl.includes("/storage/v1/object/");
+  if (!isOurStorage) {
+    try {
+      const { convertUrlToBase64 } = await import("./media");
+      const dl = await convertUrlToBase64(mediaUrl);
+      if (dl.mimeType && dl.mimeType !== "application/octet-stream") mimeType = dl.mimeType;
+      const ext = mimeType.split("/")[1]?.split(";")[0] || (kind === "video" ? "mp4" : "jpg");
+      const path = `${ctx.orgId}/ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const bytes = Buffer.from(dl.base64, "base64");
+      const { error: upErr } = await supabaseAdmin.storage
+        .from("media")
+        .upload(path, bytes, { contentType: mimeType, upsert: false });
+      if (upErr) throw new Error(upErr.message);
+      const { data: pub } = supabaseAdmin.storage.from("media").getPublicUrl(path);
+      finalUrl = pub.publicUrl;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[ai.queueOutgoingMedia] No se pudo proxyfear ${kind}:`, msg);
+      return `No se pudo enviar el ${kind}: ${msg}`;
+    }
+  }
+
   const payload: Record<string, unknown> = {
     chatId: ctx.chatId,
-    mediaUrl,
+    mediaUrl: finalUrl,
     mimeType,
     caption: caption || "",
     text: caption || "",
@@ -460,7 +486,7 @@ async function queueOutgoingMedia(
     thread_id: ctx.threadId,
     direction: "out",
     text: caption || "",
-    media: { url: mediaUrl, mimeType, mime_type: mimeType },
+    media: { url: finalUrl, mimeType, mime_type: mimeType },
     wa_message_id: `pending-${cmdId}`,
     sent_at: new Date().toISOString(),
   });
@@ -527,7 +553,7 @@ export async function executeToolCall(
     details = `Asigno la etiqueta "${tagName}" al contacto.`;
   } else if (name === "create_reminder") {
     const note = args.note;
-    const minutes = args.minutes_from_now || 60;
+    const minutes = Number(args.minutes_from_now) || 60;
     const dueAt = new Date(Date.now() + minutes * 60_000).toISOString();
     await (supabaseAdmin as any).from("reminders").insert({
       org_id: orgId,
