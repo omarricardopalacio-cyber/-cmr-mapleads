@@ -36,21 +36,38 @@ export const Route = createFileRoute('/api/public/engine/commands')({
 
         const now = new Date().toISOString()
         console.log('[commands] polling pending engine_commands', { sessionId: session.id, now })
-        const { data: pending, error: queryError } = await supabaseAdmin
-          .from('engine_commands')
-          .select('id, type, payload, attempts')
-          .eq('session_id', session.id)
-          .eq('status', 'pending')
-          .or(`scheduled_for.is.null,scheduled_for.lte.${now}`)
-          .order('created_at', { ascending: true })
-          .limit(20)
 
-        if (queryError) {
-          console.error('[commands] error fetching engine_commands', queryError)
+        const [pendingNullResult, pendingDueResult] = await Promise.all([
+          supabaseAdmin
+            .from('engine_commands')
+            .select('id, type, payload, attempts, created_at')
+            .eq('session_id', session.id)
+            .eq('status', 'pending')
+            .is('scheduled_for', null)
+            .order('created_at', { ascending: true })
+            .limit(20),
+          supabaseAdmin
+            .from('engine_commands')
+            .select('id, type, payload, attempts, created_at')
+            .eq('session_id', session.id)
+            .eq('status', 'pending')
+            .lte('scheduled_for', now)
+            .order('created_at', { ascending: true })
+            .limit(20),
+        ])
+
+        if (pendingNullResult.error || pendingDueResult.error) {
+          console.error('[commands] error fetching engine_commands', pendingNullResult.error ?? pendingDueResult.error)
           return json(500, { error: 'Failed to fetch engine commands' })
         }
 
-        let commands = pending ?? []
+        let commands = [
+          ...(pendingNullResult.data ?? []),
+          ...(pendingDueResult.data ?? []),
+        ]
+          .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
+          .slice(0, 20)
+          .map(({ created_at, ...command }) => command)
 
         // Normalize command types so extension receives uppercase names.
         const commandTypeMap: Record<string, string> = {
