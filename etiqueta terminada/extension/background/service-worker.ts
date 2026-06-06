@@ -190,14 +190,17 @@ async function resolveMediaInServiceWorker(
 }
 
 async function dispatchCommand(cmd: BackendCommand): Promise<void> {
-  console.log("[ServiceWorker] Comando recibido:", cmd.type, cmd.id);
+  const normalizedType = typeof cmd.type === "string" ? cmd.type.toUpperCase() : cmd.type;
+  const command: BackendCommand = { ...cmd, type: normalizedType };
 
-  let payload = cmd.payload;
-  if (cmd.type === "SEND_MESSAGE" && (payload.mediaUrl || payload.media_url)) {
+  console.log("[ServiceWorker] Comando recibido:", command.type, cmd.id);
+
+  let payload = command.payload;
+  if ((command.type === "SEND_MESSAGE" || command.type === "SEND_MEDIA") && (payload.mediaUrl || payload.media_url)) {
     const resolved = await resolveMediaInServiceWorker(payload);
     if (resolved.error) {
       console.error("[ServiceWorker] Abortando comando por fallo de descarga de media:", resolved.error);
-      await sendCommandAck(cmd, { error: resolved.error });
+      await sendCommandAck(command, { error: resolved.error });
       return;
     }
     payload = resolved.payload;

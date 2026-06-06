@@ -134,9 +134,10 @@ async function handleCommands(event: MessageEvent): Promise<void> {
       }
 
       case "SEND_MEDIA": {
-        // Backend envía: { chatId, mediaUrl (data URI base64), mimeType, caption }
-        const mediaData = payload.media || payload.mediaUrl;
-        const mimeType = payload.mimeType || payload.mime_type;
+        // Backend envía: { chatId, mediaUrl (data URI base64 or signed URL), mimeType, caption }
+        const resolved = await resolveCommandMedia(payload as Record<string, unknown>);
+        const mediaData = payload.media || resolved.dataUri || payload.mediaUrl || payload.media_url;
+        const mimeType = resolved.mimeType || payload.mimeType || payload.mime_type;
         if (!mediaData) {
           error = "MEDIA_MISSING";
           break;

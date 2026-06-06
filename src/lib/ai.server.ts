@@ -477,12 +477,23 @@ async function queueOutgoingMedia(
 }
 
 export async function executeToolCall(
-  toolCall: { id: string; function: { name: string; arguments: string } },
+  toolCall: { id: string; function: { name: string; arguments: string | Record<string, unknown> } },
   ctx: ToolExecCtx,
 ): Promise<{ name: string; result: string }> {
   const { orgId, threadId, contactId, sessionId, chatId, catalogCfg } = ctx;
   const name = toolCall.function.name;
-  const args = JSON.parse(toolCall.function.arguments || "{}");
+
+  let args: Record<string, unknown> = {};
+  const rawArgs = toolCall.function.arguments;
+  if (typeof rawArgs === "string") {
+    try {
+      args = rawArgs.trim() ? JSON.parse(rawArgs) : {};
+    } catch (error) {
+      args = {};
+    }
+  } else if (typeof rawArgs === "object" && rawArgs !== null) {
+    args = rawArgs;
+  }
 
   let result = "";
   let details = "";
@@ -539,22 +550,48 @@ export async function executeToolCall(
     result = "Conversacion transferida a agente humano. IA desactivada.";
     details = "Transfirio la conversacion a un agente humano (IA apagada).";
   } else if (name === "confirm_order") {
-    try {
-      const formData = JSON.parse(args.form_data || "{}");
-      await (supabaseAdmin as any).from("orders").insert({
-        org_id: orgId,
-        contact_id: contactId ?? null,
-        thread_id: threadId,
-        status: "confirmed",
-        form_data: formData,
-      });
-      // Cambiar estado de compra
-      await (supabaseAdmin as any).from("threads").update({ purchase_intent: "compro" }).eq("id", threadId);
-      result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
-      details = "Pedido guardado con datos: " + args.form_data;
-    } catch (e) {
-      result = "Error guardando el pedido.";
-      details = result;
+    const rawFormData = args.form_data;
+    let formData: Record<string, unknown> | null = null;
+
+    if (typeof rawFormData === "string") {
+      try {
+        formData = rawFormData.trim() ? JSON.parse(rawFormData) : {};
+      } catch (error: any) {
+        result = `Datos del pedido inválidos: ${error?.message || "form_data debe ser JSON"}`;
+        details = `Error parseando form_data: ${error?.message || "invalid JSON"}`;
+      }
+    } else if (typeof rawFormData === "object" && rawFormData !== null) {
+      formData = rawFormData as Record<string, unknown>;
+    } else {
+      formData = {};
+    }
+
+    if (result) {
+      // Parsing failed, no insert attempt.
+    } else {
+      const { data: inserted, error: insertError } = await (supabaseAdmin as any)
+        .from("orders")
+        .insert({
+          org_id: orgId,
+          contact_id: contactId ?? null,
+          thread_id: threadId,
+          status: "confirmed",
+          form_data: formData,
+        })
+        .select("id")
+        .single();
+
+      if (insertError) {
+        result = `Error guardando el pedido: ${insertError.message}`;
+        details = `orders insert failed: ${insertError.message}`;
+      } else {
+        await (supabaseAdmin as any)
+          .from("threads")
+          .update({ purchase_intent: "compro" })
+          .eq("id", threadId);
+        result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+        details = `Pedido guardado con datos: ${JSON.stringify(formData)}`;
+      }
     }
   } else if (name === "search_products") {
     if (!catalogCfg) {
@@ -697,9 +734,24 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
   // Dynamic context variables
   const now = new Date();
-  const diasSemana = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
-  const meses = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
-  const dynamicContextText = `\n\n=== CONTEXTO ACTUAL ===\nfecha_actual: ${now.toISOString().split('T')[0]}\ndia_actual: ${diasSemana[now.getDay()]}\nfecha_legible: ${diasSemana[now.getDay()]}, ${now.getDate()} de ${meses[now.getMonth()]} de ${now.getFullYear()}\nhora_actual: ${now.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+  const timeZone = "America/Bogota";
+  const diaActual = new Intl.DateTimeFormat("es-CO", { timeZone, weekday: "long" }).format(now);
+  const fechaActual = now.toLocaleString("en-CA", { timeZone, hour12: false }).slice(0, 10);
+  const fechaLegible = new Intl.DateTimeFormat("es-CO", {
+    timeZone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(now);
+  const horaActual = new Intl.DateTimeFormat("es-CO", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(now);
+
+  const dynamicContextText = `\n\n=== CONTEXTO ACTUAL ===\nfecha_actual: ${fechaActual}\ndia_actual: ${diaActual}\nfecha_legible: ${fechaLegible}\nhora_actual: ${horaActual}`;
 
   const conversationRulesText = `\n\n=== REGLAS DE CONVERSACIÓN (OBLIGATORIO) ===
 - Haz MÁXIMO UNA (1) pregunta por mensaje. NUNCA hagas dos preguntas en el mismo mensaje.

@@ -159,7 +159,7 @@ export type WAEventType =
 
 export interface BackendCommand {
   id: string;
-  type: "SEND_MESSAGE" | "SEND_BROADCAST" | "GET_CHATS" | "GET_CONTACTS" | "UPDATE_LABEL" | "PING";
+  type: "SEND_MESSAGE" | "SEND_MEDIA" | "SEND_BROADCAST" | "GET_CHATS" | "GET_CONTACTS" | "UPDATE_LABEL" | "PING";
   targetSessionId?: string;
   payload: Record<string, any>;
   createdAt: string;

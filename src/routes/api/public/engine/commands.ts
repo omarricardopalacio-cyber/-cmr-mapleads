@@ -46,10 +46,22 @@ export const Route = createFileRoute('/api/public/engine/commands')({
 
         let commands = pending ?? []
 
+        // Normalize command types so extension receives uppercase names.
+        const commandTypeMap: Record<string, string> = {
+          send_message: 'SEND_MESSAGE',
+          send_media: 'SEND_MEDIA',
+          send_broadcast: 'SEND_BROADCAST',
+          get_chats: 'GET_CHATS',
+          get_contacts: 'GET_CONTACTS',
+          update_label: 'UPDATE_LABEL',
+          ping: 'PING',
+        };
+
         // If a command is send_media and mediaUrl is a relative path in our bucket, sign it
         commands = await Promise.all(
           commands.map(async (c) => {
-            if (c.type === 'send_media' && c.payload && typeof c.payload === 'object') {
+            const normalizedType = typeof c.type === 'string' ? commandTypeMap[c.type] ?? c.type.toUpperCase() : c.type;
+            if (normalizedType === 'SEND_MEDIA' && c.payload && typeof c.payload === 'object') {
               const p = c.payload as any;
               if (p.mediaUrl && typeof p.mediaUrl === 'string' && !p.mediaUrl.startsWith('http')) {
                 try {
@@ -63,7 +75,7 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                       const base64 = Buffer.from(arrayBuffer).toString('base64');
                       const mimeType = res.headers.get("content-type") || p.mimeType;
                       const dataUri = `data:${mimeType};base64,${base64}`;
-                      return { ...c, payload: { ...p, mediaUrl: dataUri } };
+                      return { ...c, type: normalizedType, payload: { ...p, mediaUrl: dataUri } };
                     }
                   }
                 } catch (err) {
@@ -71,7 +83,8 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                 }
               }
             }
-            return c;
+
+            return { ...c, type: normalizedType };
           })
         );
 
