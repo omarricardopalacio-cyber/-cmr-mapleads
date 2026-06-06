@@ -121,8 +121,18 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                 }
               }
 
-              // Para URLs públicas accesibles desde WhatsApp Web, no forzamos la conversión a dataURI.
-              // El engine inyectado puede enviar la URL directamente y así evitamos latencia extra por descargar y codificar en el backend.
+              if (mediaUrl.startsWith('http') && isVideo) {
+                try {
+                  const dataUri = await toDataUriFromUrl(mediaUrl, p.mimeType || p.mime_type);
+                  return {
+                    ...c,
+                    type: normalizedType,
+                    payload: { ...p, media: dataUri, mediaUrl: dataUri, mimeType: p.mimeType || p.mime_type },
+                  };
+                } catch (err) {
+                  console.error('[commands] error inlining remote video:', err);
+                }
+              }
             }
 
             return { ...c, type: normalizedType };
