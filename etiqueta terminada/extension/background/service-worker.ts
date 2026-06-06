@@ -173,34 +173,10 @@ async function resolveMediaInServiceWorker(
     return { payload };
   }
 
-  try {
-    console.log("[ServiceWorker] Descargando media desde Service Worker (bypass CSP):", url);
-    const response = await fetch(url, { method: "GET" });
-    if (!response.ok) {
-      const err = `No se pudo descargar el archivo (${response.status})`;
-      console.warn("[ServiceWorker] Fallo descarga de media:", err);
-      return { payload, error: err };
-    }
-    const blob = await response.blob();
-    const dataUri = await blobToDataUri(blob);
-
-    const newPayload = { ...payload };
-    newPayload.media = dataUri;
-    newPayload.mimeType =
-      (payload.mimetype as string) ||
-      (payload.mimeType as string) ||
-      (payload.mime_type as string) ||
-      blob.type ||
-      "application/octet-stream";
-    delete newPayload.mediaUrl;
-    delete newPayload.media_url;
-    console.log("[ServiceWorker] Media convertida a base64, tamaño:", dataUri.length);
-    return { payload: newPayload };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[ServiceWorker] Error descargando media:", msg);
-    return { payload, error: msg };
-  }
+  // Si la media ya es una URL pública, dejamos que el engine inyectado la envíe directamente.
+  // Evita descargar y codificar el archivo completo en el Service Worker.
+  console.log("[ServiceWorker] URL pública de media detectada, no se convertirá a base64:", url);
+  return { payload };
 }
 
 async function dispatchCommand(cmd: BackendCommand): Promise<void> {
