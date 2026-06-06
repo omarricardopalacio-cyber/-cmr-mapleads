@@ -553,7 +553,7 @@ export async function executeToolCall(
     details = `Asigno la etiqueta "${tagName}" al contacto.`;
   } else if (name === "create_reminder") {
     const note = args.note;
-    const minutes = args.minutes_from_now || 60;
+    const minutes = Number(args.minutes_from_now) || 60;
     const dueAt = new Date(Date.now() + minutes * 60_000).toISOString();
     await (supabaseAdmin as any).from("reminders").insert({
       org_id: orgId,
