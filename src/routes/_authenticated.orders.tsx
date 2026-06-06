@@ -54,6 +54,7 @@ function OrdersModule() {
   }, [orgId])
 
   async function loadData() {
+    if (!orgId) return;
     setLoading(true)
     try {
       const [ordersRes, fieldsRes] = await Promise.all([
