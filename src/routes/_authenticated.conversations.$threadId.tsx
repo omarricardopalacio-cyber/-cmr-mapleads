@@ -210,6 +210,8 @@ function ThreadPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const purchaseIntent = (data as any)?.thread?.purchase_intent ?? "pending";
+
   const setIntentMut = useMutation({
     mutationFn: async (intent: string) => {
       const { error } = await supabase.from('threads').update({ purchase_intent: intent }).eq('id', threadId);
@@ -279,6 +281,15 @@ function ThreadPage() {
             );
           }
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.refetchQueries({ queryKey: ["thread", threadId] });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "threads", filter: `id=eq.${threadId}` },
+        () => {
+          qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.invalidateQueries({ queryKey: ["threads"] });
           qc.refetchQueries({ queryKey: ["thread", threadId] });
         }
       )
@@ -422,11 +433,11 @@ function ThreadPage() {
               <Button 
                 variant="ghost" 
                 size="sm" 
-                className={`text-xs gap-1 ${(data as any)?.thread?.purchase_intent === 'compro' ? 'text-green-600 bg-green-100 hover:bg-green-200' : (data as any)?.thread?.purchase_intent === 'no_compro' ? 'text-red-600 bg-red-100 hover:bg-red-200' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'}`} 
+                className={`text-xs gap-1 ${purchaseIntent === 'compro' ? 'text-green-600 bg-green-100 hover:bg-green-200' : purchaseIntent === 'no_compro' ? 'text-red-600 bg-red-100 hover:bg-red-200' : purchaseIntent === 'collecting_data' || purchaseIntent?.startsWith?.('collecting_data') ? 'text-amber-700 bg-amber-100 hover:bg-amber-200' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'}`} 
                 disabled={setIntentMut.isPending}
               >
                 <span className="hidden sm:inline font-semibold">
-                  {(data as any)?.thread?.purchase_intent === 'compro' ? '🛒 Compró' : (data as any)?.thread?.purchase_intent === 'no_compro' ? '🔴 No compró' : '⚪ Hay interés (Pdte)'}
+                  {purchaseIntent === 'compro' ? '🛒 Compró' : purchaseIntent === 'no_compro' ? '🔴 No compró' : purchaseIntent === 'collecting_data' || purchaseIntent?.startsWith?.('collecting_data') ? '🟡 Agendando' : '⚪ Hay interés (Pdte)'}
                 </span>
               </Button>
             </PopoverTrigger>
@@ -446,6 +457,13 @@ function ThreadPage() {
                   onClick={() => setIntentMut.mutate('no_compro')}
                 >
                   🔴 No compró
+                </button>
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-muted"
+                  onClick={() => setIntentMut.mutate('collecting_data')}
+                >
+                  🟡 Agendando
                 </button>
                 <button
                   type="button"
