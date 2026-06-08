@@ -808,23 +808,20 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
   const isOrderClaimWithoutConfirmation = (replyText: string) => {
     const lower = String(replyText).toLowerCase();
-    const claims = [
-      "pedido registrado",
-      "pedido guardado",
-      "pedido confirmado",
-      "pedido está en proceso",
-      "pedido fue registrado",
-      "pedido se ha registrado",
-      "su pedido ha sido registrado",
+    const patterns: RegExp[] = [
+      /pedido[\s\S]{0,60}(registrad[oa]|guardad[oa]|confirmad[oa]|en proceso|procesad[oa])/i,
+      /(registrad[oa]|guardad[oa]|confirmad[oa])[\s\S]{0,40}(su |tu |el )?pedido/i,
+      /gracias por su compra/i,
+      /muchas gracias por su compra/i,
+      /pedido ha sido (registrad|guardad|confirmad)/i,
     ];
-    return claims.some((c) => lower.includes(c));
+    return patterns.some((re) => re.test(lower));
   };
 
   const buildSafeReply = (replyText: string) => {
     if (isOrderClaimWithoutConfirmation(replyText) && !actions.includes("confirm_order")) {
       return {
-        reply:
-          "No se ha ejecutado la herramienta confirm_order. No puedo confirmar el pedido hasta que se ejecute correctamente.",
+        reply: "Permíteme un momento para registrar tu pedido en el sistema...",
         actions,
       };
     }
@@ -837,8 +834,22 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     lastText = text;
 
     if (!toolCalls?.length) {
+      const finalText = text || lastText;
+      if (
+        isOrderClaimWithoutConfirmation(finalText) &&
+        !actions.includes("confirm_order") &&
+        round < 3
+      ) {
+        msgs.push({
+          role: "system",
+          content:
+            "El asistente afirmó que el pedido está registrado, pero no ejecutó confirm_order. Intenta nuevamente y obliga el uso de confirm_order con el JSON de form_data.",
+        });
+        continue;
+      }
+
       // Sin más tool-calls: respuesta final lista
-      return buildSafeReply(text || lastText);
+      return buildSafeReply(finalText);
     }
 
     // Anexar mensaje del asistente con tool_calls (obligatorio para APIs tipo OpenAI)
