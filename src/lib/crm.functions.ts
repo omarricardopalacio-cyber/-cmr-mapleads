@@ -49,7 +49,7 @@ export const listThreads = createServerFn({ method: "GET" })
 
       let query = supabaseAdmin
         .from("threads")
-        .select("id, contact_id, last_message_at, unread_count, assigned_to_user_id, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
+        .select("id, contact_id, last_message_at, unread_count, assigned_to_user_id, purchase_intent, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
         .eq("org_id", orgId);
 
       const filter = data.filter ?? "all";
