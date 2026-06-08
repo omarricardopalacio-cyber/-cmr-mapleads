@@ -520,7 +520,7 @@ async function maybeAiReply(
     .eq('thread_id', threadId)
     .not('text', 'is', null)
     .order('sent_at', { ascending: false })
-    .limit(30)
+    .limit(500)
 
   const fullHistory = (hist ?? [])
     .reverse()
