@@ -614,7 +614,8 @@ export async function executeToolCall(
         await (supabaseAdmin as any)
           .from("threads")
           .update({ purchase_intent: "compro" })
-          .eq("id", threadId);
+          .eq("id", threadId)
+          .eq("org_id", orgId);
         result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
         details = `Pedido guardado con datos: ${JSON.stringify(formData)}`;
       }
@@ -849,6 +850,38 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     } as Record<string, unknown>;
   };
 
+  const isExplicitCustomerConfirmation = (text: string) => {
+    const normalized = text.trim().toLowerCase();
+    return /^(s[ií]|si|correcto|confirmo|confirmado|ok|okay|dale|listo|est[aá] bien|as[ií] es|claro|de acuerdo)[\s.!¡¿?]*$/i.test(normalized);
+  };
+
+  const shouldConfirmOrderFromHistory = () => {
+    const visibleHistory = messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
+      .filter((m) => !m.content.trim().startsWith("[INSTRUCCIÓN DEL SISTEMA"));
+    const lastUserIndex = visibleHistory.map((m) => m.role).lastIndexOf("user");
+    if (lastUserIndex <= 0) return false;
+    const lastUser = visibleHistory[lastUserIndex]?.content ?? "";
+    const previousAssistant = [...visibleHistory.slice(0, lastUserIndex)]
+      .reverse()
+      .find((m) => m.role === "assistant")?.content ?? "";
+
+    return (
+      isExplicitCustomerConfirmation(lastUser) &&
+      /(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa])/i.test(previousAssistant)
+    );
+  };
+
+  const markCollectingOrderDataIfNeeded = async (replyText: string) => {
+    if (!orderFields.length || orderConfirmed || actions.includes("confirm_order")) return;
+    if (!/(para agendar su pedido|para agendar tu pedido|ind[ií]queme|ind[ií]came|datos.*pedido|pedido.*datos)/i.test(replyText)) return;
+    await (supabaseAdmin as any)
+      .from("threads")
+      .update({ purchase_intent: "collecting_data" })
+      .eq("id", threadId)
+      .eq("org_id", orgId);
+  };
+
   const recoverMissingOrderConfirmation = async (replyText: string) => {
     if (!isOrderClaimWithoutConfirmation(replyText) || actions.includes("confirm_order") || orderConfirmed) {
       return false;
@@ -872,6 +905,26 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     return orderConfirmed;
   };
 
+  if (shouldConfirmOrderFromHistory()) {
+    const exec = await executeToolCall(
+      {
+        id: `deterministic_confirm_${Date.now()}`,
+        function: {
+          name: "confirm_order",
+          arguments: JSON.stringify({
+            form_data: JSON.stringify(buildRecoveredOrderData("Confirmación explícita del cliente")),
+          }),
+        },
+      },
+      ctx
+    );
+    actions.push(exec.name);
+    orderConfirmed = exec.result.toLowerCase().includes("pedido guardado exitosamente");
+    if (orderConfirmed) {
+      return { reply: "Pedido registrado correctamente. Gracias, su pedido está en proceso.", actions };
+    }
+  }
+
   // Loop de hasta 4 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
   for (let round = 0; round < 4; round++) {
     const { text, toolCalls } = await callAiProvider(cfg, msgs, tools);
@@ -892,6 +945,8 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
         });
         continue;
       }
+
+      await markCollectingOrderDataIfNeeded(finalText);
 
       if (await recoverMissingOrderConfirmation(finalText)) {
         return { reply: finalText, actions };
@@ -917,6 +972,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
   // Pasada final sin tools para forzar respuesta en texto después de 4 rondas
   const { text: finalText } = await callAiProvider(cfg, msgs);
+  await markCollectingOrderDataIfNeeded(finalText || lastText);
   if (await recoverMissingOrderConfirmation(finalText || lastText)) {
     return { reply: finalText || lastText, actions };
   }
