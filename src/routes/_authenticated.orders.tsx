@@ -95,7 +95,7 @@ function OrdersModule() {
       const [ordersRes, fieldsRes] = await Promise.all([
         supabase
           .from('orders')
-          .select('*, contacts(phone, name, first_name)')
+          .select('*, contacts(id, display_name, wa_id, phone, profile_picture_url)')
           .eq('org_id', orgId)
           .order('created_at', { ascending: false }),
         supabase
