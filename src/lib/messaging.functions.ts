@@ -162,6 +162,7 @@ export const listMessages = createServerFn({ method: "GET" })
         sessionId: threadRow.session_id,
         contactId: threadRow.contact_id,
         aiEnabled: (threadRow as any).ai_enabled !== false, // default true si es null/undefined
+        purchase_intent: (threadRow as any).purchase_intent ?? "pending",
         contact: {
           displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id?.replace(/@lid$/, "").replace(/@c\.us$/, "") ?? null,
           waId: contact?.wa_id ?? null,
