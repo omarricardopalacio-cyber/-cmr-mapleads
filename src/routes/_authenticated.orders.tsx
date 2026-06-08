@@ -95,7 +95,7 @@ function OrdersModule() {
       const [ordersRes, fieldsRes] = await Promise.all([
         supabase
           .from('orders')
-          .select('*, contacts(phone, name, first_name)')
+          .select('*, contacts(phone, display_name, wa_id)')
           .eq('org_id', orgId)
           .order('created_at', { ascending: false }),
         supabase
@@ -104,6 +104,9 @@ function OrdersModule() {
           .eq('org_id', orgId)
           .order('display_order', { ascending: true })
       ])
+
+      if (ordersRes.error) throw ordersRes.error
+      if (fieldsRes.error) throw fieldsRes.error
       
       if (ordersRes.data) setOrders(ordersRes.data)
       if (fieldsRes.data) setFields(fieldsRes.data)
