@@ -134,7 +134,7 @@ export const repairMissingConfirmedOrders = createServerFn({ method: "POST" })
         contact_id: thread.contact_id ?? null,
         thread_id: candidate.thread_id,
         status: "confirmed",
-        form_data: formData,
+        form_data: formData as any,
       });
 
       if (insertError) continue;
