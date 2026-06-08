@@ -804,6 +804,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
   const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
   const actions: string[] = [];
+  let orderConfirmed = false;
   let lastText = "";
 
   const isOrderClaimWithoutConfirmation = (replyText: string) => {
@@ -819,13 +820,56 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
   };
 
   const buildSafeReply = (replyText: string) => {
-    if (isOrderClaimWithoutConfirmation(replyText) && !actions.includes("confirm_order")) {
+    if (isOrderClaimWithoutConfirmation(replyText) && !orderConfirmed) {
       return {
         reply: "Permíteme un momento para registrar tu pedido en el sistema...",
         actions,
       };
     }
     return { reply: replyText, actions };
+  };
+
+  const buildRecoveredOrderData = (replyText: string) => {
+    const visibleHistory = messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
+      .filter((m) => !m.content.trim().startsWith("[INSTRUCCIÓN DEL SISTEMA"));
+    const recent = visibleHistory.slice(-16);
+    const lastUser = [...visibleHistory].reverse().find((m) => m.role === "user")?.content?.trim() ?? "";
+    const lastAssistant = [...visibleHistory].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
+
+    return {
+      Origen: "Recuperación automática: la IA confirmó el pedido sin ejecutar la herramienta confirm_order",
+      "Confirmación cliente": lastUser,
+      "Resumen mostrado al cliente": lastAssistant,
+      "Respuesta de confirmación enviada": replyText,
+      "Historial reciente": recent
+        .map((m) => `${m.role === "assistant" ? "Asistente" : "Cliente"}: ${m.content.trim()}`)
+        .join("\n"),
+      "Registrado en": new Date().toISOString(),
+    } as Record<string, unknown>;
+  };
+
+  const recoverMissingOrderConfirmation = async (replyText: string) => {
+    if (!isOrderClaimWithoutConfirmation(replyText) || actions.includes("confirm_order") || orderConfirmed) {
+      return false;
+    }
+
+    const exec = await executeToolCall(
+      {
+        id: `auto_confirm_${Date.now()}`,
+        function: {
+          name: "confirm_order",
+          arguments: JSON.stringify({
+            form_data: JSON.stringify(buildRecoveredOrderData(replyText)),
+          }),
+        },
+      },
+      ctx
+    );
+
+    actions.push(exec.name);
+    orderConfirmed = exec.result.toLowerCase().includes("pedido guardado exitosamente");
+    return orderConfirmed;
   };
 
   // Loop de hasta 4 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
@@ -838,6 +882,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
       if (
         isOrderClaimWithoutConfirmation(finalText) &&
         !actions.includes("confirm_order") &&
+        !orderConfirmed &&
         round < 3
       ) {
         msgs.push({
@@ -846,6 +891,10 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
             "El asistente afirmó que el pedido está registrado, pero no ejecutó confirm_order. Intenta nuevamente y obliga el uso de confirm_order con el JSON de form_data.",
         });
         continue;
+      }
+
+      if (await recoverMissingOrderConfirmation(finalText)) {
+        return { reply: finalText, actions };
       }
 
       // Sin más tool-calls: respuesta final lista
@@ -859,12 +908,18 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     for (const tc of toolCalls) {
       const exec = await executeToolCall(tc, ctx);
       actions.push(exec.name);
+      if (exec.name === "confirm_order" && exec.result.toLowerCase().includes("pedido guardado exitosamente")) {
+        orderConfirmed = true;
+      }
       msgs.push({ role: "tool", tool_call_id: tc.id, name: exec.name, content: exec.result });
     }
   }
 
   // Pasada final sin tools para forzar respuesta en texto después de 4 rondas
   const { text: finalText } = await callAiProvider(cfg, msgs);
+  if (await recoverMissingOrderConfirmation(finalText || lastText)) {
+    return { reply: finalText || lastText, actions };
+  }
   return buildSafeReply(finalText || lastText);
 }
 

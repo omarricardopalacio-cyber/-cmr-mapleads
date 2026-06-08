@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start"
 import { supabase } from '@/integrations/supabase/client'
 import { useAuth } from '@/lib/auth-context'
 import { ensureOrg } from "@/lib/org.functions"
+import { repairMissingConfirmedOrders } from '@/lib/orders.functions'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -27,19 +28,14 @@ function OrdersModule() {
   const [loading, setLoading] = useState(true)
 
   const ensure = useServerFn(ensureOrg)
+  const repairOrders = useServerFn(repairMissingConfirmedOrders)
 
   useEffect(() => {
     async function initOrg() {
       if (!session?.user?.id) return;
       
       try {
-        // Primero intentar obtener del user_metadata
-        if (session.user.user_metadata?.org_id) {
-          setOrgId(session.user.user_metadata.org_id);
-          return;
-        }
-        
-        // Si no, consultar directamente desde el cliente Supabase
+        // Primero consultar directamente desde el cliente Supabase, ya que user_metadata puede quedar desactualizado.
         const { data: existing } = await supabase
           .from("user_roles")
           .select("org_id")
@@ -51,8 +47,13 @@ function OrdersModule() {
           setOrgId(existing.org_id);
           return;
         }
-        
-        // Si aún no existe, usar el serverFn para crear la organización
+
+        // Si no, intentar con metadata y luego crear la organización si no existe.
+        if (session.user.user_metadata?.org_id) {
+          setOrgId(session.user.user_metadata.org_id);
+          return;
+        }
+
         const res = await ensure({});
         if (res?.orgId) setOrgId(res.orgId);
         else toast.error('No se pudo encontrar tu organización.');
@@ -63,6 +64,23 @@ function OrdersModule() {
     }
     initOrg();
   }, [session, ensure])
+
+  useEffect(() => {
+    if (!orgId) return;
+
+    const repairAndLoad = async () => {
+      setLoading(true);
+      try {
+        await repairOrders({});
+      } catch (err: any) {
+        console.warn('repairMissingConfirmedOrders failed:', err?.message || err);
+      } finally {
+        await loadData();
+      }
+    };
+
+    repairAndLoad();
+  }, [orgId, repairOrders])
 
   useEffect(() => {
     if (orgId) {
