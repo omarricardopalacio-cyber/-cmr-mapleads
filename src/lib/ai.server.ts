@@ -278,10 +278,37 @@ export async function callVertexAI(opts: {
   const systemMsg = opts.messages.find((m) => m.role === "system");
   const contents = opts.messages
     .filter((m) => m.role !== "system")
-    .map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+    .map((m) => {
+      if (m.role === "tool") {
+        return {
+          role: "user",
+          parts: [{ functionResponse: { name: m.name || "tool", response: { result: m.content } } }],
+        };
+      }
+
+      if (m.role === "assistant" && m.tool_calls?.length) {
+        const functionParts = m.tool_calls.map((tc: any) => {
+          let args: Record<string, unknown> = {};
+          try {
+            args = typeof tc.function?.arguments === "string"
+              ? JSON.parse(tc.function.arguments || "{}")
+              : tc.function?.arguments ?? {};
+          } catch {
+            args = {};
+          }
+          return { functionCall: { name: tc.function?.name, args } };
+        });
+        return {
+          role: "model",
+          parts: [m.content ? { text: m.content } : null, ...functionParts].filter(Boolean),
+        };
+      }
+
+      return {
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      };
+    });
 
   const body: any = { contents };
   if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
