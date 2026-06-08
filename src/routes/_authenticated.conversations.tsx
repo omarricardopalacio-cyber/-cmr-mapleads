@@ -99,6 +99,7 @@ function ConversationsLayout() {
             const active = activeId === t.id;
             const contactLabel = getContactDisplayName(c as any, idx + 1);
             const contactMeta = formatPhoneOrWaId(c as any);
+            const intent = t.purchase_intent ?? "pending";
             const rawTags = Array.isArray(c?.contact_tags) ? c.contact_tags : [];
             const contactTags = rawTags
               .filter((x: { tags?: { id: string; name: string; color: string } }) => x?.tags)
@@ -143,6 +144,15 @@ function ConversationsLayout() {
                     </div>
                     <div className="text-xs text-muted-foreground font-mono truncate">
                       {contactMeta}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {intent === "compro" ? (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full border border-green-500/40 text-green-700 bg-green-500/10">🛒 Compró</span>
+                      ) : intent === "no_compro" ? (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full border border-red-500/40 text-red-700 bg-red-500/10">🔴 No compró</span>
+                      ) : String(intent).startsWith("collecting_data") ? (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full border border-amber-500/40 text-amber-700 bg-amber-500/10">🟡 Agendando</span>
+                      ) : null}
                     </div>
                     {contactTags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
