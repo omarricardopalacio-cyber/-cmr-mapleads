@@ -156,17 +156,32 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     return anySession?.id ?? null;
   };
 
+  const normalizeChatId = (value: unknown): unknown => {
+    if (typeof value !== "string") return value;
+    if (value.includes("@")) return value;
+    return `${value}@c.us`;
+  };
+
   const enqueueCommand = async (type: string, payload: Record<string, unknown>) => {
     const sessionId = await getSessionId();
     if (!sessionId) {
       console.warn(`[flow-runner] No WhatsApp session available for org=${orgId} contact=${contactId}`);
       return;
     }
+
+    const normalizedPayload = { ...payload };
+    if (normalizedPayload.chatId) {
+      normalizedPayload.chatId = normalizeChatId(normalizedPayload.chatId);
+    }
+    if (normalizedPayload.chat_id) {
+      normalizedPayload.chat_id = normalizeChatId(normalizedPayload.chat_id);
+    }
+
     await supabaseAdmin.from("engine_commands").insert({
       org_id: orgId,
       session_id: sessionId,
       type,
-      payload,
+      payload: normalizedPayload,
       status: "pending",
     });
   };

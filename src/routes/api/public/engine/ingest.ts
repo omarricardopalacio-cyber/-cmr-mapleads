@@ -1062,7 +1062,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               try {
                 const { data: keywordFlows } = await dyn()
                   .from('flows')
-                  .select('id')
+                  .select('id, trigger_value')
                   .eq('org_id', session.org_id)
                   .eq('trigger_type', 'keyword')
                   .eq('is_active', true);
@@ -1079,6 +1079,57 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   const lowerText = e.text.toLowerCase();
                   const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
                   if (triggerVal && lowerText.includes(triggerVal)) {
+                    await dyn()
+                      .from('flow_runs')
+                      .upsert({
+                        org_id: session.org_id,
+                        flow_id: flow.id,
+                        contact_id: contactId,
+                        current_step_id: firstStep.id,
+                        status: 'active',
+                        next_execution_at: new Date().toISOString(),
+                        last_interaction_at: new Date().toISOString(),
+                      }, { onConflict: 'flow_id,contact_id' })
+                      .select()
+                      .single();
+                  }
+                }
+
+                const { count: inboundCount } = await dyn()
+                  .from('messages')
+                  .select('id', { count: 'exact', head: true })
+                  .eq('thread_id', thread.id)
+                  .eq('direction', 'in');
+                const { count: outboundCount } = await dyn()
+                  .from('messages')
+                  .select('id', { count: 'exact', head: true })
+                  .eq('thread_id', thread.id)
+                  .eq('direction', 'out');
+
+                const whatsappFlowTypes = [
+                  { type: 'wa_new_message', shouldTrigger: true },
+                  { type: 'wa_first_conversation', shouldTrigger: (inboundCount ?? 0) === 1 && (outboundCount ?? 0) === 0 },
+                  { type: 'wa_customer_reply', shouldTrigger: (outboundCount ?? 0) > 0 },
+                ];
+
+                for (const trigger of whatsappFlowTypes) {
+                  if (!trigger.shouldTrigger) continue;
+                  const { data: flows } = await dyn()
+                    .from('flows')
+                    .select('id')
+                    .eq('org_id', session.org_id)
+                    .eq('trigger_type', trigger.type)
+                    .eq('is_active', true);
+                  for (const flow of flows ?? []) {
+                    const { data: firstStep } = await dyn()
+                      .from('flow_steps')
+                      .select('id')
+                      .eq('flow_id', flow.id)
+                      .is('parent_step_id', null)
+                      .order('step_order', { ascending: true })
+                      .limit(1)
+                      .maybeSingle();
+                    if (!firstStep) continue;
                     await dyn()
                       .from('flow_runs')
                       .upsert({

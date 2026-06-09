@@ -5,6 +5,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
 import { TRIGGERS } from "@/lib/flow-blocks";
+import { processRun } from "@/lib/flow-runner.server";
 
 const FLOW_TRIGGER_TYPES = TRIGGERS.map((trigger) => trigger.id);
 
@@ -352,6 +353,7 @@ export const runFlowManually = createServerFn({ method: "POST" })
       .single();
       
     if (error) throw new Error(error.message);
+    if (run) await processRun(run);
     return { run };
   });
 

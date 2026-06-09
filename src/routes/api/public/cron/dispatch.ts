@@ -2,6 +2,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { convertUrlToBase64 } from "@/lib/media";
+import { processDueRuns } from "@/lib/flow-runner.server";
 
 // For broadcast media: try base64 first, fall back to URL-only if too large
 async function resolveMediaForBroadcast(mediaUrl: string): Promise<{ base64?: string; mimeType?: string; mediaUrl?: string }> {
@@ -214,7 +215,7 @@ async function handler({ request }: { request: Request }) {
   }
 
   // 3) Flow steps
-  await processFlowSteps(now);
+  await processDueRuns();
 
   return json(200, { ok: true, ...result });
 }
