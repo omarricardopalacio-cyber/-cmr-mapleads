@@ -514,46 +514,22 @@ async function maybeAiReply(
     if ((count ?? 0) > 0) return
   }
 
-  const { data: hist } = await supabaseAdmin
-    .from('messages')
-    .select('direction, text')
-    .eq('thread_id', threadId)
-    .not('text', 'is', null)
-    .order('sent_at', { ascending: false })
-    .limit(500)
+  const history = [{ role: 'user' as const, content: text }]
 
-  const fullHistory = (hist ?? [])
-    .reverse()
-    .slice(0, -1)
-    .map((m: unknown) => ({
-      role: ((m as { direction: string }).direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
-      content: String((m as { text: unknown }).text),
-    }))
-
-  const lastIsCurrent =
-    fullHistory.length > 0 &&
-    fullHistory[fullHistory.length - 1].role === 'user' &&
-    fullHistory[fullHistory.length - 1].content.trim() === text.trim()
-
-  const history = lastIsCurrent ? fullHistory : [...fullHistory, { role: 'user' as const, content: text }]
-
-  // If auto-replies were sent before us, inject a contextual-entry instruction so the AI
-  // reads the conversation naturally and continues it instead of opening cold.
-  let historyWithContext = history;
-  if (autoRepliesWereSent && history.length > 1) {
+  let historyWithContext = history
+  if (autoRepliesWereSent) {
     const systemNote = {
       role: 'user' as const,
       content: `[INSTRUCCIÓN DEL SISTEMA - CRÍTICA - NO MOSTRAR AL CLIENTE]
 REGLAS ESTRICTAS PARA ESTA RESPUESTA:
-1. PROHIBIDO presentarte o decir quién eres. Ya hay mensajes previos.
-2. PROHIBIDO hacer más de UNA pregunta en esta respuesta.
-3. PROHIBIDO ignorar el historial. Lee los mensajes anteriores y CONTINÚA desde ahí.
-4. Tu respuesta debe ser CORTA (máximo 2 líneas) y hacer SOLO UNA pregunta breve y directa.
-5. Entra a la conversación de forma NATURAL, como si ya conocieras al cliente.
-6. Usa el historial, catálogo y base de conocimiento para dar contexto a tu respuesta.
-ACCIÓN REQUERIDA: Genera UNA respuesta corta y contextual que continúe la conversación.`
-    };
-    historyWithContext = [...history, systemNote];
+1. NO debes presentarte o decir quién eres.
+2. NO hagas más de UNA pregunta en esta respuesta.
+3. NO necesitas leer mensajes previos en esta ejecución.
+4. Tu respuesta debe ser CORTA y directa.
+5. Continúa la conversación de forma natural como si ya hubieras conversado con el cliente.
+6. Usa el contexto disponible en este mensaje para responder.`
+    }
+    historyWithContext = [...history, systemNote]
   }
 
   try {
