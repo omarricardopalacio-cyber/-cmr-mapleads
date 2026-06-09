@@ -97,6 +97,15 @@ export const Route = createFileRoute('/api/public/engine/commands')({
             if ((normalizedType === 'SEND_MEDIA' || normalizedType === 'SEND_MESSAGE') && c.payload && typeof c.payload === 'object') {
               const p = c.payload as any;
               const mediaUrl = typeof p.mediaUrl === 'string' ? p.mediaUrl : typeof p.media_url === 'string' ? p.media_url : null;
+              const hasInlineMedia = typeof p.media === 'string' && p.media.startsWith('data:');
+              console.log('[commands] command payload before media resolution', {
+                commandId: c.id || '(unknown)',
+                type: normalizedType,
+                hasInlineMedia,
+                mediaUrl: mediaUrl ? mediaUrl.substring(0, 120) : null,
+                mimeType: p.mimeType || p.mime_type,
+              });
+
               if (!mediaUrl) {
                 return { ...c, type: normalizedType };
               }
@@ -116,7 +125,12 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                 }
 
                 if (dataUri) {
-                  console.log('[commands] resolved mediaUrl to inline data URI for command', c.id || '(unknown)', { type: normalizedType, mediaUrl });
+                  console.log('[commands] resolved mediaUrl to inline data URI for command', c.id || '(unknown)', {
+                    type: normalizedType,
+                    mediaUrl: mediaUrl.substring(0, 120),
+                    mimeType: p.mimeType || p.mime_type,
+                    dataUriPrefix: dataUri.substring(0, 60),
+                  });
                   return {
                     ...c,
                     type: normalizedType,
@@ -129,9 +143,17 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                   };
                 }
 
-                console.warn('[commands] unable to resolve mediaUrl to inline data URI, leaving url as-is', { commandId: c.id || '(unknown)', type: normalizedType, mediaUrl });
+                console.warn('[commands] unable to resolve mediaUrl to inline data URI, leaving url as-is', {
+                  commandId: c.id || '(unknown)',
+                  type: normalizedType,
+                  mediaUrl: mediaUrl.substring(0, 120),
+                });
               } catch (err) {
-                console.error('[commands] error resolving mediaUrl to inline data URI:', err, { commandId: c.id || '(unknown)', type: normalizedType, mediaUrl });
+                console.error('[commands] error resolving mediaUrl to inline data URI:', err, {
+                  commandId: c.id || '(unknown)',
+                  type: normalizedType,
+                  mediaUrl: mediaUrl.substring(0, 120),
+                });
               }
             }
 

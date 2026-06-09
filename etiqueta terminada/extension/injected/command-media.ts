@@ -11,6 +11,14 @@ export async function resolveCommandMedia(payload: Record<string, unknown>): Pro
       (payload.mime_type as string) ||
       guessMimeFromDataUri(inline);
 
+    console.log("[command-media] resolving inline media", {
+      hasDataUri: inline.startsWith("data:"),
+      isPlainBase64: isPlainBase64String(inline),
+      isHttpUrl: inline.startsWith("http"),
+      mimeType,
+      prefix: inline.substring(0, 80),
+    });
+
     if (inline.startsWith("data:")) {
       return { dataUri: inline, mimeType };
     }
@@ -29,6 +37,7 @@ export async function resolveCommandMedia(payload: Record<string, unknown>): Pro
         const blob = await response.blob();
         const dataUri = await blobToDataUri(blob);
         const resolvedMime = response.headers.get("content-type") || mimeType;
+        console.log("[command-media] fetched inline media URL successfully", { url: inline, resolvedMime });
         return { dataUri, mimeType: resolvedMime };
       } catch (err: any) {
         console.warn("[command-media] Error fetching direct media URL:", err?.message || err, inline);

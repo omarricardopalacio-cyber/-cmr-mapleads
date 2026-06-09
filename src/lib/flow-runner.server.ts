@@ -166,7 +166,7 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     const sessionId = await getSessionId();
     if (!sessionId) {
       console.warn(`[flow-runner] No WhatsApp session available for org=${orgId} contact=${contactId}`);
-      return;
+      return null;
     }
 
     const normalizedPayload = { ...payload };
@@ -177,13 +177,29 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       normalizedPayload.chat_id = normalizeChatId(normalizedPayload.chat_id);
     }
 
-    await supabaseAdmin.from("engine_commands").insert({
-      org_id: orgId,
-      session_id: sessionId,
-      type,
-      payload: normalizedPayload,
-      status: "pending",
-    });
+    const { data, error } = await supabaseAdmin
+      .from("engine_commands")
+      .insert({
+        org_id: orgId,
+        session_id: sessionId,
+        type,
+        payload: normalizedPayload,
+        status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      console.error('[flow-runner] Failed to enqueue engine command', {
+        error: error.message,
+        type,
+        payload: normalizedPayload,
+        sessionId,
+      });
+      return null;
+    }
+
+    return data?.id ?? null;
   };
 
   switch (step.step_type) {
@@ -204,7 +220,6 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       const waId = await getContactWaId();
       if (waId && sd.media_url) {
         console.log('[flow-runner] enqueuing send_media command', {
-          sessionId,
           stepId: step.id,
           chatId: waId,
           mediaUrl: sd.media_url,
@@ -219,7 +234,6 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
         });
       } else {
         console.warn('[flow-runner] send_media step missing media_url or waId', {
-          sessionId,
           stepId: step.id,
           waId,
           media_url: sd.media_url,
