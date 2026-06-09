@@ -101,10 +101,6 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                 return { ...c, type: normalizedType };
               }
 
-              if (mediaUrl.startsWith('data:')) {
-                return { ...c, type: normalizedType };
-              }
-
               if (!mediaUrl.startsWith('http')) {
                 try {
                   const { data: signed } = await supabaseAdmin.storage
