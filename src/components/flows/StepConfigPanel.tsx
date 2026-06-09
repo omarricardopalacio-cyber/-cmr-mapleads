@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { WAIT_UNITS } from "@/lib/flow-blocks";
+import { uploadMedia } from "@/lib/upload-media";
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
 
@@ -29,6 +31,25 @@ export function StepConfigPanel({
 
   const updateData = (key: string, val: any) => {
     onChange({ step_data: { ...data, [key]: val } });
+  };
+
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const handleFileUpload = async (file?: File) => {
+    if (!file) return;
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const { url, mime_type } = await uploadMedia(file);
+      updateData("media_url", url);
+      updateData("mime_type", mime_type);
+      if (!data.caption) updateData("caption", file.name);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -59,31 +80,44 @@ export function StepConfigPanel({
           </div>
         )}
 
-        {(type === "send_image" || type === "send_video" || type === "send_document") && (
+        {(type === "send_image" || type === "send_video" || type === "send_document" || type === "send_catalog") && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>URL del Archivo</Label>
+              <Label>URL del Archivo o Catálogo</Label>
               <Input 
                 value={data.media_url || ""} 
                 onChange={e => updateData("media_url", e.target.value)}
                 placeholder="https://..."
               />
             </div>
+            {(type === "send_catalog" || type === "send_document") && (
+              <div className="space-y-2">
+                <Label>Subir PDF</Label>
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  disabled={uploading}
+                  onChange={e => handleFileUpload(e.target.files?.[0])}
+                  className="block w-full text-sm text-muted-foreground"
+                />
+                {uploadError ? <p className="text-xs text-destructive">{uploadError}</p> : null}
+              </div>
+            )}
             <div className="space-y-2">
-              <Label>Pie de foto (Caption)</Label>
+              <Label>Pie de foto / mensaje</Label>
               <Input 
                 value={data.caption || ""} 
                 onChange={e => updateData("caption", e.target.value)}
                 placeholder="Opcional"
               />
             </div>
-            {type === "send_document" && (
+            {(type === "send_document" || type === "send_catalog") && (
               <div className="space-y-2">
-                <Label>Nombre de archivo (Mime Type)</Label>
+                <Label>Tipo MIME</Label>
                 <Input 
                   value={data.mime_type || ""} 
                   onChange={e => updateData("mime_type", e.target.value)}
-                  placeholder="documento.pdf"
+                  placeholder="application/pdf"
                 />
               </div>
             )}

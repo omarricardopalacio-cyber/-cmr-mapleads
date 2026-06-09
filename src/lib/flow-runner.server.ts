@@ -134,7 +134,8 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     }
     case "send_image":
     case "send_video":
-    case "send_document": {
+    case "send_document":
+    case "send_catalog": {
       const waId = await getContactWaId();
       if (waId && sd.media_url) {
         await supabaseAdmin.from("engine_commands").insert({

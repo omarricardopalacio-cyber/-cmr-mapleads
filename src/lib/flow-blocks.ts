@@ -30,7 +30,7 @@ export const STEPS = [
   { id: "send_image", label: "Enviar Imagen", category: "comunicacion", icon: "Image", isCondition: false, defaultConfig: { media_url: "", caption: "" } },
   { id: "send_video", label: "Enviar Video", category: "comunicacion", icon: "Video", isCondition: false, defaultConfig: { media_url: "", caption: "" } },
   { id: "send_document", label: "Enviar Documento", category: "comunicacion", icon: "FileText", isCondition: false, defaultConfig: { media_url: "", mime_type: "", caption: "" } },
-  { id: "send_catalog", label: "Enviar Catálogo", category: "comunicacion", icon: "ShoppingBag", isCondition: false, defaultConfig: { catalog_id: "" } },
+  { id: "send_catalog", label: "Enviar Catálogo", category: "comunicacion", icon: "ShoppingBag", isCondition: false, defaultConfig: { media_url: "", mime_type: "", caption: "" } },
   { id: "send_product", label: "Enviar Producto", category: "comunicacion", icon: "Package", isCondition: false, defaultConfig: { product_id: "" } },
   
   // Tiempo
