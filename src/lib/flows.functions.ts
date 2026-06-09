@@ -223,15 +223,22 @@ export const upsertSteps = createServerFn({ method: "POST" })
       .eq("flow_id", data.flowId);
       
     if (data.steps.length > 0) {
-      const inserts = data.steps.map(s => ({
-        id: s.id, // Permitir inyectar UUID si se generan en cliente
-        flow_id: data.flowId,
-        step_type: s.step_type,
-        step_order: s.step_order,
-        step_data: s.step_data,
-        parent_step_id: s.parent_step_id || null,
-        branch: s.branch || null
-      }));
+      const inserts = data.steps.map((s) => {
+        const row: any = {
+          flow_id: data.flowId,
+          step_type: s.step_type,
+          step_order: s.step_order,
+          step_data: s.step_data ?? {},
+          parent_step_id: s.parent_step_id || null,
+          branch: s.branch || null,
+        };
+
+        if (s.id && !String(s.id).startsWith("temp-")) {
+          row.id = s.id;
+        }
+
+        return row;
+      });
       
       const { error } = await supabaseAdmin
         .from("flow_steps")
