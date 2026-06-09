@@ -216,61 +216,40 @@ function OrdersModule() {
     uploadLogoFile(file)
   }
 
-  function printGuide(order: any) {
-    const fd = typeof order.form_data === 'string' ? JSON.parse(order.form_data) : (order.form_data || {})
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return toast.error('Bloqueador de ventanas emergentes activado')
-    
-    const logoHtml = logoUrl
-      ? `<div style="text-align:center;margin-bottom:18px"><img src="${logoUrl}" alt="Logo" style="max-height:80px;max-width:240px;object-fit:contain;margin:0 auto"/></div>`
-      : ''
+  function exportToCSV() {
+    if (orders.length === 0) {
+      toast.error('No hay pedidos para exportar.')
+      return
+    }
 
-    const html = `
-      <html>
-        <head>
-          <title>Guía de Pedido</title>
-          <style>
-            body { font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111; }
-            .ticket { border: 1px solid #ddd; padding: 20px; border-radius: 12px; }
-            h2 { text-align: center; margin-top: 0; margin-bottom: 12px; }
-            .row { margin-bottom: 10px; }
-            .label { font-weight: 700; color: #444; font-size: 0.88rem; margin-bottom: 4px; }
-            .val { font-size: 1rem; color: #111; }
-            .section { margin-bottom: 18px; padding: 12px 14px; border-radius: 12px; background: #f9fafb; }
-            .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-            .summary-item { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fff; }
-            .footer { margin-top: 24px; font-size: 0.82rem; color: #6b7280; text-align: center; }
-            @media print { body { box-shadow: none; border: none; } .section { background: transparent; } }
-          </style>
-        </head>
-        <body>
-          <div class="ticket">
-            ${logoHtml}
-            <h2>Guía de Pedido</h2>
-            <div class="section">
-              <div class="row"><div class="label">Fecha</div><div class="val">${new Date(order.created_at).toLocaleString()}</div></div>
-              <div class="row"><div class="label">Cliente</div><div class="val">${order.contacts?.display_name || 'Sin nombre'}</div></div>
-              <div class="row"><div class="label">Teléfono</div><div class="val">${order.contacts?.phone || order.contacts?.wa_id || 'No disponible'}</div></div>
-              <div class="row"><div class="label">Estado</div><div class="val">${order.status}</div></div>
-              <div class="row"><div class="label">Valor del pedido</div><div class="val">${formatOrderTotal(fd) || 'No especificado'}</div></div>
-            </div>
-            <div class="section">
-              <div class="label">Detalle completo</div>
-              ${Object.keys(fd).map((k) => `
-                <div class="row">
-                  <div class="label">${k}</div>
-                  <div class="val">${String(fd[k] ?? '')}</div>
-                </div>
-              `).join('')}
-            </div>
-            <div class="footer">Generado por el módulo de pedidos. Verifique la información antes de entregar.</div>
-          </div>
-          <script>window.onload = function() { window.print(); window.close(); }</script>
-        </body>
-      </html>
-    `
-    printWindow.document.write(html)
-    printWindow.document.close()
+    const headers = ['Fecha', 'Cliente', 'Teléfono', 'Total', 'Estado', 'Datos principales']
+    const rows = orders.map((order) => {
+      const fd = typeof order.form_data === 'string' ? JSON.parse(order.form_data) : (order.form_data || {})
+      const orderTotal = formatOrderTotal(fd)
+      const summary = Object.entries(fd).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join('; ')
+      return [
+        new Date(order.created_at).toLocaleString(),
+        order.contacts?.display_name || '',
+        order.contacts?.phone || order.contacts?.wa_id || '',
+        orderTotal,
+        order.status || '',
+        summary,
+      ]
+    })
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `orders_${orgId || 'export'}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
   }
 
   function printGuide(order: any) {
