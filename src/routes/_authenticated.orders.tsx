@@ -110,6 +110,9 @@ function OrdersModule() {
           .eq('org_id', orgId)
           .order('display_order', { ascending: true })
       ])
+
+      if (ordersRes.error) throw ordersRes.error
+      if (fieldsRes.error) throw fieldsRes.error
       
       if (ordersRes.data) setOrders(ordersRes.data)
       if (fieldsRes.data) setFields(fieldsRes.data)
