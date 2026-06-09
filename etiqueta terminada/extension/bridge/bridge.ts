@@ -15,6 +15,12 @@ import { CONSTANTS } from "../shared/contracts";
 export class ContentBridge {
   private initialized = false;
   private pendingResponses: Map<string, (payload: any) => void> = new Map();
+  private queuedCommands: Array<{
+    msg: BridgeMessage;
+    resolve: (payload: any) => void;
+    reject: (err: Error) => void;
+    timeoutId: number;
+  }> = [];
   public engineReady = false; // Se pone true cuando el injected engine envía eventos
 
   init() {
@@ -45,11 +51,7 @@ export class ContentBridge {
       if (!this.engineReady) {
         this.engineReady = true;
         console.log("[ContentBridge] Engine confirmado listo (WPP activo)");
-      }
-
-      const waEvent: WAEvent = {
-        id: bridgeMsg.id || `${Date.now()}`,
-        type: bridgeMsg.event,
+          this.flushQueuedCommands();
         payload: bridgeMsg.payload,
         timestamp: Date.now(),
       };
@@ -109,6 +111,11 @@ export class ContentBridge {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(msg.id!);
+        const index = this.queuedCommands.findIndex((item) => item.msg.id === msg.id);
+        if (index >= 0) {
+          clearTimeout(this.queuedCommands[index].timeoutId);
+          this.queuedCommands.splice(index, 1);
+        }
         reject(new Error("[ContentBridge] Timeout esperando respuesta del injected script"));
       }, 15000);
 
@@ -117,12 +124,44 @@ export class ContentBridge {
         resolve(payload);
       });
 
+      if (!this.engineReady) {
+        console.log("[ContentBridge] Engine no listo, encolando comando para enviarlo cuando se active:", msg.event, msg.id);
+        const queuedTimeout = setTimeout(() => {
+          const index = this.queuedCommands.findIndex((item) => item.msg.id === msg.id);
+          if (index >= 0) {
+            const item = this.queuedCommands[index];
+            this.queuedCommands.splice(index, 1);
+            item.reject(new Error("[ContentBridge] Timeout esperando engine listo"));
+          }
+        }, 15000);
+
+        this.queuedCommands.push({ msg, resolve, reject, timeoutId: queuedTimeout });
+        return;
+      }
+
       postFromContent("WA_COMMAND", {
         id: msg.id,
         event: msg.event,
         payload: msg.payload,
       });
     });
+  }
+
+  private flushQueuedCommands(): void {
+    if (this.queuedCommands.length === 0) return;
+
+    console.log("[ContentBridge] Flush de comandos encolados, engine ya listo. Cantidad:", this.queuedCommands.length);
+    const queued = [...this.queuedCommands];
+    this.queuedCommands.length = 0;
+
+    for (const item of queued) {
+      clearTimeout(item.timeoutId);
+      postFromContent("WA_COMMAND", {
+        id: item.msg.id,
+        event: item.msg.event,
+        payload: item.msg.payload,
+      });
+    }
   }
 
   destroy() {

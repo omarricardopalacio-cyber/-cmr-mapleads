@@ -44,6 +44,15 @@ function dataUriToBlob(dataUri: string): Blob | null {
   return new Blob([bytes], { type: mimeType });
 }
 
+function getSendTypeFromMime(mimeType: string): string {
+  const normalized = (mimeType || "").toLowerCase();
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("video/")) return "video";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.includes("pdf") || normalized.includes("octet-stream") || normalized.includes("zip")) return "document";
+  return "auto-detect";
+}
+
 function normalizeMediaForSend(media: string, mimeType: string): string | Blob {
   if (media.startsWith("data:")) return media;
   if (isPlainBase64String(media)) {
@@ -151,40 +160,68 @@ class SenderEngine {
 
     console.log(`[MAPLE SENDER] Resolviendo LID de usuario para: ${normalizedChatId}`);
 
-    try {
-      // Usar WPP.contact.get para obtener el contacto completo con su LID real
-      const contact = await Promise.race([
-        WPP.contact.get(normalizedChatId),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("LID_RESOLVE_TIMEOUT")), 10000)
-        ),
-      ]);
+    const resolveContactWid = async (): Promise<string | null> => {
+      try {
+        const contact = await Promise.race([
+          WPP.contact.get(normalizedChatId),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("LID_RESOLVE_TIMEOUT")), 10000)
+          ),
+        ]);
 
-      if (!contact) {
-        console.warn("[MAPLE SENDER] contact.get retornó null para:", normalizedChatId, "- usando fallback");
-        return { success: true, verifiedChatId: normalizedChatId };
+        if (!contact) return null;
+        const wid =
+          contact?.wid?._serialized ||
+          contact?.wid ||
+          contact?.id?._serialized ||
+          contact?.id ||
+          (typeof contact === "string" ? contact : null);
+        if (typeof wid === "string" && wid.includes("@")) return wid;
+      } catch (err) {
+        console.warn("[MAPLE SENDER] contact.get failed:", err);
       }
+      return null;
+    };
 
-      // Extraer el wid del contacto (que es el LID real)
-      const wid = contact?.wid?._serialized || contact?.wid;
-      if (wid && typeof wid === "string" && wid.includes("@")) {
-        console.log(
-          `[MAPLE SENDER] LID resuelto con éxito. JID Verificado de WhatsApp: ${wid}`
-        );
-        return { success: true, verifiedChatId: wid };
+    const resolveQueryExists = async (): Promise<string | null> => {
+      if (typeof WPP.contact?.queryExists !== "function") return null;
+      try {
+        const exists = await WPP.contact.queryExists(normalizedChatId);
+        const wid = exists?.wid?._serialized || exists?.wid || (typeof exists === "string" ? exists : null);
+        if (typeof wid === "string" && wid.includes("@")) {
+          return wid;
+        }
+      } catch (err) {
+        console.warn("[MAPLE SENDER] queryExists failed:", err);
       }
+      return null;
+    };
 
-      console.warn("[MAPLE SENDER] No se pudo extraer wid del contacto, usando fallback:", normalizedChatId);
-      return { success: true, verifiedChatId: normalizedChatId };
-    } catch (lidErr: unknown) {
-      const errMsg = lidErr instanceof Error ? lidErr.message : String(lidErr);
-      if (errMsg.includes("LID_RESOLVE_TIMEOUT")) {
-        console.warn("[MAPLE SENDER] Timeout resolviendo LID, usando fallback:", normalizedChatId);
-      } else {
-        console.error("[MAPLE SENDER] Error consultando contact.get, aplicando fallback:", lidErr);
+    const resolveChatFind = async (): Promise<string | null> => {
+      if (typeof WPP.chat?.find !== "function") return null;
+      try {
+        const chat = await WPP.chat.find(normalizedChatId);
+        const wid = chat?.id?._serialized || chat?.id;
+        if (typeof wid === "string" && wid.includes("@")) {
+          return wid;
+        }
+      } catch (err) {
+        console.warn("[MAPLE SENDER] chat.find failed:", err);
       }
-      return { success: true, verifiedChatId: normalizedChatId };
+      return null;
+    };
+
+    const strategies = [resolveContactWid, resolveQueryExists, resolveChatFind];
+    for (const strategy of strategies) {
+      const resolved = await strategy();
+      if (resolved) {
+        console.log(`[MAPLE SENDER] LID resuelto con éxito vía estrategia: ${resolved}`);
+        return { success: true, verifiedChatId: resolved };
+      }
     }
+
+    console.warn("[MAPLE SENDER] No se encontró LID; usando fallback:", normalizedChatId);
+    return { success: true, verifiedChatId: normalizedChatId };
   }
 
   private buildSendOptions(task: SendTask): Record<string, unknown> {
@@ -241,24 +278,39 @@ class SenderEngine {
           (task.options?.mimeType as string) ||
           (task.options?.mimetype as string) ||
           "application/octet-stream";
-        const mediaInput = normalizeMediaForSend(task.media, fileType);
-        console.log(`[MAPLE SENDER] Calling sendFileMessage, type=${fileType}, mediaType=${typeof mediaInput}`);
+        let mediaInput = normalizeMediaForSend(task.media, fileType);
+        const sendType = getSendTypeFromMime(fileType);
+
+        if (typeof mediaInput === "string" && mediaInput.startsWith("data:")) {
+          const blob = dataUriToBlob(mediaInput);
+          if (blob) {
+            mediaInput = blob;
+            console.log("[MAPLE SENDER] Converted data URI to Blob for sendFileMessage");
+          }
+        }
+
+        console.log(`[MAPLE SENDER] Calling sendFileMessage, targetChatId=${targetChatId}, type=${fileType}, mediaType=${typeof mediaInput}, sendType=${sendType}, caption=${task.caption || task.text ? "yes" : "no"}`);
+        if (typeof mediaInput === "string" && !mediaInput.startsWith("data:") && mediaInput.length > 0) {
+          console.warn("[MAPLE SENDER] Media payload is a raw string and not a data URI; sendFileMessage may not support it:", mediaInput.substring(0, 120));
+        }
+
         try {
           result = await WPP.chat.sendFileMessage(targetChatId, mediaInput, {
             ...sendOptions,
-            type: "auto-detect",
+            type: sendType,
             mimetype: fileType,
             caption: task.caption || task.text,
           });
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
+          console.warn("[MAPLE SENDER] sendFileMessage attempt failed:", errMsg);
           if (typeof mediaInput === "string" && mediaInput.startsWith("data:")) {
             const fallbackBlob = dataUriToBlob(mediaInput);
             if (fallbackBlob) {
-              console.warn("[MAPLE SENDER] sendFileMessage failed on data URI, retrying with Blob fallback:", errMsg);
+              console.warn("[MAPLE SENDER] Retrying sendFileMessage with Blob fallback");
               result = await WPP.chat.sendFileMessage(targetChatId, fallbackBlob, {
                 ...sendOptions,
-                type: "auto-detect",
+                type: sendType,
                 mimetype: fileType,
                 caption: task.caption || task.text,
               });
@@ -270,7 +322,7 @@ class SenderEngine {
           }
         }
       } else {
-        console.log(`[MAPLE SENDER] Calling sendTextMessage with text="${task.text || ""}"`);
+        console.log(`[MAPLE SENDER] Calling sendTextMessage to targetChatId=${targetChatId} with text="${task.text || ""}"`);
         result = await WPP.chat.sendTextMessage(targetChatId, task.text || "", sendOptions);
       }
 

@@ -27,7 +27,7 @@ export function postFromInjected(
   };
   window.postMessage(
     { source: "MAPLE_WA_INJECTED", ...message },
-    "https://web.whatsapp.com"
+    "*"
   );
 }
 
@@ -48,7 +48,7 @@ export function postFromContent(
   };
   window.postMessage(
     { source: "MAPLE_WA_CONTENT", ...message },
-    "https://web.whatsapp.com"
+    "*"
   );
 }
 

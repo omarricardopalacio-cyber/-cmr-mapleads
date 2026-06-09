@@ -191,7 +191,9 @@ async function resolveMediaInServiceWorker(
     console.log("[ServiceWorker] Convierte URL pública de media a data URI:", url);
     const res = await fetch(url);
     if (!res.ok) {
-      return { payload, error: `Failed to fetch media (${res.status})` };
+      const error = `Failed to fetch media (${res.status})`;
+      console.warn("[ServiceWorker] No se pudo convertir media remota a data URI, enviando URL original:", error);
+      return { payload, error };
     }
     const blob = await res.blob();
     const dataUri = await blobToDataUri(blob);
@@ -204,8 +206,9 @@ async function resolveMediaInServiceWorker(
     delete normalizedPayload.media_url;
     return { payload: normalizedPayload };
   } catch (err: any) {
-    console.warn("[ServiceWorker] No se pudo convertir media pública a base64, enviando URL original:", err?.message || err);
-    return { payload };
+    const message = err?.message || String(err);
+    console.warn("[ServiceWorker] No se pudo convertir media remota a base64, enviando URL original:", message);
+    return { payload, error: message };
   }
 }
 
@@ -219,9 +222,7 @@ async function dispatchCommand(cmd: BackendCommand): Promise<void> {
   if ((command.type === "SEND_MESSAGE" || command.type === "SEND_MEDIA") && (payload.mediaUrl || payload.media_url)) {
     const resolved = await resolveMediaInServiceWorker(payload);
     if (resolved.error) {
-      console.error("[ServiceWorker] Abortando comando por fallo de descarga de media:", resolved.error);
-      await sendCommandAck(command, { error: resolved.error });
-      return;
+      console.warn("[ServiceWorker] No se pudo convertir media remota a data URI, enviando URL original:", resolved.error);
     }
     payload = resolved.payload;
   }
