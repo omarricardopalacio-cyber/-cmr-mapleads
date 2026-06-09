@@ -61,7 +61,6 @@ export async function triggerFlows(params: {
           current_step_id: firstStep.id,
           status: "active",
           next_execution_at: new Date().toISOString(),
-          started_at: new Date().toISOString(),
         });
     }
   } catch (err: any) {

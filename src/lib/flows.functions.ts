@@ -317,7 +317,6 @@ export const runFlowManually = createServerFn({ method: "POST" })
         current_step_id: firstStep.id,
         status: "active",
         next_execution_at: new Date().toISOString(),
-        started_at: new Date().toISOString()
       })
       .select()
       .single();

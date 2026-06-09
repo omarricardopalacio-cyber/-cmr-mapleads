@@ -241,7 +241,12 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
         const { data: firstStep } = await supabaseAdmin.from("flow_steps").select("id").eq("flow_id", sd.flow_id).is("parent_step_id", null).order("step_order", { ascending: true }).limit(1).maybeSingle();
         if (firstStep) {
           await supabaseAdmin.from("flow_runs").insert({
-            org_id: orgId, flow_id: sd.flow_id, contact_id: contactId, current_step_id: firstStep.id, status: "active", next_execution_at: new Date().toISOString(), started_at: new Date().toISOString()
+            org_id: orgId,
+            flow_id: sd.flow_id,
+            contact_id: contactId,
+            current_step_id: firstStep.id,
+            status: "active",
+            next_execution_at: new Date().toISOString(),
           });
         }
       }
