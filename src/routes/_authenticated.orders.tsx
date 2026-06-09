@@ -163,6 +163,11 @@ function OrdersModule() {
     return String(formData[match] ?? '')
   }
 
+  function getOrderFieldValue(formData: Record<string, unknown>, pattern: RegExp) {
+    const entry = Object.entries(formData).find(([key]) => pattern.test(key))
+    return entry ? String(entry[1] ?? '') : ''
+  }
+
   async function deleteOrder(orderId: string) {
     if (!orgId) return
     if (!window.confirm('¿Deseas eliminar este pedido/agendamiento? Esta acción no se puede deshacer.')) return
@@ -254,47 +259,96 @@ function OrdersModule() {
 
   function printGuide(order: any) {
     const fd = typeof order.form_data === 'string' ? JSON.parse(order.form_data) : (order.form_data || {})
+    const tracking = getOrderFieldValue(fd, /tracking|rastreo|c[oó]digo|guia|guía/i) || 'No disponible'
+    const contactPhone = order.contacts?.phone || order.contacts?.wa_id || getOrderFieldValue(fd, /tel[eé]fono|celular|whatsapp|wa/i) || 'No registrado'
+    const address = getOrderFieldValue(fd, /direcci[oó]n|address|direccion|addr/i) || 'No especificado'
+    const references = getOrderFieldValue(fd, /referencia|referencias|referencia(s)?|ref/i) || 'Sin referencias'
+    const notes = getOrderFieldValue(fd, /nota|notas|observaci[oó]n|obs|comentario/i) || 'Sin notas'
+    const cobranza = getOrderFieldValue(fd, /cobranza|recibo|pago|charge/i) || '$0.00'
+    const sender = getOrderFieldValue(fd, /remite|env[ií]a|sender|origin/i) || order.contacts?.display_name || 'No especificado'
+    const orderTotal = formatOrderTotal(fd) || 'No especificado'
     const printWindow = window.open('', '_blank')
     if (!printWindow) return toast.error('Bloqueador de ventanas emergentes activado')
-    
+
+    const logoHtml = logoUrl
+      ? `<img src="${logoUrl}" alt="Logo" style="max-height:72px; max-width:180px; object-fit:contain;" />`
+      : '<div style="font-size:1.1rem;font-weight:700;color:#111;">Guía de Pedido</div>'
+
     const html = `
       <html>
         <head>
           <title>Guía de Pedido</title>
           <style>
-            body { font-family: system-ui, sans-serif; max-width: 400px; margin: 20px auto; padding: 20px; border: 1px dashed #ccc; }
-            h2 { text-align: center; margin-top: 0; }
-            .row { margin-bottom: 8px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
-            .label { font-weight: bold; color: #555; font-size: 0.9em; }
-            .val { font-size: 1.1em; }
-            @media print {
-              body { border: none; }
-            }
+            body { font-family: system-ui, sans-serif; margin: 0; padding: 14px; color: #111; }
+            .page { width: 100%; max-width: 520px; margin: 0 auto; }
+            .card { border: 1px solid #d1d5db; border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+            .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+            .title { font-size: 1.2rem; font-weight: 800; margin: 0; }
+            .subtitle { font-size: 0.85rem; color: #475569; margin: 4px 0 0; }
+            .grid { display: grid; gap: 10px; }
+            .grid-2 { grid-template-columns: 1fr 1fr; }
+            .field { padding: 10px 12px; background: #f8fafc; border-radius: 12px; }
+            .field-label { font-size: 0.75rem; color: #475569; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+            .field-value { font-size: 1rem; font-weight: 700; color: #0f172a; }
+            .section-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 8px; }
+            .row { margin-bottom: 8px; }
+            .row strong { display: inline-block; width: 120px; color: #334155; }
+            .footer { margin-top: 12px; font-size: 0.8rem; color: #64748b; text-align: center; }
+            table { width: 100%; border-collapse: collapse; }
+            td { padding: 8px 0; border-bottom: 1px solid #e2e8f0; }
+            .nowrap { white-space: nowrap; }
+            @media print { body { margin: 0; } .card { border-color: #cbd5e1; } }
           </style>
         </head>
         <body>
-          <h2>Ticket de Pedido</h2>
-          <div class="row">
-            <div class="label">Fecha</div>
-            <div class="val">${new Date(order.created_at).toLocaleString()}</div>
-          </div>
-          <div class="row">
-            <div class="label">Teléfono Contacto</div>
-            <div class="val">${order.contacts?.phone || 'No registrado'}</div>
-          </div>
-          <hr style="margin: 15px 0" />
-          ${Object.keys(fd).map(k => `
-            <div class="row">
-              <div class="label">${k}</div>
-              <div class="val">${fd[k]}</div>
+          <div class="page">
+            <div class="card">
+              <div class="header">
+                <div>${logoHtml}</div>
+                <div style="text-align:right;">
+                  <div class="title">Envíos Pronto</div>
+                  <div class="subtitle">Guía de pedido</div>
+                </div>
+              </div>
             </div>
-          `).join('')}
-          <div style="margin-top: 30px; text-align: center; font-size: 0.8em; color: #666;">
-            Generado por Sistema CRM IA
+
+            <div class="card grid grid-2">
+              <div class="field"><div class="field-label">Tracking</div><div class="field-value">${tracking}</div></div>
+              <div class="field"><div class="field-label">Fecha</div><div class="field-value">${new Date(order.created_at).toLocaleString()}</div></div>
+              <div class="field"><div class="field-label">Teléfono</div><div class="field-value">${contactPhone}</div></div>
+              <div class="field"><div class="field-label">Valor pedido</div><div class="field-value">${orderTotal}</div></div>
+            </div>
+
+            <div class="card">
+              <div class="section-title">Dirección de envío</div>
+              <div class="field-value">${address}</div>
+            </div>
+
+            <div class="card grid grid-2">
+              <div class="field"><div class="field-label">Referencias</div><div class="field-value">${references}</div></div>
+              <div class="field"><div class="field-label">Cobranza</div><div class="field-value">${cobranza}</div></div>
+            </div>
+
+            <div class="card grid grid-2">
+              <div class="field"><div class="field-label">Remitente</div><div class="field-value">${sender}</div></div>
+              <div class="field"><div class="field-label">Estado</div><div class="field-value">${order.status || 'Sin estado'}</div></div>
+            </div>
+
+            <div class="card">
+              <div class="section-title">Detalles del pedido</div>
+              <table>
+                ${Object.entries(fd).map(([key, value]) => `
+                  <tr>
+                    <td class="nowrap"><strong>${key}</strong></td>
+                    <td>${String(value ?? '')}</td>
+                  </tr>
+                `).join('')}
+              </table>
+            </div>
+
+            <div class="footer">Generado por Plan Maestro CRM IA</div>
           </div>
-          <script>
-            window.onload = function() { window.print(); window.close(); }
-          </script>
+          <script>window.onload = function() { window.print(); window.close(); }</script>
         </body>
       </html>
     `
@@ -489,38 +543,38 @@ function OrdersModule() {
       </Tabs>
 
       <Dialog open={Boolean(selectedOrder)} onOpenChange={(open) => !open && setSelectedOrder(null)}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Detalle de Pedido</DialogTitle>
           </DialogHeader>
           {selectedOrder ? (
             <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-sm text-muted-foreground">Cliente</p>
-                  <p className="font-medium">{selectedOrder.contacts?.display_name || 'Sin nombre'}</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Cliente</p>
+                  <p className="mt-2 text-base font-semibold">{selectedOrder.contacts?.display_name || 'Sin nombre'}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-sm text-muted-foreground">Teléfono</p>
-                  <p className="font-medium">{selectedOrder.contacts?.phone || selectedOrder.contacts?.wa_id || '-'}</p>
+                <div className="rounded-lg border bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Teléfono</p>
+                  <p className="mt-2 text-base font-semibold">{selectedOrder.contacts?.phone || selectedOrder.contacts?.wa_id || '-'}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-sm text-muted-foreground">Valor</p>
-                  <p className="font-medium">{formatOrderTotal(typeof selectedOrder.form_data === 'string' ? JSON.parse(selectedOrder.form_data) : (selectedOrder.form_data || {})) || 'No especificado'}</p>
+                <div className="rounded-lg border bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Valor</p>
+                  <p className="mt-2 text-base font-semibold">{formatOrderTotal(typeof selectedOrder.form_data === 'string' ? JSON.parse(selectedOrder.form_data) : (selectedOrder.form_data || {})) || 'No especificado'}</p>
                 </div>
-                <div className="rounded-lg border bg-slate-50 p-4">
-                  <p className="text-sm text-muted-foreground">Estado</p>
-                  <p className="font-medium">{selectedOrder.status}</p>
+                <div className="rounded-lg border bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Estado</p>
+                  <p className="mt-2 text-base font-semibold">{selectedOrder.status}</p>
                 </div>
               </div>
 
-              <div className="rounded-md border p-4">
+              <div className="rounded-lg border bg-white p-4">
                 <h3 className="text-sm font-semibold mb-3">Campos del pedido</h3>
-                <div className="grid gap-3">
+                <div className="grid gap-2 md:grid-cols-2">
                   {Object.entries(typeof selectedOrder.form_data === 'string' ? JSON.parse(selectedOrder.form_data) : (selectedOrder.form_data || {})).map(([key, value]) => (
-                    <div key={key} className="rounded-lg border bg-white p-3">
-                      <p className="text-xs text-muted-foreground">{key}</p>
-                      <p className="text-sm font-medium">{String(value)}</p>
+                    <div key={key} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">{key}</p>
+                      <p className="mt-1 text-sm font-medium text-slate-900">{String(value)}</p>
                     </div>
                   ))}
                 </div>
