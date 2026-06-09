@@ -1058,6 +1058,45 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
               } catch (_) { /* ignore — don't break main flow */ }
 
+              // Helper to start or restart a flow only when there isn't already an active run.
+              const ensureFlowRun = async (flowId: string, firstStepId: string) => {
+                const { data: existingRun } = await dyn()
+                  .from('flow_runs')
+                  .select('id, status')
+                  .eq('org_id', session.org_id)
+                  .eq('flow_id', flowId)
+                  .eq('contact_id', contactId)
+                  .maybeSingle();
+
+                const activeStates = ['active', 'running', 'wait_node'];
+                if (existingRun && activeStates.includes(existingRun.status)) {
+                  return;
+                }
+
+                if (existingRun) {
+                  await dyn()
+                    .from('flow_runs')
+                    .update({
+                      current_step_id: firstStepId,
+                      status: 'active',
+                      next_execution_at: new Date().toISOString(),
+                      last_interaction_at: new Date().toISOString(),
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', existingRun.id);
+                } else {
+                  await dyn().from('flow_runs').insert({
+                    org_id: session.org_id,
+                    flow_id: flowId,
+                    contact_id: contactId,
+                    current_step_id: firstStepId,
+                    status: 'active',
+                    next_execution_at: new Date().toISOString(),
+                    last_interaction_at: new Date().toISOString(),
+                  });
+                }
+              };
+
               // Keyword flow enrollment (wrapped to avoid breaking bridge on DB errors)
               try {
                 const { data: keywordFlows } = await dyn()
@@ -1079,19 +1118,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   const lowerText = e.text.toLowerCase();
                   const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
                   if (triggerVal && lowerText.includes(triggerVal)) {
-                    await dyn()
-                      .from('flow_runs')
-                      .upsert({
-                        org_id: session.org_id,
-                        flow_id: flow.id,
-                        contact_id: contactId,
-                        current_step_id: firstStep.id,
-                        status: 'active',
-                        next_execution_at: new Date().toISOString(),
-                        last_interaction_at: new Date().toISOString(),
-                      }, { onConflict: 'flow_id,contact_id' })
-                      .select()
-                      .single();
+                    await ensureFlowRun(flow.id, firstStep.id);
                   }
                 }
 
@@ -1130,19 +1157,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       .limit(1)
                       .maybeSingle();
                     if (!firstStep) continue;
-                    await dyn()
-                      .from('flow_runs')
-                      .upsert({
-                        org_id: session.org_id,
-                        flow_id: flow.id,
-                        contact_id: contactId,
-                        current_step_id: firstStep.id,
-                        status: 'active',
-                        next_execution_at: new Date().toISOString(),
-                        last_interaction_at: new Date().toISOString(),
-                      }, { onConflict: 'flow_id,contact_id' })
-                      .select()
-                      .single();
+                    await ensureFlowRun(flow.id, firstStep.id);
                   }
                 }
 
