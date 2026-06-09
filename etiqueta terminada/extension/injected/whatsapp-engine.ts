@@ -112,6 +112,7 @@ async function handleCommands(event: MessageEvent): Promise<void> {
 
         console.log("[WhatsAppEngine] Calling senderEngine.send with chatId:", cmdPayload.chatId);
         const sendResult = await senderEngine.send({
+          commandId: id,
           chatId: cmdPayload.chatId as string,
           text: cmdPayload.text as string | undefined,
           media: resolved.dataUri,
@@ -136,16 +137,35 @@ async function handleCommands(event: MessageEvent): Promise<void> {
       case "SEND_MEDIA": {
         // Backend envía: { chatId, mediaUrl (data URI base64 or signed URL), mimeType, caption }
         const resolved = await resolveCommandMedia(payload as Record<string, unknown>);
-        const mediaData = payload.media || resolved.dataUri || payload.mediaUrl || payload.media_url;
+        const mediaData =
+          resolved.dataUri ||
+          payload.media ||
+          payload.base64 ||
+          payload.mediaUrl ||
+          payload.media_url;
         const mimeType = resolved.mimeType || payload.mimeType || payload.mime_type;
+
+        console.log("[WhatsAppEngine] SEND_MEDIA payload:", JSON.stringify({
+          chatId: payload.chatId,
+          mediaUrl: payload.mediaUrl || payload.media_url,
+          hasResolvedDataUri: !!resolved.dataUri,
+          hasInlineMedia: !!payload.media,
+          hasBase64: !!payload.base64,
+          mimeType,
+          caption: payload.caption,
+        }));
+
         if (!mediaData) {
           error = "MEDIA_MISSING";
           break;
         }
+
+        const mediaValue = normalizeMediaString(mediaData, mimeType);
         const sendResult = await senderEngine.send({
+          commandId: id,
           chatId: payload.chatId,
           text: payload.caption || payload.text,
-          media: mediaData,
+          media: typeof mediaValue === "string" ? mediaValue : (mediaValue as unknown as string),
           caption: payload.caption,
           quotedMsgId: payload.quotedMsgId,
           options: {
@@ -220,4 +240,21 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     id,
     payload: responsePayload,
   });
+}
+
+function normalizeMediaString(mediaData: unknown, mimeType?: string): unknown {
+  if (typeof mediaData !== "string") return mediaData;
+  if (mediaData.startsWith("data:")) return mediaData;
+  if (isPlainBase64String(mediaData)) {
+    return `data:${mimeType || "application/octet-stream"};base64,${mediaData}`;
+  }
+  return mediaData;
+}
+
+function isPlainBase64String(value: string): boolean {
+  if (!value || value.length < 100) return false;
+  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:")) return false;
+  const clean = value.replace(/\s+/g, "");
+  if (clean.length % 4 !== 0) return false;
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(clean);
 }

@@ -8,6 +8,7 @@ import { postFromInjected } from "../bridge/postmessage";
 
 interface SendTask {
   taskId: string;
+  commandId?: string;
   chatId: string;
   text?: string;
   media?: string; // base64 data URL
@@ -41,6 +42,22 @@ function dataUriToBlob(dataUri: string): Blob | null {
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes], { type: mimeType });
+}
+
+function normalizeMediaForSend(media: string, mimeType: string): string | Blob {
+  if (media.startsWith("data:")) return media;
+  if (isPlainBase64String(media)) {
+    return `data:${mimeType};base64,${media}`;
+  }
+  return media;
+}
+
+function isPlainBase64String(value: string): boolean {
+  if (!value || value.length < 100) return false;
+  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:")) return false;
+  const clean = value.replace(/\s+/g, "");
+  if (clean.length % 4 !== 0) return false;
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(clean);
 }
 
 class SenderEngine {
@@ -224,17 +241,18 @@ class SenderEngine {
           (task.options?.mimeType as string) ||
           (task.options?.mimetype as string) ||
           "application/octet-stream";
-        console.log(`[MAPLE SENDER] Calling sendFileMessage, type=${fileType}`);
+        const mediaInput = normalizeMediaForSend(task.media, fileType);
+        console.log(`[MAPLE SENDER] Calling sendFileMessage, type=${fileType}, mediaType=${typeof mediaInput}`);
         try {
-          result = await WPP.chat.sendFileMessage(targetChatId, task.media, {
+          result = await WPP.chat.sendFileMessage(targetChatId, mediaInput, {
             type: fileType,
             caption: task.caption || task.text,
             ...sendOptions,
           });
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
-          if (typeof task.media === "string" && task.media.startsWith("data:")) {
-            const fallbackBlob = dataUriToBlob(task.media);
+          if (typeof mediaInput === "string" && mediaInput.startsWith("data:")) {
+            const fallbackBlob = dataUriToBlob(mediaInput);
             if (fallbackBlob) {
               console.warn("[MAPLE SENDER] sendFileMessage failed on data URI, retrying with Blob fallback:", errMsg);
               result = await WPP.chat.sendFileMessage(targetChatId, fallbackBlob, {
@@ -314,6 +332,7 @@ class SenderEngine {
       event: status === "sent" ? "MESSAGE_SENT" : status === "failed" ? "MESSAGE_FAILED" : "MESSAGE_ACK",
       payload: {
         taskId: task.taskId,
+        commandId: task.commandId,
         chatId: task.chatId,
         text: task.caption || task.text,
         fromMe: true,

@@ -173,10 +173,40 @@ async function resolveMediaInServiceWorker(
     return { payload };
   }
 
-  // Si la media ya es una URL pública, dejamos que el engine inyectado la envíe directamente.
-  // Evita descargar y codificar el archivo completo en el Service Worker.
-  console.log("[ServiceWorker] URL pública de media detectada, no se convertirá a base64:", url);
-  return { payload };
+  // Si la media ya está enlined como base64, no hay que convertirla.
+  if (typeof payload.media === "string" && payload.media.startsWith("data:")) {
+    return { payload };
+  }
+  if (typeof payload.base64 === "string" && payload.base64.length > 0) {
+    const mime = (payload.mimeType || payload.mime_type || "application/octet-stream") as string;
+    return {
+      payload: {
+        ...payload,
+        media: payload.base64.startsWith("data:") ? payload.base64 : `data:${mime};base64,${payload.base64}`,
+      },
+    };
+  }
+
+  try {
+    console.log("[ServiceWorker] Convierte URL pública de media a data URI:", url);
+    const res = await fetch(url);
+    if (!res.ok) {
+      return { payload, error: `Failed to fetch media (${res.status})` };
+    }
+    const blob = await res.blob();
+    const dataUri = await blobToDataUri(blob);
+
+    const normalizedPayload = {
+      ...payload,
+      media: dataUri,
+    } as Record<string, unknown>;
+    delete normalizedPayload.mediaUrl;
+    delete normalizedPayload.media_url;
+    return { payload: normalizedPayload };
+  } catch (err: any) {
+    console.warn("[ServiceWorker] No se pudo convertir media pública a base64, enviando URL original:", err?.message || err);
+    return { payload };
+  }
 }
 
 async function dispatchCommand(cmd: BackendCommand): Promise<void> {
