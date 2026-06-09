@@ -844,8 +844,37 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
   const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
   const actions: string[] = [];
+  const executedToolCalls = new Set<string>();
   let orderConfirmed = false;
   let lastText = "";
+
+  const stableStringify = (value: unknown): string => {
+    if (Array.isArray(value)) {
+      return `[${value.map(stableStringify).join(",")}]`;
+    }
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      return `{${Object.keys(obj)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value);
+  };
+
+  const normalizeToolArgs = (rawArgs: unknown): string => {
+    if (typeof rawArgs === "string") {
+      try {
+        return stableStringify(JSON.parse(rawArgs));
+      } catch {
+        return rawArgs;
+      }
+    }
+    return stableStringify(rawArgs);
+  };
+
+  const toolCallSignature = (tc: { function: { name: string; arguments: string | Record<string, unknown> } }) =>
+    `${tc.function.name}:${normalizeToolArgs(tc.function.arguments)}`;
 
   const isOrderClaimWithoutConfirmation = (replyText: string) => {
     const lower = String(replyText).toLowerCase();
@@ -946,7 +975,17 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
 
     // Ejecutar cada tool call y anexar resultados
     for (const tc of toolCalls) {
-      const exec = await executeToolCall(tc, ctx);
+      const signature = toolCallSignature(tc);
+      let exec;
+      if (executedToolCalls.has(signature)) {
+        exec = {
+          name: tc.function.name,
+          result: `Herramienta ${tc.function.name} omitida porque ya se ejecutó con los mismos argumentos.`,
+        };
+      } else {
+        executedToolCalls.add(signature);
+        exec = await executeToolCall(tc, ctx);
+      }
       actions.push(exec.name);
       if (exec.name === "confirm_order" && exec.result.toLowerCase().includes("pedido guardado exitosamente")) {
         orderConfirmed = true;
