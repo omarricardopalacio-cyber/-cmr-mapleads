@@ -222,11 +222,15 @@ export async function callGrok(opts: {
 }
 
 /* ----- Vertex helpers ----- */
-let cachedToken: { token: string; exp: number } | null = null;
+let cachedToken: { key: string; token: string; exp: number } | null = null;
 
 async function getVertexAccessTokenFromJSON(saJson: string): Promise<string> {
-  if (cachedToken && cachedToken.exp - 60 > Date.now() / 1000) return cachedToken.token;
   const sa = JSON.parse(saJson);
+  const cacheKey = `${sa.client_email}:${sa.private_key_id ?? ""}`;
+  if (cachedToken?.key === cacheKey && cachedToken.exp - 60 > Date.now() / 1000) {
+    return cachedToken.token;
+  }
+
   const privateKey = await importPKCS8(sa.private_key, "RS256");
   const now = Math.floor(Date.now() / 1000);
   const assertion = await new SignJWT({
@@ -250,7 +254,7 @@ async function getVertexAccessTokenFromJSON(saJson: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`Vertex token ${res.status}: ${await res.text()}`);
   const j: any = await res.json();
-  cachedToken = { token: j.access_token, exp: now + (j.expires_in ?? 3600) };
+  cachedToken = { key: cacheKey, token: j.access_token, exp: now + (j.expires_in ?? 3600) };
   return j.access_token;
 }
 
@@ -260,6 +264,51 @@ function openAIToolsToVertex(tools: any[]) {
     description: t.function.description,
     parameters: t.function.parameters,
   }));
+}
+
+function parseVertexResponse(response: any) {
+  const candidate = response?.candidates?.[0];
+  if (!candidate) return { text: "", toolCalls: undefined };
+
+  const elements = Array.isArray(candidate.content)
+    ? candidate.content
+    : candidate.content
+    ? [candidate.content]
+    : [];
+
+  let text = "";
+  const toolCalls: any[] = [];
+
+  for (const element of elements) {
+    if (!element) continue;
+    if (typeof element.text === "string") {
+      text += element.text;
+    }
+    if (Array.isArray(element.parts)) {
+      for (const part of element.parts) {
+        if (typeof part?.text === "string") {
+          text += part.text;
+        }
+        if (part?.functionCall) {
+          toolCalls.push(part.functionCall);
+        }
+      }
+    }
+    if (element?.functionCall) {
+      toolCalls.push(element.functionCall);
+    }
+  }
+
+  const normalizedToolCalls = toolCalls.map((fc: any, idx: number) => ({
+    id: `call_${idx}`,
+    type: "function",
+    function: {
+      name: fc.name,
+      arguments: JSON.stringify(fc.args ?? {}),
+    },
+  }));
+
+  return { text: text.trim(), toolCalls: normalizedToolCalls.length ? normalizedToolCalls : undefined };
 }
 
 export async function callVertexAI(opts: {
@@ -276,14 +325,14 @@ export async function callVertexAI(opts: {
   const url = `https://${opts.location}-aiplatform.googleapis.com/v1/projects/${opts.project}/locations/${opts.location}/publishers/google/models/${opts.model}:generateContent`;
 
   const systemMsg = opts.messages.find((m) => m.role === "system");
-  const contents = opts.messages
+  const content = opts.messages
     .filter((m) => m.role !== "system")
     .map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
 
-  const body: any = { contents };
+  const body: any = { content };
   if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
   if (opts.tools?.length) {
     body.tools = [{ functionDeclarations: openAIToolsToVertex(opts.tools) }];
@@ -302,22 +351,7 @@ export async function callVertexAI(opts: {
     throw new Error(`Vertex ${res.status}: ${text.slice(0, 400)}`);
   }
   const j: any = await res.json();
-  const candidate = j.candidates?.[0];
-  const parts = candidate?.content?.parts ?? [];
-  const text = parts.filter((p: any) => p.text).map((p: any) => p.text).join("");
-
-  // Convert Vertex functionCalls to OpenAI tool_calls shape
-  const functionCalls = parts.filter((p: any) => p.functionCall);
-  const toolCalls = functionCalls.map((p: any, idx: number) => ({
-    id: `call_${idx}`,
-    type: "function",
-    function: {
-      name: p.functionCall.name,
-      arguments: JSON.stringify(p.functionCall.args ?? {}),
-    },
-  }));
-
-  return { text, toolCalls: toolCalls.length ? toolCalls : undefined };
+  return parseVertexResponse(j);
 }
 
 /* ============================================================
