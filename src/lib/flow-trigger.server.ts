@@ -34,7 +34,7 @@ export async function triggerFlows(params: {
         .eq("org_id", orgId)
         .eq("flow_id", flow.id)
         .eq("contact_id", contactId)
-        .in("status", ["active", "running", "wait_node"])
+        .in("status", ["active", "running", "wait_node", "paused"])
         .maybeSingle();
 
       if (existingRun) continue; // Ya está en el flujo

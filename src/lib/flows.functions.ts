@@ -308,6 +308,36 @@ export const runFlowManually = createServerFn({ method: "POST" })
       
     if (!firstStep) throw new Error("Flujo vacío");
 
+    const { data: existingRun } = await supabaseAdmin
+      .from("flow_runs")
+      .select("id, status")
+      .eq("org_id", orgId)
+      .eq("flow_id", data.flowId)
+      .eq("contact_id", data.contactId)
+      .maybeSingle();
+
+    if (existingRun && ["active", "running", "wait_node", "paused"].includes(existingRun.status)) {
+      throw new Error("Este contacto ya tiene una ejecución activa o pausada para este flujo.");
+    }
+
+    if (existingRun) {
+      const { data: run, error } = await supabaseAdmin
+        .from("flow_runs")
+        .update({
+          current_step_id: firstStep.id,
+          status: "active",
+          next_execution_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          started_at: new Date().toISOString(),
+        })
+        .eq("id", existingRun.id)
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+      return { run };
+    }
+
     const { data: run, error } = await supabaseAdmin
       .from("flow_runs")
       .insert({
