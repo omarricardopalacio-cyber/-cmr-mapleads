@@ -267,17 +267,21 @@ function openAIToolsToVertex(tools: any[]) {
 }
 
 function parseVertexResponse(response: any) {
-  const candidate = response?.candidates?.[0];
+  const candidate = response?.candidates?.[0] ?? response;
   if (!candidate) return { text: "", toolCalls: undefined };
+
+  let text = "";
+  const toolCalls: any[] = [];
+
+  if (typeof candidate.outputText === "string") {
+    text += candidate.outputText;
+  }
 
   const elements = Array.isArray(candidate.content)
     ? candidate.content
     : candidate.content
     ? [candidate.content]
     : [];
-
-  let text = "";
-  const toolCalls: any[] = [];
 
   for (const element of elements) {
     if (!element) continue;
@@ -325,12 +329,17 @@ export async function callVertexAI(opts: {
   const url = `https://${opts.location}-aiplatform.googleapis.com/v1/projects/${opts.project}/locations/${opts.location}/publishers/google/models/${opts.model}:generateContent`;
 
   const systemMsg = opts.messages.find((m) => m.role === "system");
-  const content = opts.messages.map((m) => ({
-    role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
-    parts: [{ text: m.content }],
-  }));
+  const content = opts.messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      text: m.content,
+    }));
 
   const body: any = { content };
+  if (systemMsg) {
+    body.systemInstruction = { text: systemMsg.content };
+  }
   if (opts.tools?.length) {
     body.tools = [{ functionDeclarations: openAIToolsToVertex(opts.tools) }];
   }
