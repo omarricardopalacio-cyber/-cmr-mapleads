@@ -274,6 +274,43 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       }
       return {};
     }
+    case "pipeline_move": {
+      const stageId = sd.stage_id || sd.stageId;
+      if (stageId) {
+        await supabaseAdmin.from("contacts").update({ pipeline_stage_id: stageId }).eq("id", contactId).eq("org_id", orgId);
+      }
+      return {};
+    }
+    case "note_create": {
+      const content = sd.text || sd.content;
+      if (content) {
+        await supabaseAdmin.from("notes").insert({ org_id: orgId, contact_id: contactId, user_id: null, content });
+      }
+      return {};
+    }
+    case "assign_user": {
+      const threadId = await getThreadId();
+      const userId = sd.user_id || sd.userId;
+      if (threadId) {
+        await supabaseAdmin.from("threads").update({ assigned_to_user_id: userId ?? null }).eq("id", threadId);
+      }
+      return {};
+    }
+    case "ai_transfer_human": {
+      const threadId = await getThreadId();
+      const userId = sd.user_id || sd.userId || null;
+      if (threadId) {
+        await supabaseAdmin.from("threads").update({ ai_enabled: false, assigned_to_user_id: userId }).eq("id", threadId);
+      }
+      return {};
+    }
+    case "ai_change_profile": {
+      const threadId = await getThreadId();
+      if (threadId) {
+        console.info(`[flow-runner] ia-change-profile step ejecutado para thread=${threadId}, profileId=`, sd.profile_id || sd.profileId);
+      }
+      return {};
+    }
     // ---- CONDICIONALES ----
     case "condition_reply":
     case "if_replied": {
@@ -288,6 +325,11 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "if_has_tag": {
       const { data } = await supabaseAdmin.from("contact_tags").select("tag_id").eq("contact_id", contactId).eq("tag_id", sd.tag_id).maybeSingle();
       return { branch: data ? "yes" : "no" };
+    }
+    case "if_not_has_tag": {
+      const tagId = sd.tag_id || sd.tagId;
+      const { data } = await supabaseAdmin.from("contact_tags").select("tag_id").eq("contact_id", contactId).eq("tag_id", tagId).maybeSingle();
+      return { branch: data ? "no" : "yes" };
     }
     // ---- NAVEGACIÓN ----
     case "goto_flow": {

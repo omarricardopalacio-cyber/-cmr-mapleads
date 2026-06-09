@@ -245,9 +245,10 @@ class SenderEngine {
         console.log(`[MAPLE SENDER] Calling sendFileMessage, type=${fileType}, mediaType=${typeof mediaInput}`);
         try {
           result = await WPP.chat.sendFileMessage(targetChatId, mediaInput, {
-            type: fileType,
-            caption: task.caption || task.text,
             ...sendOptions,
+            type: "auto-detect",
+            mimetype: fileType,
+            caption: task.caption || task.text,
           });
         } catch (error: unknown) {
           const errMsg = error instanceof Error ? error.message : String(error);
@@ -256,9 +257,10 @@ class SenderEngine {
             if (fallbackBlob) {
               console.warn("[MAPLE SENDER] sendFileMessage failed on data URI, retrying with Blob fallback:", errMsg);
               result = await WPP.chat.sendFileMessage(targetChatId, fallbackBlob, {
-                type: fileType,
-                caption: task.caption || task.text,
                 ...sendOptions,
+                type: "auto-detect",
+                mimetype: fileType,
+                caption: task.caption || task.text,
               });
             } else {
               throw error;
