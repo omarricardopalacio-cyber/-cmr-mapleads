@@ -102,6 +102,7 @@ function OrdersModule() {
           .from('orders')
           .select('*, contacts(id, display_name, wa_id, phone, profile_picture_url)')
           .eq('org_id', orgId)
+          .neq('status', 'deleted')
           .order('created_at', { ascending: false }),
         supabase
           .from('order_fields')
@@ -172,7 +173,12 @@ function OrdersModule() {
     if (!orgId) return
     if (!window.confirm('¿Deseas eliminar este pedido/agendamiento? Esta acción no se puede deshacer.')) return
 
-    const { error } = await supabase.from('orders').delete().eq('id', orderId).eq('org_id', orgId)
+    const { error } = await supabase
+      .from('orders')
+      .update({ status: 'deleted' })
+      .eq('id', orderId)
+      .eq('org_id', orgId)
+
     if (error) {
       toast.error('Error eliminando pedido: ' + error.message)
       return

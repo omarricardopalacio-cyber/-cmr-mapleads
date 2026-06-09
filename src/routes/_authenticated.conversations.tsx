@@ -7,6 +7,7 @@ import { listThreads } from "@/lib/crm.functions";
 import { sendDirectMessage } from "@/lib/messaging.functions";
 import { listSessions } from "@/lib/sessions.functions";
 import { getOrgStats, syncWaSessions, syncThreads, syncContacts } from "@/lib/org.functions";
+import { listTags, createTag } from "@/lib/tags.functions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,9 +40,13 @@ export const Route = createFileRoute("/_authenticated/conversations")({
 
 function ConversationsLayout() {
   const fn = useServerFn(listThreads);
+  const listTagsFn = useServerFn(listTags);
+  const createTagFn = useServerFn(createTag);
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [filterTab, setFilterTab] = useState<"all" | "mine" | "unassigned">("all");
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagColor, setNewTagColor] = useState("#00a884");
 
   const { data, isLoading } = useQuery({
     queryKey: ["threads", filterTab],
@@ -50,6 +55,21 @@ function ConversationsLayout() {
   });
   const params = useParams({ strict: false }) as { threadId?: string };
   const activeId = params.threadId;
+
+  const { data: tagsData } = useQuery({
+    queryKey: ["conversationTags"],
+    queryFn: () => listTagsFn({}),
+  });
+
+  const createTagMut = useMutation({
+    mutationFn: (vars: { name: string; color: string }) => createTagFn({ data: vars }),
+    onSuccess: () => {
+      setNewTagName("");
+      qc.invalidateQueries({ queryKey: ["conversationTags"] });
+      toast.success("Etiqueta creada");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const threads = (data?.threads ?? []).filter((t) => {
     if (!q.trim()) return true;
@@ -66,6 +86,50 @@ function ConversationsLayout() {
         <div className="p-3 border-b flex items-center gap-2">
           <h1 className="font-semibold flex-1">Chats</h1>
           <NewChatDialog />
+        </div>
+        <div className="p-3 border-b space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs text-muted-foreground">Etiquetas globales para organizar tus conversaciones.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={newTagColor}
+                onChange={(e) => setNewTagColor(e.target.value)}
+                className="h-8 w-8 rounded border border-input p-0"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <Input
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              placeholder="Nombre de etiqueta"
+              className="h-9 text-xs"
+            />
+            <Button
+              size="sm"
+              disabled={!newTagName.trim() || createTagMut.isPending}
+              onClick={() => createTagMut.mutate({ name: newTagName.trim(), color: newTagColor })}
+            >
+              Crear
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(tagsData?.tags ?? []).map((tag: { id: string; name: string; color: string }) => (
+              <span
+                key={tag.id}
+                className="text-[10px] px-2 py-1 rounded-full border"
+                style={{ borderColor: tag.color, color: tag.color, backgroundColor: `${tag.color}20` }}
+              >
+                {tag.name}
+              </span>
+            ))}
+            {(tagsData?.tags ?? []).length === 0 && (
+              <span className="text-xs text-muted-foreground">No hay etiquetas creadas aún.</span>
+            )}
+          </div>
         </div>
         {/* DiagnosticsPanel oculto temporalmente */}
         {/* <DiagnosticsPanel /> */}
