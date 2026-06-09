@@ -272,13 +272,14 @@ export const sendMessage = createServerFn({ method: "POST" })
       throw new Error(`Error al guardar mensaje pendiente: ${insertErr.message}`);
     }
 
+    const commandType = payload.media ? "SEND_MEDIA" : "SEND_MESSAGE";
     const { data: cmd, error } = await (supabaseAdmin as any)
       .from("engine_commands")
       .insert({
         id: cmdId,
         org_id: orgId,
         session_id: thread.session_id,
-        type: "SEND_MESSAGE",
+        type: commandType,
         payload,
         status: "pending",
       })
