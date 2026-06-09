@@ -564,6 +564,16 @@ ACCIÓN REQUERIDA: Genera UNA respuesta corta y contextual que continúe la conv
       cfgFast.model = 'google/gemini-3-flash-preview'
     }
 
+    console.info('[ai-reply] starting', {
+      orgId,
+      threadId,
+      chatId,
+      provider,
+      model: cfgFast.model,
+      respond_to: cfgFast.respond_to,
+      hasVertexSecret: !!cfgFast.vertex_service_account_json,
+    })
+
     const { reply, actions } = await runAiAgent({
       orgId,
       threadId,
@@ -587,7 +597,14 @@ ACCIÓN REQUERIDA: Genera UNA respuesta corta y contextual que continúe la conv
       status: 'pending',
     })
   } catch (err) {
-    console.error('[ai-reply] error', err)
+    console.error('[ai-reply] error', err, {
+      orgId,
+      threadId,
+      chatId,
+      provider: cfg?.provider,
+      model: cfg?.model,
+      selected_provider: cfg?.selected_provider,
+    })
   }
 }
 

@@ -325,15 +325,12 @@ export async function callVertexAI(opts: {
   const url = `https://${opts.location}-aiplatform.googleapis.com/v1/projects/${opts.project}/locations/${opts.location}/publishers/google/models/${opts.model}:generateContent`;
 
   const systemMsg = opts.messages.find((m) => m.role === "system");
-  const content = opts.messages
-    .filter((m) => m.role !== "system")
-    .map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+  const content = opts.messages.map((m) => ({
+    role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user",
+    parts: [{ text: m.content }],
+  }));
 
   const body: any = { content };
-  if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
   if (opts.tools?.length) {
     body.tools = [{ functionDeclarations: openAIToolsToVertex(opts.tools) }];
   }
