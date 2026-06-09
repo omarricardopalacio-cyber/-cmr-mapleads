@@ -147,6 +147,45 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       }
       return {};
     }
+    case "send_product": {
+      const waId = await getContactWaId();
+      if (!waId || !sd.product_id) return {};
+
+      const { data: product } = await supabaseAdmin
+        .from("products")
+        .select("id, name, description, price, image_url, video_url, sku")
+        .eq("id", sd.product_id)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (!product) return {};
+
+      const captionParts = [
+        product.name,
+        product.description,
+        product.sku ? `SKU: ${product.sku}` : null,
+        product.price != null ? `Precio: $${product.price}` : null,
+      ].filter(Boolean);
+      const caption = captionParts.join("\n");
+      const mediaUrl = product.video_url || product.image_url;
+
+      if (mediaUrl) {
+        await supabaseAdmin.from("engine_commands").insert({
+          org_id: orgId,
+          type: "send_media",
+          payload: { chatId: waId, mediaUrl, caption },
+          status: "pending"
+        });
+      } else if (caption) {
+        await supabaseAdmin.from("engine_commands").insert({
+          org_id: orgId,
+          type: "send_message",
+          payload: { chatId: waId, text: caption },
+          status: "pending"
+        });
+      }
+      return {};
+    }
     // ---- TIEMPO ----
     case "wait": {
       const ms = waitMs(sd.amount || 1, sd.unit || "minutes");
