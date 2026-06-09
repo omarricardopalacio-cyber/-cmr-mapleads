@@ -188,7 +188,8 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
 
   switch (step.step_type) {
     // ---- COMUNICACIÓN ----
-    case "send_text": {
+    case "send_text":
+    case "send_message": {
       const waId = await getContactWaId();
       if (waId && sd.text) {
         await enqueueCommand("send_message", { chatId: waId, text: sd.text });
@@ -198,7 +199,8 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "send_image":
     case "send_video":
     case "send_document":
-    case "send_catalog": {
+    case "send_catalog":
+    case "send_media": {
       const waId = await getContactWaId();
       if (waId && sd.media_url) {
         await enqueueCommand("send_media", {
@@ -347,20 +349,12 @@ async function calculateNextStep(flowId: string, currentStep: any, branch?: stri
       .order("step_order", { ascending: true })
       .limit(1)
       .maybeSingle();
-      
+
     if (child) return child.id;
   }
-  
+
   // 2. Si no hay hijo por rama o no era un nodo con rama, buscar el siguiente hermano en la secuencia
-  const { data: sibling } = await supabaseAdmin
-    .from("flow_steps")
-    .select("id")
-    .eq("flow_id", flowId)
-    .gt("step_order", currentStep.step_order)
-    .is("parent_step_id", currentStep.parent_step_id === null ? null : currentStep.parent_step_id) // null requires .is(), but we can do a raw match or handle both
-    // Unfortunately, if parent_step_id is null, eq won't work in supabase.
-    // So we need to handle it properly.
-    
+  const parentStepId = currentStep.parent_step_id ?? null;
   let query = supabaseAdmin
     .from("flow_steps")
     .select("id")
@@ -368,28 +362,28 @@ async function calculateNextStep(flowId: string, currentStep: any, branch?: stri
     .gt("step_order", currentStep.step_order)
     .order("step_order", { ascending: true })
     .limit(1);
-    
-  if (currentStep.parent_step_id === null) {
+
+  if (parentStepId === null) {
     query = query.is("parent_step_id", null);
   } else {
-    query = query.eq("parent_step_id", currentStep.parent_step_id);
+    query = query.eq("parent_step_id", parentStepId);
   }
-  
+
   const { data: nextSibling } = await query.maybeSingle();
   if (nextSibling) return nextSibling.id;
-  
+
   // 3. Si terminamos esta rama (hijos agotados), volver al nivel padre y buscar el siguiente paso del padre
-  if (currentStep.parent_step_id) {
+  if (parentStepId !== null) {
     const { data: parent } = await supabaseAdmin
       .from("flow_steps")
       .select("id, step_order, parent_step_id")
-      .eq("id", currentStep.parent_step_id)
+      .eq("id", parentStepId)
       .single();
     if (parent) {
       return calculateNextStep(flowId, parent, undefined); // Recursión hacia arriba
     }
   }
-  
+
   // 4. Si estamos en el top level y no hay más hermanos
   return null;
 }
