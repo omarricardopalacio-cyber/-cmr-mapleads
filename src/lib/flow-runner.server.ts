@@ -114,8 +114,61 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
   };
   
   const getThreadId = async () => {
-    const { data } = await supabaseAdmin.from("threads").select("id").eq("contact_id", contactId).limit(1).maybeSingle();
+    const { data } = await supabaseAdmin
+      .from("threads")
+      .select("id")
+      .eq("contact_id", contactId)
+      .eq("org_id", orgId)
+      .order("last_message_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
     return data?.id;
+  };
+
+  const getSessionId = async () => {
+    const { data: thread } = await supabaseAdmin
+      .from("threads")
+      .select("session_id")
+      .eq("contact_id", contactId)
+      .eq("org_id", orgId)
+      .order("last_message_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (thread?.session_id) return thread.session_id;
+
+    const { data: connectedSession } = await supabaseAdmin
+      .from("wa_sessions")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("status", "connected")
+      .order("last_heartbeat_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (connectedSession?.id) return connectedSession.id;
+
+    const { data: anySession } = await supabaseAdmin
+      .from("wa_sessions")
+      .select("id")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return anySession?.id ?? null;
+  };
+
+  const enqueueCommand = async (type: string, payload: Record<string, unknown>) => {
+    const sessionId = await getSessionId();
+    if (!sessionId) {
+      console.warn(`[flow-runner] No WhatsApp session available for org=${orgId} contact=${contactId}`);
+      return;
+    }
+    await supabaseAdmin.from("engine_commands").insert({
+      org_id: orgId,
+      session_id: sessionId,
+      type,
+      payload,
+      status: "pending",
+    });
   };
 
   switch (step.step_type) {
@@ -123,12 +176,7 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "send_text": {
       const waId = await getContactWaId();
       if (waId && sd.text) {
-        await supabaseAdmin.from("engine_commands").insert({
-          org_id: orgId,
-          type: "send_message",
-          payload: { chatId: waId, text: sd.text },
-          status: "pending"
-        });
+        await enqueueCommand("send_message", { chatId: waId, text: sd.text });
       }
       return {};
     }
@@ -138,11 +186,11 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "send_catalog": {
       const waId = await getContactWaId();
       if (waId && sd.media_url) {
-        await supabaseAdmin.from("engine_commands").insert({
-          org_id: orgId,
-          type: "send_media",
-          payload: { chatId: waId, mediaUrl: sd.media_url, caption: sd.caption, mimeType: sd.mime_type },
-          status: "pending"
+        await enqueueCommand("send_media", {
+          chatId: waId,
+          mediaUrl: sd.media_url,
+          caption: sd.caption,
+          mimeType: sd.mime_type,
         });
       }
       return {};
@@ -170,19 +218,9 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       const mediaUrl = product.video_url || product.image_url;
 
       if (mediaUrl) {
-        await supabaseAdmin.from("engine_commands").insert({
-          org_id: orgId,
-          type: "send_media",
-          payload: { chatId: waId, mediaUrl, caption },
-          status: "pending"
-        });
+        await enqueueCommand("send_media", { chatId: waId, mediaUrl, caption });
       } else if (caption) {
-        await supabaseAdmin.from("engine_commands").insert({
-          org_id: orgId,
-          type: "send_message",
-          payload: { chatId: waId, text: caption },
-          status: "pending"
-        });
+        await enqueueCommand("send_message", { chatId: waId, text: caption });
       }
       return {};
     }
