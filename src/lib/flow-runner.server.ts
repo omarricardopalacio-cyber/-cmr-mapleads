@@ -203,11 +203,26 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "send_media": {
       const waId = await getContactWaId();
       if (waId && sd.media_url) {
+        console.log('[flow-runner] enqueuing send_media command', {
+          sessionId,
+          stepId: step.id,
+          chatId: waId,
+          mediaUrl: sd.media_url,
+          mimeType: sd.mime_type,
+          caption: sd.caption,
+        });
         await enqueueCommand("send_media", {
           chatId: waId,
           mediaUrl: sd.media_url,
           caption: sd.caption,
           mimeType: sd.mime_type,
+        });
+      } else {
+        console.warn('[flow-runner] send_media step missing media_url or waId', {
+          sessionId,
+          stepId: step.id,
+          waId,
+          media_url: sd.media_url,
         });
       }
       return {};

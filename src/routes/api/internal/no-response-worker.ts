@@ -185,6 +185,16 @@ async function runNoResponseWorker(): Promise<{ fired: number; skipped: number }
           const scheduleAt = new Date(Date.now() + delayAccum * 1000).toISOString()
 
           if (step.media_url) {
+            console.log('[no-response-worker] enqueuing scheduled send_media command', {
+              orgId,
+              sessionId,
+              chatId,
+              scheduleAt,
+              mediaUrl: step.media_url,
+              mimeType: step.mime_type,
+              caption: step.text_content,
+              stepId: step.id,
+            });
             await supabaseAdmin.from('engine_commands').insert({
               org_id: orgId,
               session_id: sessionId,
@@ -199,6 +209,14 @@ async function runNoResponseWorker(): Promise<{ fired: number; skipped: number }
               scheduled_for: scheduleAt,
             })
           } else if (step.text_content) {
+            console.log('[no-response-worker] enqueuing scheduled send_message command', {
+              orgId,
+              sessionId,
+              chatId,
+              scheduleAt,
+              text: step.text_content,
+              stepId: step.id,
+            });
             await supabaseAdmin.from('engine_commands').insert({
               org_id: orgId,
               session_id: sessionId,

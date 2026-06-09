@@ -89,8 +89,8 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           ping: 'PING',
         };
 
-        // Resolve media before delivery so the extension receives inline data only for
-        // non-http storage paths; public URLs pueden enviarse directamente desde WhatsApp.
+        // Resolve media before delivery so the extension receives inline data when possible.
+        // This avoids browser/CORS issues and makes WhatsApp send more reliable.
         commands = await Promise.all(
           commands.map(async (c) => {
             const normalizedType = typeof c.type === 'string' ? commandTypeMap[c.type] ?? c.type.toUpperCase() : c.type;
@@ -101,22 +101,37 @@ export const Route = createFileRoute('/api/public/engine/commands')({
                 return { ...c, type: normalizedType };
               }
 
-              if (!mediaUrl.startsWith('http')) {
-                try {
+              try {
+                let dataUri: string | null = null;
+
+                if (!mediaUrl.startsWith('http')) {
                   const { data: signed } = await supabaseAdmin.storage
                     .from('auto-reply-media')
                     .createSignedUrl(mediaUrl, 3600);
                   if (signed?.signedUrl) {
-                    const dataUri = await toDataUriFromUrl(signed.signedUrl, p.mimeType || p.mime_type);
-                    return {
-                      ...c,
-                      type: normalizedType,
-                      payload: { ...p, media: dataUri, mediaUrl: dataUri, mimeType: p.mimeType || p.mime_type },
-                    };
+                    dataUri = await toDataUriFromUrl(signed.signedUrl, p.mimeType || p.mime_type);
                   }
-                } catch (err) {
-                  console.error('[commands] error signing/fetching url:', err);
+                } else {
+                  dataUri = await toDataUriFromUrl(mediaUrl, p.mimeType || p.mime_type);
                 }
+
+                if (dataUri) {
+                  console.log('[commands] resolved mediaUrl to inline data URI for command', c.id || '(unknown)', { type: normalizedType, mediaUrl });
+                  return {
+                    ...c,
+                    type: normalizedType,
+                    payload: {
+                      ...p,
+                      media: dataUri,
+                      mediaUrl: dataUri,
+                      mimeType: p.mimeType || p.mime_type,
+                    },
+                  };
+                }
+
+                console.warn('[commands] unable to resolve mediaUrl to inline data URI, leaving url as-is', { commandId: c.id || '(unknown)', type: normalizedType, mediaUrl });
+              } catch (err) {
+                console.error('[commands] error resolving mediaUrl to inline data URI:', err, { commandId: c.id || '(unknown)', type: normalizedType, mediaUrl });
               }
             }
 

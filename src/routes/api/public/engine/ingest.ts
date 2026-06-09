@@ -337,6 +337,13 @@ async function maybeAutoReply(
         }
 
         if (step.media_url) {
+          console.log('[auto-reply] enqueuing send_media command', {
+            chatId,
+            mediaUrl: step.media_url,
+            mimeType: step.mime_type,
+            caption: step.text_content,
+            stepId: step.id,
+          });
           await supabaseAdmin.from('engine_commands').insert({
             org_id: orgId,
             session_id: sessionId,
@@ -345,6 +352,7 @@ async function maybeAutoReply(
             status: 'pending',
           });
         } else if (step.text_content) {
+          console.log('[auto-reply] enqueuing send_message command', { chatId, text: step.text_content, stepId: step.id });
           await supabaseAdmin.from('engine_commands').insert({
             org_id: orgId,
             session_id: sessionId,
@@ -352,6 +360,8 @@ async function maybeAutoReply(
             payload: { chatId, text: step.text_content },
             status: 'pending',
           });
+        } else {
+          console.warn('[auto-reply] auto-reply step has no media_url or text_content', { stepId: step.id, step });
         }
       }
     }
