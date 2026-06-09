@@ -20,6 +20,11 @@ export async function resolveCommandMedia(payload: Record<string, unknown>): Pro
     });
 
     if (inline.startsWith("data:")) {
+      const lowerMime = mimeType?.toLowerCase() || "";
+      if (lowerMime.includes("html") || lowerMime.includes("text/")) {
+        console.warn("[command-media] Rejecting inline text/html data URI as invalid media", { mimeType, prefix: inline.substring(0, 80) });
+        return {};
+      }
       return { dataUri: inline, mimeType };
     }
 
@@ -32,16 +37,20 @@ export async function resolveCommandMedia(payload: Record<string, unknown>): Pro
         const response = await fetch(inline);
         if (!response.ok) {
           console.warn("[command-media] media URL fetch failed:", response.status, inline);
-          return { dataUri: inline, mimeType };
+          return {};
+        }
+        const resolvedMime = response.headers.get("content-type") || mimeType;
+        if (resolvedMime?.startsWith("text/") || resolvedMime?.includes("html")) {
+          console.warn("[command-media] Rejecting URL with non-media content-type", { resolvedMime, url: inline });
+          return {};
         }
         const blob = await response.blob();
         const dataUri = await blobToDataUri(blob);
-        const resolvedMime = response.headers.get("content-type") || mimeType;
         console.log("[command-media] fetched inline media URL successfully", { url: inline, resolvedMime });
         return { dataUri, mimeType: resolvedMime };
       } catch (err: any) {
         console.warn("[command-media] Error fetching direct media URL:", err?.message || err, inline);
-        return { dataUri: inline, mimeType };
+        return {};
       }
     }
 

@@ -4,10 +4,13 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server'
 async function toDataUriFromUrl(url: string, fallbackMime?: string) {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Failed to fetch media (${res.status})`)
+  const contentType = res.headers.get('content-type') || fallbackMime || 'application/octet-stream'
+  if (contentType.startsWith('text/') || contentType.includes('html')) {
+    throw new Error(`Invalid media content type: ${contentType}`)
+  }
   const arrayBuffer = await res.arrayBuffer()
   const base64 = Buffer.from(arrayBuffer).toString('base64')
-  const mimeType = res.headers.get('content-type') || fallbackMime || 'application/octet-stream'
-  return `data:${mimeType};base64,${base64}`
+  return `data:${contentType};base64,${base64}`
 }
 
 const CORS = {
