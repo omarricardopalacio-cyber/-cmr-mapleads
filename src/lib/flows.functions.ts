@@ -4,6 +4,9 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
+import { TRIGGERS } from "@/lib/flow-blocks";
+
+const FLOW_TRIGGER_TYPES = TRIGGERS.map((trigger) => trigger.id);
 
 // CRUD Flows
 export const listFlows = createServerFn({ method: "GET" })
@@ -51,7 +54,9 @@ export const upsertFlow = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({
     id: z.string().uuid().optional(),
     name: z.string().min(1),
-    trigger_type: z.string(),
+    trigger_type: z.string().refine((value) => FLOW_TRIGGER_TYPES.includes(value), {
+      message: `trigger_type must be one of: ${FLOW_TRIGGER_TYPES.join(", ")}`,
+    }),
     trigger_value: z.string().nullable().optional(),
     description: z.string().nullable().optional(),
     is_active: z.boolean().optional().default(false),
