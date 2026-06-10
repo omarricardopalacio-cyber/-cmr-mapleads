@@ -1118,9 +1118,12 @@ REGLAS GENERALES:
               .map((p: any, i: number) => `${i + 1}. ${p.name} — $${p.price ?? ""} (id: ${p.id})`)
               .join('\n');
             if (ids.length > 0) {
+              const calls = top
+                .map((p: any) => `- send_product_image(product_id="${p.id}", caption="${p.name} — $${p.price ?? ""}")`)
+                .join('\n');
               msgs.push({
                 role: "system",
-                content: `Se encontraron ${productsFromTool.length} productos. Por favor, ahora envía las imágenes de los tres mejores productos en este orden usando send_product_image con los siguientes product_id: ${ids.join(", ")}. Usa captions exactamente como en la lista:\n${listText}\nPrioriza enviar estas imágenes primero. Si necesitas aclarar algo o cerrar la respuesta después de enviarlas, puedes hacerlo con un breve texto adicional.`,
+                content: `Resultados de catálogo listos (${productsFromTool.length}). EN ESTE MISMO TURNO, emite ${top.length} llamadas tool_calls en paralelo, UNA por producto, exactamente como sigue:\n${calls}\n\nNO envíes texto adicional en este mismo turno. Después de que las imágenes se entreguen, en el SIGUIENTE turno emite un mensaje corto de cierre OBLIGATORIO invitando al cliente a elegir (por ejemplo: "¿Cuál te llama la atención?" o "¿Quieres más detalles de alguno?"). Nunca dejes la conversación solo con imágenes — el mensaje de cierre en el turno siguiente es obligatorio. Si el cliente muestra interés en comprar, ofrece preguntar "¿Deseas agendar tu pedido?" para pasar a la recolección de datos.`,
               });
             }
           }
