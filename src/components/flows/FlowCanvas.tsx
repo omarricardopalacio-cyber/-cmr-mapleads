@@ -79,10 +79,10 @@ export function FlowCanvas({
   ];
 
   return (
-    <div className="flex flex-col items-center max-w-2xl mx-auto py-8 px-4">
+    <div className="flex flex-col items-center max-w-2xl mx-auto py-8 px-4 h-full overflow-hidden">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={steps.map(s => s.id)} strategy={verticalListSortingStrategy}>
-          <div className="w-full space-y-4">
+          <div className="w-full flex-1 overflow-y-auto space-y-4">
             {steps.length === 0 ? (
               <div className="text-center p-8 border border-dashed rounded-xl bg-muted/10">
                 <p className="text-muted-foreground mb-4">El flujo está vacío</p>
