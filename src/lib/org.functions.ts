@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getTemplateOrgId } from "@/lib/org-helpers";
 
 /**
  * Garantiza que el usuario actual tenga una organización (rol owner).
@@ -25,6 +26,25 @@ export const ensureOrg = createServerFn({ method: "POST" })
         .eq("id", existing.org_id)
         .single();
       return { orgId: existing.org_id, role: existing.role, name: org?.name ?? "" };
+    }
+
+    const templateOrgId = await getTemplateOrgId();
+    if (templateOrgId) {
+      const { data: org, error: orgErr } = await supabaseAdmin
+        .from("organizations")
+        .select("id, name")
+        .eq("id", templateOrgId)
+        .single();
+      if (orgErr || !org) throw new Error(orgErr?.message ?? "Failed to load template org");
+
+      const { error: roleErr } = await supabaseAdmin
+        .from("user_roles")
+        .insert({ user_id: userId, org_id: templateOrgId, role: "admin" })
+        .onConflict("user_id,org_id,role")
+        .ignore();
+      if (roleErr) throw new Error(roleErr.message);
+
+      return { orgId: templateOrgId, role: "admin" as const, name: org.name };
     }
 
     const { data: profile } = await supabaseAdmin

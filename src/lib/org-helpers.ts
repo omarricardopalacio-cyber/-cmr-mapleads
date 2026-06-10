@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
+const TEMPLATE_USER_EMAIL = "omarricardopalacio@gmail.com";
+
 export async function getUserOrg(userId: string): Promise<string | null> {
   const { data } = await supabaseAdmin
     .from("user_roles")
@@ -8,6 +10,30 @@ export async function getUserOrg(userId: string): Promise<string | null> {
     .limit(1)
     .maybeSingle();
   return data?.org_id ?? null;
+}
+
+export async function getTemplateOrgId(): Promise<string | null> {
+  const authUsersTable = "auth.users" as const;
+  const { data: templateUser } = await supabaseAdmin
+    .from(authUsersTable)
+    .select("id")
+    .eq("email", TEMPLATE_USER_EMAIL)
+    .limit(1)
+    .maybeSingle();
+
+  if (!templateUser?.id) {
+    return null;
+  }
+
+  const { data: templateRole } = await supabaseAdmin
+    .from("user_roles")
+    .select("org_id")
+    .eq("user_id", templateUser.id)
+    .in("role", ["owner", "admin"])
+    .limit(1)
+    .maybeSingle();
+
+  return templateRole?.org_id ?? null;
 }
 
 async function fetchOrphanIds(table: "wa_sessions" | "threads" | "contacts", orgId: string): Promise<string[]> {
@@ -55,6 +81,24 @@ async function syncOrphanDataToOrg(userId: string, orgId: string) {
 export async function ensureUserOrg(userId: string): Promise<string> {
   let orgId = await getUserOrg(userId);
   if (orgId) return orgId;
+
+  const templateOrgId = await getTemplateOrgId();
+  if (templateOrgId) {
+    const { error: roleError } = await supabaseAdmin
+      .from("user_roles")
+      .insert({ user_id: userId, org_id: templateOrgId, role: "admin" })
+      .onConflict("user_id,org_id,role")
+      .ignore();
+
+    if (roleError) {
+      console.error(`[AUTO-HEAL ERROR] No se pudo asignar rol admin en org template para ${userId}:`, roleError.message);
+      throw new Error("No se pudo asignar rol en la org compartida");
+    }
+
+    await syncOrphanDataToOrg(userId, templateOrgId);
+    console.log(`[AUTO-HEAL] Usuario ${userId} unido a la org de omarricardopalacio@gmail.com: ${templateOrgId}`);
+    return templateOrgId;
+  }
 
   console.log(`[AUTO-HEAL] Usuario ${userId} sin org. Creando org por defecto...`);
 
