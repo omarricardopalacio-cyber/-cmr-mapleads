@@ -5,7 +5,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
 import { TRIGGERS } from "@/lib/flow-blocks";
-import { processRun } from "@/lib/flow-runner.server";
+import { processRunUntilWaitOrCompleted } from "@/lib/flow-runner.server";
 
 const FLOW_TRIGGER_TYPES = TRIGGERS.map((trigger) => trigger.id);
 
@@ -224,35 +224,66 @@ export const upsertSteps = createServerFn({ method: "POST" })
       .eq("flow_id", data.flowId);
       
     if (data.steps.length > 0) {
-      const inserts = data.steps.map((s) => {
-        const row: any = {
-          flow_id: data.flowId,
-          step_type: s.step_type,
-          step_order: s.step_order,
-          step_data: s.step_data ?? {},
-          parent_step_id: s.parent_step_id || null,
-          branch: s.branch || null,
-        };
+      const pendingSteps = [...data.steps];
+      const idMap = new Map<string, string>();
+      let progress = true;
 
-        if (s.id && !String(s.id).startsWith("temp-")) {
-          row.id = s.id;
+      while (pendingSteps.length > 0 && progress) {
+        progress = false;
+
+        for (let i = pendingSteps.length - 1; i >= 0; i -= 1) {
+          const step = pendingSteps[i];
+          const hasTempParent = step.parent_step_id && String(step.parent_step_id).startsWith("temp-");
+
+          if (hasTempParent && !idMap.has(step.parent_step_id as string)) {
+            continue;
+          }
+
+          const row: any = {
+            flow_id: data.flowId,
+            step_type: step.step_type,
+            step_order: step.step_order,
+            step_data: step.step_data ?? {},
+            parent_step_id: null,
+            branch: step.branch || null,
+          };
+
+          if (step.id && !String(step.id).startsWith("temp-")) {
+            row.id = step.id;
+          }
+
+          if (step.parent_step_id) {
+            if (String(step.parent_step_id).startsWith("temp-")) {
+              row.parent_step_id = idMap.get(step.parent_step_id as string) || null;
+            } else {
+              row.parent_step_id = step.parent_step_id;
+            }
+          }
+
+          if (row.id == null) {
+            delete row.id;
+          }
+
+          const { data: insertedRow, error } = await supabaseAdmin
+            .from("flow_steps")
+            .insert(row)
+            .select()
+            .single();
+
+          if (error) throw new Error(error.message);
+
+          if (step.id && String(step.id).startsWith("temp-")) {
+            idMap.set(step.id, insertedRow.id);
+          }
+
+          pendingSteps.splice(i, 1);
+          progress = true;
         }
+      }
 
-        if (row.id == null) {
-          delete row.id;
-        }
-
-        if (row.parent_step_id && String(row.parent_step_id).startsWith("temp-")) {
-          row.parent_step_id = null;
-        }
-
-        return row;
-      });
-      
-      const { error } = await supabaseAdmin
-        .from("flow_steps")
-        .insert(inserts);
-      if (error) throw new Error(error.message);
+      if (pendingSteps.length > 0) {
+        throw new Error("No se pudieron guardar todos los pasos del flujo debido a referencias inválidas de padre.");
+      }
     }
     
     return { success: true };
@@ -345,19 +376,7 @@ export const runFlowManually = createServerFn({ method: "POST" })
 
       if (error) throw new Error(error.message);
       if (run) {
-        await processRun(run);
-        let currentRun = run;
-        for (let i = 0; i < 50; i++) {
-          const { data: refreshedRun, error: refreshError } = await supabaseAdmin
-            .from("flow_runs")
-            .select("id, flow_id, status, current_step_id, contact_id, org_id, next_execution_at, last_interaction_at")
-            .eq("id", currentRun.id)
-            .single();
-          if (refreshError || !refreshedRun) break;
-          if (["wait_node", "completed", "paused"].includes(refreshedRun.status)) break;
-          currentRun = refreshedRun;
-          await processRun(currentRun);
-        }
+        await processRunUntilWaitOrCompleted(run);
       }
       return { run };
     }
@@ -377,19 +396,7 @@ export const runFlowManually = createServerFn({ method: "POST" })
       
     if (error) throw new Error(error.message);
     if (run) {
-      await processRun(run);
-      let currentRun = run;
-      for (let i = 0; i < 50; i++) {
-        const { data: refreshedRun, error: refreshError } = await supabaseAdmin
-          .from("flow_runs")
-          .select("id, flow_id, status, current_step_id, contact_id, org_id, next_execution_at, last_interaction_at")
-          .eq("id", currentRun.id)
-          .single();
-        if (refreshError || !refreshedRun) break;
-        if (["wait_node", "completed", "paused"].includes(refreshedRun.status)) break;
-        currentRun = refreshedRun;
-        await processRun(currentRun);
-      }
+      await processRunUntilWaitOrCompleted(run);
     }
     return { run };
   });

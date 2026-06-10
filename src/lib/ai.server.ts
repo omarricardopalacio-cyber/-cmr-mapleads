@@ -539,23 +539,6 @@ async function queueOutgoingMedia(
     }
   }
 
-  const { data: existingMessages, error: existingError } = await (supabaseAdmin as any)
-    .from("messages")
-    .select("id")
-    .eq("org_id", ctx.orgId)
-    .eq("thread_id", ctx.threadId)
-    .eq("direction", "out")
-    .eq("media->>url", finalUrl)
-    .limit(1);
-
-  if (existingError) {
-    console.warn(`[ai.queueOutgoingMedia] Error comprobando mensajes duplicados: ${existingError.message}`);
-  }
-
-  if (existingMessages?.length) {
-    return `${kind === "video" ? "Video" : "Imagen"} ya fue enviado recientemente; no se duplicó el envío.`;
-  }
-
   const payload: Record<string, unknown> = {
     chatId: ctx.chatId,
     mediaUrl: finalUrl,
@@ -679,45 +662,29 @@ export async function executeToolCall(
     if (result) {
       // Parsing failed, no insert attempt.
     } else {
-      const { data: existingOrders, error: existingError } = await (supabaseAdmin as any)
+      const { data: inserted, error: insertError } = await (supabaseAdmin as any)
         .from("orders")
+        .insert({
+          org_id: orgId,
+          contact_id: contactId ?? null,
+          thread_id: threadId,
+          status: "confirmed",
+          form_data: formData,
+        })
         .select("id")
-        .eq("org_id", orgId)
-        .eq("thread_id", threadId)
-        .eq("status", "confirmed")
-        .limit(1);
+        .single();
 
-      if (existingError) {
-        result = `Error comprobando pedidos existentes: ${existingError.message}`;
-        details = `orders select failed: ${existingError.message}`;
-      } else if (existingOrders?.length) {
-        result = "Pedido ya está registrado. No se creó un duplicado.";
-        details = "Confirm_order omitido porque ya existe un pedido confirmado en este hilo.";
+      if (insertError) {
+        result = `Error guardando el pedido: ${insertError.message}`;
+        details = `orders insert failed: ${insertError.message}`;
       } else {
-        const { data: inserted, error: insertError } = await (supabaseAdmin as any)
-          .from("orders")
-          .insert({
-            org_id: orgId,
-            contact_id: contactId ?? null,
-            thread_id: threadId,
-            status: "confirmed",
-            form_data: formData,
-          })
-          .select("id")
-          .single();
-
-        if (insertError) {
-          result = `Error guardando el pedido: ${insertError.message}`;
-          details = `orders insert failed: ${insertError.message}`;
-        } else {
-          await (supabaseAdmin as any)
-            .from("threads")
-            .update({ purchase_intent: "compro" })
-            .eq("id", threadId)
-            .eq("org_id", orgId);
-          result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
-          details = `Pedido guardado con datos: ${JSON.stringify(formData)}`;
-        }
+        await (supabaseAdmin as any)
+          .from("threads")
+          .update({ purchase_intent: "compro" })
+          .eq("id", threadId)
+          .eq("org_id", orgId);
+        result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+        details = `Pedido guardado con datos: ${JSON.stringify(formData)}`;
       }
     }
   } else if (name === "search_products") {
@@ -934,29 +901,8 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
     return stableStringify(rawArgs);
   };
 
-  const normalizeToolCallArguments = (tc: { function: { name: string; arguments: string | Record<string, unknown> } }) => {
-    if (tc.function.name === "send_product_image" || tc.function.name === "send_product_video") {
-      let parsedArgs: unknown = tc.function.arguments;
-      if (typeof tc.function.arguments === "string") {
-        try {
-          parsedArgs = JSON.parse(tc.function.arguments);
-        } catch {
-          parsedArgs = tc.function.arguments;
-        }
-      }
-
-      if (parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)) {
-        const productId = (parsedArgs as Record<string, unknown>).product_id;
-        const productReference = (parsedArgs as Record<string, unknown>).product_reference;
-        return normalizeToolArgs({ product_id: productId, product_reference: productReference });
-      }
-    }
-
-    return normalizeToolArgs(tc.function.arguments);
-  };
-
   const toolCallSignature = (tc: { function: { name: string; arguments: string | Record<string, unknown> } }) =>
-    `${tc.function.name}:${normalizeToolCallArguments(tc)}`;
+    `${tc.function.name}:${normalizeToolArgs(tc.function.arguments)}`;
 
   const isOrderClaimWithoutConfirmation = (replyText: string) => {
     const lower = String(replyText).toLowerCase();

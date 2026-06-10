@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getFlow, upsertFlow, listFlowSteps, upsertSteps, runFlowManually, listContactsLite } from "@/lib/flows.functions";
+import { STEPS } from "@/lib/flow-blocks";
 import { FlowCanvas } from "./FlowCanvas";
 import { TriggerSelector } from "./TriggerSelector";
 import { StepConfigPanel } from "./StepConfigPanel";
@@ -117,10 +118,6 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
               delete normalizedStep.id;
             }
 
-            if (normalizedStep.parent_step_id && String(normalizedStep.parent_step_id).startsWith("temp-")) {
-              delete normalizedStep.parent_step_id;
-            }
-
             return normalizedStep;
           })
         }
@@ -139,6 +136,26 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
   };
 
   const selectedStep = steps.find(s => s.id === selectedStepId);
+  const branchSteps = selectedStepId ? steps.filter((s) => s.parent_step_id === selectedStepId) : [];
+
+  const addStepToBranch = (stepType: string, branch: "yes" | "no") => {
+    if (!selectedStepId) return;
+    const def = STEPS.find((s) => s.id === stepType);
+    if (!def) return;
+
+    const newId = `temp-${Date.now()}-${branch}`;
+    const newStep = {
+      id: newId,
+      step_type: stepType,
+      step_order: steps.length + 1,
+      step_data: { ...def.defaultConfig },
+      parent_step_id: selectedStepId,
+      branch,
+    };
+
+    setSteps([...steps, newStep]);
+    setSelectedStepId(newId);
+  };
 
   const handleRunManual = async () => {
     if (!selectedContactId) {
@@ -270,13 +287,43 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
               </TabsList>
             </div>
 
-            <TabsContent value="editor" className="flex-1 overflow-y-auto m-0 outline-none">
-              <FlowCanvas 
-                steps={steps} 
-                onStepsChange={setSteps} 
-                selectedStepId={selectedStepId}
-                onSelectStep={setSelectedStepId}
-              />
+            <TabsContent value="editor" className="flex-1 overflow-hidden m-0 outline-none">
+              <div className="flex h-full overflow-hidden">
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <FlowCanvas 
+                    steps={steps} 
+                    onStepsChange={setSteps} 
+                    selectedStepId={selectedStepId}
+                    onSelectStep={setSelectedStepId}
+                  />
+                </div>
+                <aside className="w-80 border-l bg-background shrink-0 hidden lg:flex flex-col overflow-hidden">
+                  <div className="border-b px-4 py-3">
+                    <div className="text-sm font-semibold">Pasos del flujo</div>
+                    <div className="text-xs text-muted-foreground">Selecciona un paso para verlo y desplazarte fácilmente.</div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    {steps.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">No hay pasos aún. Añade un paso para comenzar.</div>
+                    ) : (
+                      steps.map((step) => {
+                        const stepMeta = STEPS.find((item) => item.id === step.step_type);
+                        return (
+                          <button
+                            key={step.id}
+                            type="button"
+                            className={`w-full text-left rounded-xl border px-3 py-3 transition ${selectedStepId === step.id ? "border-primary bg-primary/10" : "border-border hover:border-primary/70"}`}
+                            onClick={() => setSelectedStepId(step.id)}
+                          >
+                            <div className="text-sm font-medium">{stepMeta?.label || step.step_type}</div>
+                            <div className="text-xs text-muted-foreground">Paso #{step.step_order}</div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </aside>
+              </div>
             </TabsContent>
 
             {!isNew && (

@@ -17,10 +17,14 @@ import { searchCatalogProducts } from "@/lib/catalog.functions";
 
 export function StepConfigPanel({
   step,
+  branchSteps,
+  onAddBranchStep,
   onChange,
   onSave
 }: {
   step: any;
+  branchSteps?: any[];
+  onAddBranchStep?: (stepType: string, branch: "yes" | "no") => void;
   onChange: (updates: any) => void;
   onSave?: () => void;
 }) {
@@ -68,6 +72,28 @@ export function StepConfigPanel({
   const flows = flowsData?.flows ?? [];
   const products = productSearchData?.products ?? [];
   const selectedProduct = products.find((product) => product.id === data.product_id);
+
+  const isConditionalType = ["if_has_tag", "if_not_has_tag", "if_replied", "if_bought"].includes(type);
+  const branchActionOptions = [
+    { id: "add_tag", label: "Poner etiqueta" },
+    { id: "remove_tag", label: "Quitar etiqueta" },
+    { id: "goto_flow", label: "Ir a otro flujo" },
+    { id: "ai_enable", label: "Activar IA" },
+    { id: "ai_disable", label: "Desactivar IA" },
+    { id: "send_text", label: "Enviar mensaje" },
+    { id: "send_video", label: "Enviar video" },
+    { id: "send_image", label: "Enviar imagen" },
+    { id: "send_catalog", label: "Enviar catálogo" },
+    { id: "if_has_tag", label: "Condición: Tiene etiqueta" },
+    { id: "if_not_has_tag", label: "Condición: No tiene etiqueta" },
+    { id: "if_replied", label: "Condición: Respondió" },
+  ];
+  const branchYesSteps = (branchSteps ?? []).filter((s) => s.branch === "yes");
+  const branchNoSteps = (branchSteps ?? []).filter((s) => s.branch === "no");
+
+  const handleAddBranchStep = (stepType: string, branch: "yes" | "no") => {
+    onAddBranchStep?.(stepType, branch);
+  };
 
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -357,6 +383,53 @@ export function StepConfigPanel({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+        )}
+
+        {isConditionalType && (
+          <div className="space-y-4 border border-dashed border-border rounded-xl bg-muted/50 p-4">
+            <div className="space-y-2">
+              <div className="text-sm font-semibold">Acciones por rama</div>
+              <p className="text-xs text-muted-foreground">Agrega pasos que se ejecuten en la rama Sí o No según el resultado de esta condición.</p>
+            </div>
+
+            {(["yes", "no"] as const).map((branch) => (
+              <div key={branch} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                      Rama {branch === "yes" ? "Sí" : "No"}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {branchActionOptions.map((option) => (
+                    <Button
+                      key={`${branch}-${option.id}`}
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => handleAddBranchStep(option.id, branch)}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
+
+                {(branch === "yes" ? branchYesSteps : branchNoSteps).length > 0 ? (
+                  <div className="rounded-xl border bg-background p-3">
+                    <div className="text-xs font-semibold mb-2">Pasos en esta rama</div>
+                    <div className="space-y-2 text-xs text-muted-foreground">
+                      {(branch === "yes" ? branchYesSteps : branchNoSteps).map((child) => (
+                        <div key={child.id} className="rounded-md border px-3 py-2 bg-muted/10">
+                          {child.step_type} {child.step_data?.tag_id ? `- tag ${child.step_data.tag_id}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
           </div>
         )}
 

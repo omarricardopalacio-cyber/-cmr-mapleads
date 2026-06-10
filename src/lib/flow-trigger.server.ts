@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { processRunUntilWaitOrCompleted } from "./flow-runner.server";
 
 export async function triggerFlows(params: {
   orgId: string;
@@ -52,7 +53,7 @@ export async function triggerFlows(params: {
       if (!firstStep) continue;
 
       // Encolar el flujo
-      await supabaseAdmin
+      const { data: run, error: insertError } = await supabaseAdmin
         .from("flow_runs")
         .insert({
           org_id: orgId,
@@ -61,7 +62,22 @@ export async function triggerFlows(params: {
           current_step_id: firstStep.id,
           status: "active",
           next_execution_at: new Date().toISOString(),
-        });
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error("[flow-trigger] Failed to insert flow_run", insertError.message, { flowId: flow.id, contactId });
+        continue;
+      }
+
+      if (run) {
+        try {
+          await processRunUntilWaitOrCompleted(run);
+        } catch (err: any) {
+          console.error("[flow-trigger] Error processing newly triggered run", err.message, { runId: run.id });
+        }
+      }
     }
   } catch (err: any) {
     console.error(`[flow-trigger] Error triggering flow ${params.triggerType}:`, err.message);

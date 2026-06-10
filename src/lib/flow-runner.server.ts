@@ -18,6 +18,7 @@ export async function processDueRuns(limit = 100) {
     `)
     .in("status", ["active", "running", "wait_node"])
     .lte("next_execution_at", now)
+    .order("next_execution_at", { ascending: true })
     .limit(limit);
 
   if (error || !runs) {
@@ -27,7 +28,7 @@ export async function processDueRuns(limit = 100) {
 
   for (const run of runs) {
     try {
-      await processRun(run);
+      await processRunUntilWaitOrCompleted(run);
     } catch (err: any) {
       console.error(`[flow-runner] Error processing run ${run.id}:`, err);
       await supabaseAdmin
@@ -35,6 +36,37 @@ export async function processDueRuns(limit = 100) {
         .update({ status: "paused", error: err.message || "Unknown error" })
         .eq("id", run.id);
     }
+  }
+}
+
+export async function processRunUntilWaitOrCompleted(run: any, maxIterations = 50) {
+  let currentRun = run;
+  for (let i = 0; i < maxIterations; i++) {
+    if (["wait_node", "completed", "paused"].includes(currentRun.status)) {
+      break;
+    }
+
+    await processRun(currentRun);
+
+    const { data: refreshedRun, error } = await supabaseAdmin
+      .from("flow_runs")
+      .select("id, flow_id, status, current_step_id, contact_id, org_id, next_execution_at, last_interaction_at")
+      .eq("id", currentRun.id)
+      .single();
+
+    if (error || !refreshedRun) {
+      break;
+    }
+
+    if (["wait_node", "completed", "paused"].includes(refreshedRun.status)) {
+      break;
+    }
+
+    if (refreshedRun.current_step_id === currentRun.current_step_id && refreshedRun.status === currentRun.status) {
+      break;
+    }
+
+    currentRun = refreshedRun;
   }
 }
 
