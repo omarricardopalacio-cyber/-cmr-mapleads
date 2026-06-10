@@ -877,7 +877,12 @@ export async function executeToolCall(
             details = result;
           } else {
             const caption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
-            result = await queueOutgoingMedia(ctx, kind, url, caption);
+            await queueOutgoingMedia(ctx, kind, url, caption);
+            // Enriquecer el resultado con contexto útil para el modelo
+            const hasVideo = !!p.video_url;
+            const hasImage = !!p.image_url;
+            const videoNote = kind === "image" && hasVideo ? ` [Este producto TIENE video disponible — si el cliente lo pide, usa send_product_video con product_id="${p.id}"]` : "";
+            result = `${kind === "video" ? "Video" : "Imagen"} enviado al cliente. Producto: "${p.name}" (id: ${p.id})${videoNote}`;
             details = `${name}: ${p.id} (${p.name}) a ${chatId}`;
           }
         }
@@ -972,8 +977,15 @@ MODO B — DESCUBRIENDO PRODUCTOS:
 3. El caption de cada imagen debe ser corto y contener nombre y precio: "<nombre> — $<precio>".
 4. Después de enviar las imágenes, escribe un mensaje corto y natural invitando al cliente a elegir o preguntar más. Evita listados de texto.
 5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), usa send_product_image con product_reference exactamente como lo dijo.
-6. Si el cliente pide video, llama send_product_video. Si no hay video disponible, dilo y ofrece la imagen.
-7. Si no hay productos, responde claramente: "No encontré productos con esa descripción, ¿puedes darme otra palabra clave o detalle?".
+6. SI TIENES INFORMACIÓN DE UN VIDEO DISPONIBLE para el producto actual:
+   a. Menciona que tienes video disponible (por ejemplo: "También tengo un video donde puedes verlo mejor 😊" o "¿Te gustaría verlo?")
+   b. ESPERA la respuesta del cliente.
+   c. Si el cliente confirma (sí, si, claro, ok, dale, etc.), EJECUTA INMEDIATAMENTE send_product_video con el product_id o product_reference del producto en cuestión.
+   d. NO digas que enviarás video — directamente EJECUTA la herramienta send_product_video DENTRO DEL MISMO TURNO.
+   e. Si el cliente dice que no, continúa normalmente sin enviar video.
+7. Si el cliente pide video DIRECTAMENTE (ej: "¿tienes video de esto?", "muéstrame video"), LLAMA send_product_video INMEDIATAMENTE sin esperar confirmación adicional.
+8. Si no hay video disponible, dilo y ofrece alternativamente send_product_image o detalles en texto.
+9. Si no hay productos, responde claramente: "No encontré productos con esa descripción, ¿puedes darme otra palabra clave o detalle?".
 
 REGLAS GENERALES:
 - Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS y las herramientas de catálogo antes de inventar.
