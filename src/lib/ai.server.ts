@@ -787,19 +787,44 @@ export async function runAiAgent({
   const catalogCfg = await getCatalogConfig(orgId);
   const tools = catalogCfg ? [...CRM_TOOLS, ...CATALOG_TOOLS] : CRM_TOOLS;
 
+  const { data: threadRow } = await supabaseAdmin
+    .from('threads')
+    .select('purchase_intent')
+    .eq('id', threadId)
+    .maybeSingle();
+  const purchaseIntent = (threadRow as any)?.purchase_intent || 'none';
+  const isCollectingOrder = purchaseIntent === 'collecting_data';
+  const orderStateText = `\n\n=== ESTADO ACTUAL DEL THREAD ===\nestado_pedido: ${purchaseIntent}\n${
+    isCollectingOrder
+      ? 'El cliente ESTÁ entregando datos del pedido. NO busques productos: pide el siguiente dato faltante o ejecuta confirm_order si ya tienes todo.'
+      : 'El cliente NO está en modo recolección de datos. Atiende normalmente según la jerarquía de modos.'
+  }`;
+
   const PRODUCT_FLOW_GUIDE = `
-Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente menciona producto, precio, características, stock, foto o video:
-1. SIEMPRE llama primero la herramienta "search_products" con la palabra clave del cliente. Nunca inventes precios ni características.
-2. Si search_products devuelve productos tras una consulta de producto, responde enviando las imágenes de los mejores 3 productos (uno por producto) usando send_product_image con product_id. Cada envío debe incluir un caption corto con nombre y precio.
-3. Después de enviar los productos con imagen, escribe un mensaje breve y visible que diga exactamente: "Dime cuál de estas opciones te agrada?". No envíes un listado de texto como primer resultado del paso.
-4. Si el cliente no usa una referencia exacta, pero ya mostró interés en productos, NO vuelvas a generar texto de catálogo: haz otra llamada de herramienta si corresponde, o confirma con el cliente cuál producto quiere.
-5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), NO busques de nuevo: usa send_product_image con product_reference exactamente como lo dijo.
-6. Cuando el cliente pida "foto"/"imagen"/"ver", usa send_product_image (product_id o product_reference). Luego ofrece el video.
-7. Si el cliente pide video, llama send_product_video. Si has_video=false, dilo y ofrece la imagen.
-8. Búsquedas: usa singular (zapatero, silla). El sistema corrige plurales (zapateros→zapatero) y typos (siyas→silla).
-9. Si no hay productos, responde claramente: "No encontré productos con esa descripción, ¿puedes darme otra palabra clave o detalle?".
-10. Usa la BASE DE CONOCIMIENTO / PRODUCTOS para responder siempre que tenga información relevante. Si hay información del usuario o conocimiento adicional, úsala como prioridad antes de inventar respuestas.
-11. Después de usar send_product_image o send_product_video, envía siempre un mensaje visible breve al cliente que confirme la acción y le invite a elegir o preguntar más. Si envías imágenes, confirma con la frase exacta: "Dime cuál de estas opciones te agrada?".
+Eres un asistente comercial por WhatsApp. Tu objetivo es ATENDER, AGENDAR/PREPARAR PEDIDOS y MOSTRAR PRODUCTOS cuando corresponda.
+
+MODO A — RECOPILANDO DATOS DEL PEDIDO:
+1. Si estado_pedido indica "collecting_data", NO llames search_products ni envíes imágenes nuevas.
+2. Pide el siguiente dato requerido del pedido con una sola pregunta breve.
+3. Si ya tienes todos los datos y el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON.
+4. NO digas que el pedido está registrado o confirmado sin ejecutar confirm_order.
+5. Solo sal de este modo si el cliente cambia de tema y vuelve a preguntar por productos.
+
+MODO B — DESCUBRIENDO PRODUCTOS:
+1. Cuando el cliente pregunta por catálogo, modelos, fotos, videos, precios, stock o referencias, llama primero a search_products con la palabra clave.
+2. Si hay resultados, responde enviando imágenes de los mejores 3 productos usando send_product_image una vez por producto.
+3. El caption de cada imagen debe ser corto y contener nombre y precio: "<nombre> — $<precio>".
+4. Después de enviar las imágenes, escribe un mensaje corto y natural invitando al cliente a elegir o preguntar más. Evita listados de texto.
+5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), usa send_product_image con product_reference exactamente como lo dijo.
+6. Si el cliente pide video, llama send_product_video. Si no hay video disponible, dilo y ofrece la imagen.
+7. Si no hay productos, responde claramente: "No encontré productos con esa descripción, ¿puedes darme otra palabra clave o detalle?".
+
+REGLAS GENERALES:
+- Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS y las herramientas de catálogo antes de inventar.
+- Haz máximo una pregunta por mensaje.
+- No te presentes si ya hay mensajes previos.
+- No repitas preguntas ya hechas.
+- Si el cliente muestra interés en un producto, continúa desde ahí o pasa al modo de pedido.
 `.trim();
 
   // Load order fields
@@ -866,6 +891,7 @@ Eres un asistente comercial por WhatsApp. Reglas obligatorias cuando el cliente 
       : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
     "\n\n" + PRODUCT_FLOW_GUIDE,
+    orderStateText,
     orderFieldsText,
     knowledgeSourcesText,
     dynamicContextText,

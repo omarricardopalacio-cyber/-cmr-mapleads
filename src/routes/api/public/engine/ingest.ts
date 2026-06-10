@@ -524,20 +524,34 @@ async function maybeAiReply(
     if ((count ?? 0) > 0) return
   }
 
-  const history = [{ role: 'user' as const, content: text }]
+  const { data: prior } = await supabaseAdmin
+    .from('messages')
+    .select('direction, text, sent_at')
+    .eq('thread_id', threadId)
+    .not('text', 'is', null)
+    .order('sent_at', { ascending: false })
+    .limit(20)
+
+  const priorMsgs = ((prior ?? []) as any[])
+    .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
+    .reverse()
+    .map((m: any) => ({
+      role: (m.direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
+      content: String(m.text).trim(),
+    }))
+
+  const lastPrior = priorMsgs[priorMsgs.length - 1]
+  const history =
+    lastPrior && lastPrior.role === 'user' && lastPrior.content === text.trim()
+      ? priorMsgs
+      : [...priorMsgs, { role: 'user' as const, content: text }]
 
   let historyWithContext = history
   if (autoRepliesWereSent) {
     const systemNote = {
-      role: 'user' as const,
-      content: `[INSTRUCCIÓN DEL SISTEMA - CRÍTICA - NO MOSTRAR AL CLIENTE]
-REGLAS ESTRICTAS PARA ESTA RESPUESTA:
-1. NO debes presentarte o decir quién eres.
-2. NO hagas más de UNA pregunta en esta respuesta.
-3. NO necesitas leer mensajes previos en esta ejecución.
-4. Tu respuesta debe ser CORTA y directa.
-5. Continúa la conversación de forma natural como si ya hubieras conversado con el cliente.
-6. Usa el contexto disponible en este mensaje para responder.`
+      role: 'system' as const,
+      content:
+        'Acaban de enviarse mensajes automáticos al cliente. Continúa de forma natural, sin presentarte de nuevo y sin repetir lo ya dicho. Responde breve y haz máximo una pregunta.',
     }
     historyWithContext = [...history, systemNote]
   }
@@ -558,6 +572,7 @@ REGLAS ESTRICTAS PARA ESTA RESPUESTA:
       model: cfgFast.model,
       respond_to: cfgFast.respond_to,
       hasVertexSecret: !!cfgFast.vertex_service_account_json,
+      historyLength: historyWithContext.length,
     })
 
     const { reply, actions } = await runAiAgent({
@@ -570,8 +585,7 @@ REGLAS ESTRICTAS PARA ESTA RESPUESTA:
       cfg: cfgFast,
     })
 
-    const hasProductMediaActions = actions.some((a) => a === 'send_product_image' || a === 'send_product_video')
-    const finalReply = reply?.trim() || (hasProductMediaActions ? 'Dime cuál de estas opciones te agrada?' : '')
+    const finalReply = reply?.trim() || ''
     if (!finalReply) return
 
     await supabaseAdmin.from('engine_commands').insert({
