@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { getTemplateOrgId } from "@/lib/org-helpers";
+import { cloneTemplateAiConfigToOrg, getTemplateOrgId } from "@/lib/org-helpers";
 
 /**
  * Garantiza que el usuario actual tenga una organización (rol owner).
@@ -65,6 +65,10 @@ export const ensureOrg = createServerFn({ method: "POST" })
       .from("user_roles")
       .insert({ user_id: userId, org_id: org.id, role: "owner" });
     if (roleErr) throw new Error(roleErr.message);
+
+    await cloneTemplateAiConfigToOrg(org.id).catch((error) => {
+      console.error(`[AI CONFIG CLONE ERROR] No se pudo clonar la config AI para org ${org.id}:`, (error as Error).message);
+    });
 
     return { orgId: org.id, role: "owner" as const, name: org.name };
   });

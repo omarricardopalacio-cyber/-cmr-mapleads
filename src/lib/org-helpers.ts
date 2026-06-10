@@ -36,6 +36,44 @@ export async function getTemplateOrgId(): Promise<string | null> {
   return templateRole?.org_id ?? null;
 }
 
+export async function cloneTemplateAiConfigToOrg(orgId: string) {
+  const existing = await supabaseAdmin
+    .from("ai_configs")
+    .select("org_id")
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (existing?.org_id) return;
+
+  const templateOrgId = await getTemplateOrgId();
+  if (!templateOrgId || templateOrgId === orgId) return;
+
+  const { data: templateConfig } = await supabaseAdmin
+    .from("ai_configs")
+    .select("*")
+    .eq("org_id", templateOrgId)
+    .maybeSingle();
+
+  if (!templateConfig) return;
+
+  const aiConfig = {
+    ...templateConfig,
+    org_id: orgId,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  } as Record<string, unknown>;
+
+  const { error } = await supabaseAdmin
+    .from("ai_configs")
+    .insert(aiConfig)
+    .onConflict("org_id")
+    .ignore();
+
+  if (error) {
+    console.error(`[AI CONFIG CLONE ERROR] No se pudo clonar la config AI del template org a ${orgId}:`, error.message);
+  }
+}
+
 async function fetchOrphanIds(table: "wa_sessions" | "threads" | "contacts", orgId: string): Promise<string[]> {
   const nullRes: any = await (supabaseAdmin as any).from(table).select("id").is("org_id", null);
   const diffRes: any = await (supabaseAdmin as any).from(table).select("id").neq("org_id", orgId);
@@ -125,6 +163,10 @@ export async function ensureUserOrg(userId: string): Promise<string> {
   }
 
   console.log(`[AUTO-HEAL] Org ${orgId} + rol owner creados para ${userId}`);
+
+  await cloneTemplateAiConfigToOrg(orgId).catch((error) => {
+    console.error(`[AI CONFIG CLONE ERROR] No se pudo clonar la config AI para org ${orgId}:`, (error as Error).message);
+  });
 
   // Fase 2: Arrastrar datos huérfanos a la nueva org
   await syncOrphanDataToOrg(userId, orgId);

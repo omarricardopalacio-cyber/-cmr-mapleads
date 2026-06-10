@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getTemplateOrgId } from "@/lib/org-helpers";
 import { generateReply } from "./ai.server";
 import { triggerFlows } from "./flow-trigger.server";
 
@@ -32,15 +33,33 @@ const DEFAULT_CFG = {
   vertex_service_account_json: "",
 };
 
+async function getAiConfigForOrg(orgId: string) {
+  const { data } = await supabaseAdmin
+    .from("ai_configs")
+    .select("*")
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (data) return data;
+
+  const templateOrgId = await getTemplateOrgId();
+  if (!templateOrgId || templateOrgId === orgId) return null;
+
+  const { data: templateConfig } = await supabaseAdmin
+    .from("ai_configs")
+    .select("*")
+    .eq("org_id", templateOrgId)
+    .maybeSingle();
+
+  if (!templateConfig) return null;
+  return { ...templateConfig, org_id: orgId };
+}
+
 export const getAiConfig = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await getUserOrg(context.userId);
-    const { data } = await supabaseAdmin
-      .from("ai_configs")
-      .select("*")
-      .eq("org_id", orgId)
-      .maybeSingle();
+    const data = await getAiConfigForOrg(orgId);
     const hasVertexSecret = !!(data?.vertex_service_account_json || process.env.VERTEX_SERVICE_ACCOUNT_JSON);
     return { config: data ?? { org_id: orgId, ...DEFAULT_CFG }, hasVertexSecret };
   });

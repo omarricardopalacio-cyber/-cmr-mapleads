@@ -524,7 +524,22 @@ async function maybeAiReply(
     if ((count ?? 0) > 0) return
   }
 
-  const history = [{ role: 'user' as const, content: text }]
+  const { data: priorMessages } = await supabaseAdmin
+    .from('messages')
+    .select('direction, text, created_at')
+    .eq('thread_id', threadId)
+    .order('created_at', { ascending: true })
+    .limit(40)
+
+  const history = [
+    ...(priorMessages ?? [])
+      .filter((msg: any) => typeof msg.text === 'string' && msg.text.trim())
+      .map((msg: any) => ({
+        role: msg.direction === 'out' ? 'assistant' as const : 'user' as const,
+        content: msg.text.trim(),
+      })),
+    { role: 'user' as const, content: text },
+  ]
 
   let historyWithContext = history
   if (autoRepliesWereSent) {
@@ -534,10 +549,12 @@ async function maybeAiReply(
 REGLAS ESTRICTAS PARA ESTA RESPUESTA:
 1. NO debes presentarte o decir quién eres.
 2. NO hagas más de UNA pregunta en esta respuesta.
-3. NO necesitas leer mensajes previos en esta ejecución.
+3. LEE y valida cuidadosamente el historial de la conversación antes de responder.
 4. Tu respuesta debe ser CORTA y directa.
 5. Continúa la conversación de forma natural como si ya hubieras conversado con el cliente.
-6. Usa el contexto disponible en este mensaje para responder.`
+6. Usa el contexto disponible en este mensaje y en el historial para responder.
+7. Si el cliente ya mostró interés en un producto, no ignores ese contexto.
+`,
     }
     historyWithContext = [...history, systemNote]
   }
