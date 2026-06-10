@@ -77,9 +77,17 @@ export function StepConfigPanel({
     setUploading(true);
     try {
       const { url, mime_type } = await uploadMedia(file);
-      updateData("media_url", url);
-      updateData("mime_type", mime_type);
-      if (!data.caption) updateData("caption", file.name);
+      // IMPORTANTE: batch en un solo onChange. Llamar updateData varias veces seguidas usa
+      // un closure stale de `data`, de modo que la última llamada sobrescribe a las anteriores
+      // y se PIERDE media_url. Esto causaba que imágenes/videos/catálogos no se enviaran.
+      onChange({
+        step_data: {
+          ...data,
+          media_url: url,
+          mime_type,
+          caption: data.caption || file.name,
+        },
+      });
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
