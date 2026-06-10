@@ -290,16 +290,29 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "add_tag":
     case "tag_add": {
       const tagId = sd.tag_id || sd.tagId; // compat
-      if (tagId) {
-        await (supabaseAdmin as any).from("contact_tags").upsert({ contact_id: contactId, tag_id: tagId, org_id: orgId }, { onConflict: "contact_id,tag_id" });
+      if (tagId && contactId) {
+        // contact_tags NO tiene columna org_id — sólo (contact_id, tag_id)
+        const { error } = await (supabaseAdmin as any)
+          .from("contact_tags")
+          .upsert({ contact_id: contactId, tag_id: tagId }, { onConflict: "contact_id,tag_id" });
+        if (error) console.error("[flow-runner] tag_add failed:", error.message, { contactId, tagId });
+      } else {
+        console.warn("[flow-runner] tag_add missing tagId/contactId", { tagId, contactId });
       }
       return {};
     }
     case "remove_tag":
     case "tag_remove": {
       const tagId = sd.tag_id || sd.tagId;
-      if (tagId) {
-        await (supabaseAdmin as any).from("contact_tags").delete().eq("contact_id", contactId).eq("tag_id", tagId);
+      if (tagId && contactId) {
+        const { error } = await (supabaseAdmin as any)
+          .from("contact_tags")
+          .delete()
+          .eq("contact_id", contactId)
+          .eq("tag_id", tagId);
+        if (error) console.error("[flow-runner] tag_remove failed:", error.message, { contactId, tagId });
+      } else {
+        console.warn("[flow-runner] tag_remove missing tagId/contactId", { tagId, contactId });
       }
       return {};
     }
