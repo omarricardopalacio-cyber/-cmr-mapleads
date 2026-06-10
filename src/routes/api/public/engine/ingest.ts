@@ -585,8 +585,15 @@ async function maybeAiReply(
       cfg: cfgFast,
     })
 
-    const finalReply = reply?.trim() || ''
-    if (!finalReply) return
+    let finalReply = reply?.trim() || ''
+    if (!finalReply) {
+      const sentImage = actions?.includes('send_product_image') || actions?.includes('send_product_video')
+      if (sentImage) {
+        finalReply = '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
+      } else {
+        return
+      }
+    }
 
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,

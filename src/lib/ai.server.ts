@@ -1050,8 +1050,9 @@ REGLAS GENERALES:
     }
   }
 
-  // Loop de hasta 4 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
-  for (let round = 0; round < 4; round++) {
+  // Loop de hasta 6 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
+  // Aumentamos a 6 rondas para dar margen a encadenar múltiples llamadas a send_product_image.
+  for (let round = 0; round < 6; round++) {
     const { text, toolCalls } = await callAiProvider(cfg, msgs, tools);
     lastText = text;
 
@@ -1061,7 +1062,7 @@ REGLAS GENERALES:
         isOrderClaimWithoutConfirmation(finalText) &&
         !actions.includes("confirm_order") &&
         !orderConfirmed &&
-        round < 3
+        round < 5
       ) {
         msgs.push({
           role: "system",
@@ -1102,10 +1103,35 @@ REGLAS GENERALES:
         orderConfirmed = true;
       }
       msgs.push({ role: "tool", tool_call_id: tc.id, name: exec.name, content: exec.result });
+
+      // Si la herramienta fue `search_products` y devolvió una lista de productos,
+      // empujamos una nota de sistema indicando los 3 mejores product_id para forzar
+      // que el agente envíe send_product_image para cada uno antes de emitir texto.
+      if (exec.name === "search_products") {
+        try {
+          const parsed = JSON.parse(exec.result || "{}");
+          const productsFromTool = parsed?.products ?? [];
+          if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
+            const top = productsFromTool.slice(0, 3);
+            const ids = top.map((p: any) => p.id).filter(Boolean);
+            const listText = top
+              .map((p: any, i: number) => `${i + 1}. ${p.name} — $${p.price ?? ""} (id: ${p.id})`)
+              .join('\n');
+            if (ids.length > 0) {
+              msgs.push({
+                role: "system",
+                content: `Se encontraron ${productsFromTool.length} productos. Por favor, ahora envía las imágenes de los tres mejores productos en este orden usando send_product_image con los siguientes product_id: ${ids.join(", ")}. Usa captions exactamente como en la lista:\n${listText}\nNO envíes texto antes de enviar estas imágenes.`,
+              });
+            }
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
     }
   }
 
-  // Pasada final sin tools para forzar respuesta en texto después de 4 rondas
+  // Pasada final sin tools para forzar respuesta en texto después de 6 rondas
   const { text: finalText } = await callAiProvider(cfg, msgs);
   await markCollectingOrderDataIfNeeded(finalText || lastText);
   if (await recoverMissingOrderConfirmation(finalText || lastText)) {
