@@ -77,9 +77,14 @@ export function StepConfigPanel({
     setUploading(true);
     try {
       const { url, mime_type } = await uploadMedia(file);
-      updateData("media_url", url);
-      updateData("mime_type", mime_type);
-      if (!data.caption) updateData("caption", file.name);
+      onChange({
+        step_data: {
+          ...data,
+          media_url: url,
+          mime_type,
+          caption: data.caption || file.name,
+        },
+      });
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
