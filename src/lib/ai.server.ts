@@ -475,6 +475,41 @@ export async function getAiConfigFromDb(orgId: string) {
 /* ============================================================
    4. MULTI-PROVIDER ORCHESTRATOR (with tools)
    ============================================================ */
+const hasOpenAICredentials = (cfg: Record<string, unknown>) => !!(cfg.openai_api_key as string);
+const hasGrokCredentials = (cfg: Record<string, unknown>) => !!(cfg.grok_api_key as string);
+const hasLovableCredentials = () => !!process.env.LOVABLE_API_KEY;
+
+const fallbackVertexProvider = async (
+  cfg: Record<string, unknown>,
+  messages: Msg[],
+  tools?: any[],
+) => {
+  if (hasOpenAICredentials(cfg)) {
+    return callOpenAI({
+      apiKey: cfg.openai_api_key as string,
+      model: (cfg.model as string) || "gpt-4o",
+      messages,
+      tools,
+    });
+  }
+  if (hasLovableCredentials()) {
+    return callLovableAI({
+      model: (cfg.model as string) || "gpt-4o",
+      messages,
+      tools,
+    });
+  }
+  if (hasGrokCredentials(cfg)) {
+    return callGrok({
+      apiKey: cfg.grok_api_key as string,
+      model: (cfg.model as string) || "gpt-4o",
+      messages,
+      tools,
+    });
+  }
+  throw new Error("No hay proveedor alternativo disponible para fallback a Vertex.");
+};
+
 export async function callAiProvider(
   cfg: Record<string, unknown>,
   messages: Msg[],
@@ -499,15 +534,31 @@ export async function callAiProvider(
   if (provider === "vertex") {
     const project = (cfg.vertex_project as string) || "";
     if (!project) throw new Error("Falta vertex_project");
-    return callVertexAI({
-      project,
-      location: (cfg.vertex_location as string) || "us-central1",
-      model: (cfg.vertex_model as string) || "gemini-2.5-flash",
-      messages,
-      tools,
-      vertexServiceAccountJson: cfg.vertex_service_account_json as string | undefined,
-      onRetry,
-    });
+    try {
+      return await callVertexAI({
+        project,
+        location: (cfg.vertex_location as string) || "us-central1",
+        model: (cfg.vertex_model as string) || "gemini-2.5-flash",
+        messages,
+        tools,
+        vertexServiceAccountJson: cfg.vertex_service_account_json as string | undefined,
+        onRetry,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (
+        (errMsg.includes("Vertex 429") || errMsg.includes("Vertex 503") || errMsg.includes("RESOURCE_EXHAUSTED")) &&
+        (hasOpenAICredentials(cfg) || hasLovableCredentials() || hasGrokCredentials(cfg))
+      ) {
+        console.warn("[callAiProvider] Vertex failed with transient error, falling back to another provider", {
+          error: errMsg,
+          provider,
+          model,
+        });
+        return fallbackVertexProvider(cfg, messages, tools);
+      }
+      throw err;
+    }
   }
 
   // Default: Lovable
@@ -1249,7 +1300,26 @@ REGLAS GENERALES:
   }
 
   // Pasada final sin tools para forzar respuesta en texto después de 6 rondas
-  const { text: finalText } = await callAiProvider(cfg, msgs);
+  let finalText: string;
+  try {
+    const result = await callAiProvider(cfg, msgs);
+    finalText = result.text;
+  } catch (err) {
+    console.warn('[runAiAgent] final text generation failed after tool chain, falling back to last known text or image follow-up', {
+      error: err instanceof Error ? err.message : String(err),
+      orgId,
+      threadId,
+      actions,
+    });
+    if (lastText) {
+      finalText = lastText;
+    } else if (actions.some((a) => a === 'send_product_image' || a === 'send_product_video')) {
+      finalText = '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.';
+    } else {
+      throw err;
+    }
+  }
+
   await markCollectingOrderDataIfNeeded(finalText || lastText);
   if (await recoverMissingOrderConfirmation(finalText || lastText)) {
     return { reply: finalText || lastText, actions };
