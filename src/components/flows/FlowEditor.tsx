@@ -154,7 +154,21 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
     };
 
     setSteps([...steps, newStep]);
-    setSelectedStepId(newId);
+  };
+
+  const handleBranchStepChange = (stepId: string, updates: any) => {
+    setSteps(steps.map((s) => (s.id === stepId ? { ...s, ...updates } : s)));
+  };
+
+  const handleBranchStepDelete = (stepId: string) => {
+    const newSteps = steps.filter((s) => s.id !== stepId).map((s, index) => ({
+      ...s,
+      step_order: index + 1,
+    }));
+    setSteps(newSteps);
+    if (selectedStepId === stepId) {
+      setSelectedStepId(null);
+    }
   };
 
   const handleRunManual = async () => {
@@ -277,7 +291,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
 
         {/* Centro (Canvas + Tabs) */}
         <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-900/20">
-          <Tabs defaultValue="editor" className="flex-1 flex flex-col">
+          <Tabs defaultValue="editor" className="flex-1 flex flex-col min-h-0">
             <div className="border-b px-4 bg-background">
               <TabsList className="bg-transparent border-b-0 h-12 space-x-4">
                 <TabsTrigger value="editor" className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none px-2 h-12">Editor Visual</TabsTrigger>
@@ -288,8 +302,8 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
             </div>
 
             <TabsContent value="editor" className="flex-1 overflow-hidden m-0 outline-none">
-              <div className="flex h-full overflow-hidden">
-                <div className="flex-1 min-w-0 overflow-hidden">
+              <div className="flex h-full min-h-0 overflow-hidden">
+                <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
                   <FlowCanvas 
                     steps={steps} 
                     onStepsChange={setSteps} 
@@ -297,7 +311,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
                     onSelectStep={setSelectedStepId}
                   />
                 </div>
-                <aside className="w-80 border-l bg-background shrink-0 hidden lg:flex flex-col overflow-hidden">
+                <aside className="w-80 border-l bg-background shrink-0 hidden lg:flex flex-col overflow-y-auto min-h-0">
                   <div className="border-b px-4 py-3">
                     <div className="text-sm font-semibold">Pasos del flujo</div>
                     <div className="text-xs text-muted-foreground">Selecciona un paso para verlo y desplazarte fácilmente.</div>
@@ -335,9 +349,13 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
         </div>
 
         {/* Panel Derecho (Config Paso) */}
-        <div className="w-80 border-l bg-background shrink-0 hidden lg:block overflow-hidden">
+        <div className="w-80 border-l bg-background shrink-0 hidden lg:block overflow-y-auto min-h-0">
           <StepConfigPanel 
             step={selectedStep} 
+            branchSteps={branchSteps}
+            onAddBranchStep={addStepToBranch}
+            onBranchChange={handleBranchStepChange}
+            onBranchDelete={handleBranchStepDelete}
             onChange={(updates) => {
               setSteps(steps.map(s => s.id === selectedStepId ? { ...s, ...updates } : s));
             }}

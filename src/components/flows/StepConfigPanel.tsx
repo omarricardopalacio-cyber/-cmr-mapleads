@@ -19,12 +19,16 @@ export function StepConfigPanel({
   step,
   branchSteps,
   onAddBranchStep,
+  onBranchChange,
+  onBranchDelete,
   onChange,
   onSave
 }: {
   step: any;
   branchSteps?: any[];
   onAddBranchStep?: (stepType: string, branch: "yes" | "no") => void;
+  onBranchChange?: (branchStepId: string, updates: any) => void;
+  onBranchDelete?: (branchStepId: string) => void;
   onChange: (updates: any) => void;
   onSave?: () => void;
 }) {
@@ -75,8 +79,8 @@ export function StepConfigPanel({
 
   const isConditionalType = ["if_has_tag", "if_not_has_tag", "if_replied", "if_bought"].includes(type);
   const branchActionOptions = [
-    { id: "add_tag", label: "Poner etiqueta" },
-    { id: "remove_tag", label: "Quitar etiqueta" },
+    { id: "tag_add", label: "Poner etiqueta" },
+    { id: "tag_remove", label: "Quitar etiqueta" },
     { id: "goto_flow", label: "Ir a otro flujo" },
     { id: "ai_enable", label: "Activar IA" },
     { id: "ai_disable", label: "Desactivar IA" },
@@ -90,9 +94,186 @@ export function StepConfigPanel({
   ];
   const branchYesSteps = (branchSteps ?? []).filter((s) => s.branch === "yes");
   const branchNoSteps = (branchSteps ?? []).filter((s) => s.branch === "no");
+  const [branchSelection, setBranchSelection] = useState({ yes: "", no: "" });
 
   const handleAddBranchStep = (stepType: string, branch: "yes" | "no") => {
+    if (!stepType) return;
     onAddBranchStep?.(stepType, branch);
+    setBranchSelection((prev) => ({ ...prev, [branch]: "" }));
+  };
+
+  const updateBranchStep = (stepId: string, key: string, value: any) => {
+    const branchStep = (branchSteps ?? []).find((s) => s.id === stepId);
+    if (!branchStep) return;
+    onBranchChange?.(stepId, {
+      ...branchStep,
+      step_data: {
+        ...branchStep.step_data,
+        [key]: value,
+      },
+    });
+  };
+
+  const handleBranchFileUpload = async (stepId: string, file?: File) => {
+    if (!file) return;
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const { url, mime_type } = await uploadMedia(file);
+      const branchStep = (branchSteps ?? []).find((s) => s.id === stepId);
+      if (!branchStep) return;
+      onBranchChange?.(stepId, {
+        ...branchStep,
+        step_data: {
+          ...branchStep.step_data,
+          media_url: url,
+          mime_type,
+          caption: branchStep.step_data?.caption || file.name,
+        },
+      });
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const renderBranchStepEditor = (branchStep: any) => {
+    const branchData = branchStep.step_data || {};
+
+    if (branchStep.step_type === "send_text") {
+      return (
+        <div className="space-y-2">
+          <Label>Texto</Label>
+          <Textarea
+            value={branchData.text || ""}
+            onChange={(e) => updateBranchStep(branchStep.id, "text", e.target.value)}
+            placeholder="Escribe el mensaje que se enviará"
+            rows={4}
+          />
+        </div>
+      );
+    }
+
+    if (["send_image", "send_video", "send_catalog"].includes(branchStep.step_type)) {
+      return (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>URL del archivo</Label>
+            <Input
+              value={branchData.media_url || ""}
+              onChange={(e) => updateBranchStep(branchStep.id, "media_url", e.target.value)}
+              placeholder="https://..."
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Cargar archivo</Label>
+            <input
+              type="file"
+              accept={branchStep.step_type === "send_image" ? "image/*" : branchStep.step_type === "send_video" ? "video/*" : "application/pdf"}
+              disabled={uploading}
+              onChange={(e) => handleBranchFileUpload(branchStep.id, e.target.files?.[0])}
+              className="block w-full text-sm text-muted-foreground"
+            />
+            {uploadError ? <p className="text-xs text-destructive">{uploadError}</p> : null}
+          </div>
+          <div className="space-y-2">
+            <Label>Pie de foto / mensaje</Label>
+            <Input
+              value={branchData.caption || ""}
+              onChange={(e) => updateBranchStep(branchStep.id, "caption", e.target.value)}
+              placeholder="Opcional"
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (branchStep.step_type === "goto_flow") {
+      return (
+        <div className="space-y-2">
+          <Label>Flujo destino</Label>
+          <Select
+            value={branchData.flow_id || ""}
+            onValueChange={(v) => updateBranchStep(branchStep.id, "flow_id", v)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Selecciona un flujo" />
+            </SelectTrigger>
+            <SelectContent>
+              {flows.map((flow) => (
+                <SelectItem key={flow.id} value={flow.id}>{flow.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+
+    if (["tag_add", "tag_remove", "if_has_tag", "if_not_has_tag"].includes(branchStep.step_type)) {
+      return (
+        <div className="space-y-2">
+          <Label>Etiqueta</Label>
+          <Select
+            value={branchData.tag_id || branchData.tagId || ""}
+            onValueChange={(v) => updateBranchStep(branchStep.id, "tag_id", v)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Selecciona una etiqueta" />
+            </SelectTrigger>
+            <SelectContent>
+              {tags.map((tag) => (
+                <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+
+    if (branchStep.step_type === "note_create") {
+      return (
+        <div className="space-y-2">
+          <Label>Contenido de la nota</Label>
+          <Textarea
+            value={branchData.text || ""}
+            onChange={(e) => updateBranchStep(branchStep.id, "text", e.target.value)}
+            rows={3}
+          />
+        </div>
+      );
+    }
+
+    if (branchStep.step_type === "wait") {
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label>Cantidad</Label>
+            <Input
+              type="number"
+              value={branchData.amount || 1}
+              onChange={(e) => updateBranchStep(branchStep.id, "amount", Number(e.target.value))}
+              min={1}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Unidad</Label>
+            <Select value={branchData.unit || "minutes"} onValueChange={(v) => updateBranchStep(branchStep.id, "unit", v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {WAIT_UNITS.map((u) => (
+                  <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      );
+    }
+
+    return <p className="text-xs text-muted-foreground">Selecciona este paso en el lienzo para configurar sus detalles.</p>;
   };
 
   const [uploading, setUploading] = useState(false);
@@ -390,44 +571,61 @@ export function StepConfigPanel({
           <div className="space-y-4 border border-dashed border-border rounded-xl bg-muted/50 p-4">
             <div className="space-y-2">
               <div className="text-sm font-semibold">Acciones por rama</div>
-              <p className="text-xs text-muted-foreground">Agrega pasos que se ejecuten en la rama Sí o No según el resultado de esta condición.</p>
+              <p className="text-xs text-muted-foreground">Selecciona la acción para cada rama y configura sus detalles directamente aquí.</p>
             </div>
 
             {(["yes", "no"] as const).map((branch) => (
-              <div key={branch} className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                      Rama {branch === "yes" ? "Sí" : "No"}
-                    </div>
+              <div key={branch} className="space-y-4">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                    Rama {branch === "yes" ? "Sí" : "No"}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {branchActionOptions.map((option) => (
-                    <Button
-                      key={`${branch}-${option.id}`}
-                      variant="outline"
-                      size="sm"
-                      className="text-xs"
-                      onClick={() => handleAddBranchStep(option.id, branch)}
-                    >
-                      {option.label}
-                    </Button>
-                  ))}
+                <div className="space-y-3">
+                  <Label>Agregar acción</Label>
+                  <Select
+                    value={branchSelection[branch]}
+                    onValueChange={(value) => handleAddBranchStep(value, branch)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={`Selecciona una acción para rama ${branch === "yes" ? "Sí" : "No"}`} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {branchActionOptions.map((option) => (
+                        <SelectItem key={`${branch}-${option.id}`} value={option.id}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 {(branch === "yes" ? branchYesSteps : branchNoSteps).length > 0 ? (
-                  <div className="rounded-xl border bg-background p-3">
-                    <div className="text-xs font-semibold mb-2">Pasos en esta rama</div>
-                    <div className="space-y-2 text-xs text-muted-foreground">
-                      {(branch === "yes" ? branchYesSteps : branchNoSteps).map((child) => (
-                        <div key={child.id} className="rounded-md border px-3 py-2 bg-muted/10">
-                          {child.step_type} {child.step_data?.tag_id ? `- tag ${child.step_data.tag_id}` : ""}
+                  <div className="rounded-xl border bg-background p-3 space-y-3">
+                    <div className="text-xs font-semibold">Pasos en esta rama</div>
+                    {(branch === "yes" ? branchYesSteps : branchNoSteps).map((child) => (
+                      <div key={child.id} className="rounded-md border bg-muted/10 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <div>
+                            <div className="text-sm font-medium">{branchActionOptions.find((option) => option.id === child.step_type)?.label || child.step_type}</div>
+                            <div className="text-xs text-muted-foreground">Paso #{child.step_order}</div>
+                          </div>
+                          {onBranchDelete && (
+                            <Button size="icon" variant="ghost" onClick={() => onBranchDelete?.(child.id)}>
+                              <span className="sr-only">Eliminar paso</span>
+                              ✕
+                            </Button>
+                          )}
                         </div>
-                      ))}
-                    </div>
+                        {renderBranchStepEditor(child)}
+                      </div>
+                    ))}
                   </div>
-                ) : null}
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border bg-background p-3 text-xs text-muted-foreground">
+                    No hay acciones asignadas para esta rama.
+                  </div>
+                )}
               </div>
             ))}
           </div>
