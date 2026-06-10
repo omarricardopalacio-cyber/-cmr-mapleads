@@ -333,8 +333,9 @@ export async function callVertexAI(opts: {
   messages: Msg[];
   tools?: any[];
   vertexServiceAccountJson?: string;
-  onRetry?: () => Promise<void>;
-}): Promise<{ text: string; toolCalls?: any[] }> {
+  onRetry?: (attempt: number) => Promise<void>;
+  maxAttempts?: number;
+}): Promise<{ text: string; toolCalls?: any[]; retryAttempt?: number }> {
   const saJson = opts.vertexServiceAccountJson ?? process.env.VERTEX_SERVICE_ACCOUNT_JSON;
   if (!saJson) throw new Error("VERTEX_SERVICE_ACCOUNT_JSON no configurada");
   const token = await getVertexAccessTokenFromJSON(saJson);
@@ -397,19 +398,9 @@ export async function callVertexAI(opts: {
     requestSizeBytes,
   });
 
-  const maxAttempts = 3;
+  const maxAttempts = opts.maxAttempts ?? 7;
   let lastError: Error | null = null;
-  let retryNotified = false;
-
-  const notifyRetryOnce = async () => {
-    if (retryNotified || !opts.onRetry) return;
-    retryNotified = true;
-    try {
-      await opts.onRetry();
-    } catch (err) {
-      console.warn('[callVertexAI] onRetry callback failed', err);
-    }
-  };
+  const retriedAttempts = new Set<number>();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
@@ -430,7 +421,14 @@ export async function callVertexAI(opts: {
         const text = await res.text();
         const err = new Error(`Vertex ${res.status}: ${text.slice(0, 400)}`);
         if ((res.status === 429 || res.status === 503) && attempt < maxAttempts) {
-          await notifyRetryOnce();
+          retriedAttempts.add(attempt);
+          if (opts.onRetry) {
+            try {
+              await opts.onRetry(attempt);
+            } catch (err) {
+              console.warn('[callVertexAI] onRetry callback failed', err);
+            }
+          }
           console.warn('[callVertexAI] retrying due to Vertex transient error', {
             attempt,
             status: res.status,
@@ -439,19 +437,31 @@ export async function callVertexAI(opts: {
             location: opts.location,
           });
           lastError = err;
-          await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
+          const backoffMs = 1000 * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
           continue;
         }
         throw err;
       }
 
       const j: any = await res.json();
-      return parseVertexResponse(j);
+      const result = parseVertexResponse(j);
+      return {
+        ...result,
+        retryAttempt: retriedAttempts.size > 0 ? attempt : undefined,
+      };
     } catch (err) {
       if (attempt < maxAttempts) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (errMsg.includes('429') || errMsg.includes('503') || errMsg.includes('AbortError') || errMsg.includes('timeout')) {
-          await notifyRetryOnce();
+          retriedAttempts.add(attempt);
+          if (opts.onRetry) {
+            try {
+              await opts.onRetry(attempt);
+            } catch (err) {
+              console.warn('[callVertexAI] onRetry callback failed', err);
+            }
+          }
           console.warn('[callVertexAI] transient failure, retrying', {
             attempt,
             error: errMsg,
@@ -460,7 +470,8 @@ export async function callVertexAI(opts: {
             location: opts.location,
           });
           lastError = err instanceof Error ? err : new Error(errMsg);
-          await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
+          const backoffMs = 1000 * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
           continue;
         }
       }
@@ -470,7 +481,7 @@ export async function callVertexAI(opts: {
     }
   }
 
-  throw lastError ?? new Error('Vertex request failed after retries');
+  throw lastError ?? new Error('Vertex request failed after all retry attempts');
 }
 
 /* ============================================================
@@ -528,8 +539,8 @@ export async function callAiProvider(
   cfg: Record<string, unknown>,
   messages: Msg[],
   tools?: any[],
-  onRetry?: () => Promise<void>
-): Promise<{ text: string; toolCalls?: any[] }> {
+  onRetry?: (attempt: number) => Promise<void>
+): Promise<{ text: string; toolCalls?: any[]; retryAttempt?: number }> {
   const provider = (cfg.selected_provider as string) || (cfg.provider as string) || "lovable";
   const model = (cfg.model as string) || "gpt-4o";
 
@@ -557,6 +568,7 @@ export async function callAiProvider(
         tools,
         vertexServiceAccountJson: cfg.vertex_service_account_json as string | undefined,
         onRetry,
+        maxAttempts: 7,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -1232,15 +1244,27 @@ REGLAS GENERALES:
 
   // Loop de hasta 6 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
   // Aumentamos a 6 rondas para dar margen a encadenar múltiples llamadas a send_product_image.
-  const notifyRetryMessage = async () => {
+  const notifyRetryMessage = async (attempt: number) => {
     if (!sessionId || !chatId) return;
-    await supabaseAdmin.from('engine_commands').insert({
-      org_id: orgId,
-      session_id: sessionId,
-      type: 'SEND_MESSAGE',
-      payload: { chatId, text: 'Permíteme un minuto, ya te confirmo 😊' },
-      status: 'pending',
-    });
+    
+    let message = '';
+    if (attempt === 4) {
+      // 4to intento después de 3 silenciosos
+      message = 'Permíteme un minuto, ya te confirmo 😊';
+    } else if (attempt === 7) {
+      // 7mo intento, último esfuerzo
+      message = 'Dame un ratito, ya te envío 😉';
+    }
+    
+    if (message) {
+      await supabaseAdmin.from('engine_commands').insert({
+        org_id: orgId,
+        session_id: sessionId,
+        type: 'SEND_MESSAGE',
+        payload: { chatId, text: message },
+        status: 'pending',
+      });
+    }
   };
 
   for (let round = 0; round < 6; round++) {

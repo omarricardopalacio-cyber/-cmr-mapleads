@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import { generateReply } from '@/lib/ai.server'
 import { sanitizeMessageText } from '@/lib/message-text'
 import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
+import { registerFailedAiRequest, sendSupportMessage } from '@/lib/retry-manager.server'
 import { z } from 'zod'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
@@ -628,11 +629,34 @@ async function maybeAiReply(
       hasVertexKey: !!cfg?.vertex_service_account_json,
     })
     
-    // Generar mensaje de error más específico
+    // Detectar si es error de Vertex después de reintentos agotados
+    const isVertexError = errMsg.includes('Vertex') && errMsg.includes('after all retry attempts');
     let errorMessage = 'Disculpa, tuve un problema... ¿puedes repetir tu pedido?';
     
-    if (errMsg.includes('Vertex')) {
-      errorMessage = 'Error en el servicio de IA (Vertex). Por favor, intenta de nuevo.';
+    if (isVertexError) {
+      // Registrar la solicitud fallida para reintento automático después de 3 minutos
+      const requestId = await registerFailedAiRequest(
+        orgId,
+        threadId,
+        chatId,
+        sessionId,
+        text,
+        errMsg,
+        0,
+        3,
+        {
+          messageHistory: historyWithContext,
+          cfgProvider: cfg?.selected_provider || cfg?.provider,
+          cfgModel: cfg?.model,
+        }
+      );
+
+      // Enviar mensaje de apoyo
+      if (requestId && sessionId) {
+        await sendSupportMessage(orgId, sessionId, chatId, requestId, threadId);
+      }
+
+      errorMessage = 'dame un ratito ya te envio 😉';
     } else if (errMsg.includes('timeout') || errMsg.includes('AbortError')) {
       errorMessage = 'La respuesta tardó demasiado. Por favor, intenta de nuevo en unos segundos.';
     } else if (errMsg.includes('429')) {
@@ -641,7 +665,7 @@ async function maybeAiReply(
       errorMessage = 'Error de configuración del servicio. Por favor, contacta al administrador.';
     }
 
-    if (sessionId && chatId) {
+    if (sessionId && chatId && !isVertexError) {
       await supabaseAdmin.from('engine_commands').insert({
         org_id: orgId,
         session_id: sessionId,

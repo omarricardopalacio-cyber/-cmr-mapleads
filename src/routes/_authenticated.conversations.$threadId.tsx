@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SupportWidget } from "@/components/support-widget";
 import {
   Dialog,
   DialogContent,
@@ -608,6 +609,32 @@ function ThreadPage() {
 
           {mergedMessages.map((m) => {
             const displayText = sanitizeMessageText(m.text);
+            
+            // Detectar si es un mensaje de widget de apoyo
+            const isSupportWidget = m.text?.startsWith('[SUPPORT_WIDGET:');
+            let supportRequestId = '';
+            let supportThreadId = '';
+            
+            if (isSupportWidget && m.text) {
+              const match = m.text.match(/\[SUPPORT_WIDGET:([^:]+):([^\]]+)\]/);
+              if (match) {
+                supportRequestId = match[1];
+                supportThreadId = match[2];
+              }
+            }
+            
+            if (isSupportWidget && supportRequestId) {
+              return (
+                <div key={m.id}>
+                  <SupportWidget
+                    requestId={supportRequestId}
+                    threadId={supportThreadId}
+                    minutesRemaining={3}
+                  />
+                </div>
+              );
+            }
+            
             const mediaObj = (m.media as { url?: string; mimeType?: string; mime_type?: string; mimetype?: string; filename?: string; caption?: string; error?: string; missing_media?: boolean }) ?? null;
             
             // Log para diagnosticar mensajes entrantes con media
