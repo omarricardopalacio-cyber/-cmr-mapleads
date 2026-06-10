@@ -42,7 +42,7 @@ export async function processDueRuns(limit = 100) {
 export async function processRunUntilWaitOrCompleted(run: any, maxIterations = 50) {
   let currentRun = run;
   for (let i = 0; i < maxIterations; i++) {
-    if (["wait_node", "completed", "paused"].includes(currentRun.status)) {
+    if (["completed", "paused"].includes(currentRun.status)) {
       break;
     }
 
@@ -251,19 +251,32 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "send_media": {
       const waId = await getContactWaId();
       if (waId && sd.media_url) {
-        console.log('[flow-runner] enqueuing send_media command', {
-          stepId: step.id,
-          chatId: waId,
-          mediaUrl: sd.media_url,
-          mimeType: sd.mime_type,
-          caption: sd.caption,
-        });
-        await enqueueCommand("send_media", {
-          chatId: waId,
-          mediaUrl: sd.media_url,
-          caption: sd.caption,
-          mimeType: sd.mime_type,
-        });
+        const mediaUrl = String(sd.media_url);
+        const caption = sd.caption;
+        const mimeType = sd.mime_type;
+        const directMedia = /\.(jpg|jpeg|png|gif|bmp|webp|mp4|mov|avi|pdf)(\?.*)?$/i.test(mediaUrl);
+
+        if (step.step_type === "send_catalog" && !directMedia) {
+          const text = caption ? `${caption}\n${mediaUrl}` : mediaUrl;
+          await enqueueCommand("send_message", {
+            chatId: waId,
+            text,
+          });
+        } else {
+          console.log('[flow-runner] enqueuing send_media command', {
+            stepId: step.id,
+            chatId: waId,
+            mediaUrl,
+            mimeType,
+            caption,
+          });
+          await enqueueCommand("send_media", {
+            chatId: waId,
+            mediaUrl,
+            caption,
+            mimeType,
+          });
+        }
       } else {
         console.warn('[flow-runner] send_media step missing media_url or waId', {
           stepId: step.id,
