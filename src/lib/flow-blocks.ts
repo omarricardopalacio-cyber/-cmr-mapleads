@@ -1,4 +1,5 @@
 export const WAIT_UNITS = [
+  { value: "seconds", label: "Segundos" },
   { value: "minutes", label: "Minutos" },
   { value: "hours", label: "Horas" },
   { value: "days", label: "Días" },
@@ -62,6 +63,7 @@ export const STEPS = [
 
 export function waitMs(amount: number, unit: string): number {
   const multipliers: Record<string, number> = {
+    seconds: 1000,
     minutes: 60 * 1000,
     hours: 60 * 60 * 1000,
     days: 24 * 60 * 60 * 1000,
