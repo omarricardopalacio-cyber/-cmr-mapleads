@@ -298,32 +298,24 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
           console.error("[flow-runner] tag_add failed:", error.message, { contactId, tagId, orgId });
         }
       } else {
-        console.warn("[flow-runner] tag_add missing tagId/contactId", { tagId, contactId });
+        console.warn("[flow-runner] tag_add missing tagId/contactId", { tagId, contactId, orgId });
       }
       return {};
     }
     case "remove_tag":
     case "tag_remove": {
       const tagId = sd.tag_id || sd.tagId;
-<<<<<<< HEAD
       if (tagId && contactId) {
-=======
-      if (tagId) {
->>>>>>> b311d06 (fix(flow): preserve uploaded media step_data, fix tag add/remove and eager manual flow execution)
         const { error } = await (supabaseAdmin as any)
           .from("contact_tags")
           .delete()
           .eq("contact_id", contactId)
           .eq("tag_id", tagId);
-<<<<<<< HEAD
-        if (error) console.error("[flow-runner] tag_remove failed:", error.message, { contactId, tagId });
-      } else {
-        console.warn("[flow-runner] tag_remove missing tagId/contactId", { tagId, contactId });
-=======
         if (error) {
           console.error("[flow-runner] tag_remove failed:", error.message, { contactId, tagId, orgId });
         }
->>>>>>> b311d06 (fix(flow): preserve uploaded media step_data, fix tag add/remove and eager manual flow execution)
+      } else {
+        console.warn("[flow-runner] tag_remove missing tagId/contactId", { tagId, contactId, orgId });
       }
       return {};
     }
