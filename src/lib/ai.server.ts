@@ -383,6 +383,20 @@ export async function callVertexAI(opts: {
     body.tools = [{ functionDeclarations: openAIToolsToVertex(opts.tools) }];
   }
 
+  const bodyText = JSON.stringify(body);
+  const requestSizeBytes =
+    typeof Buffer !== 'undefined'
+      ? Buffer.byteLength(bodyText, 'utf8')
+      : new TextEncoder().encode(bodyText).length;
+  console.info('[callVertexAI] vertex request size', {
+    model: opts.model,
+    project: opts.project,
+    location: opts.location,
+    messagesCount: opts.messages.length,
+    toolCount: opts.tools?.length ?? 0,
+    requestSizeBytes,
+  });
+
   const maxAttempts = 3;
   let lastError: Error | null = null;
   let retryNotified = false;
