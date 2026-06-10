@@ -306,12 +306,13 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
         product.price != null ? `Precio: $${product.price}` : null,
       ].filter(Boolean);
       const caption = captionParts.join("\n");
+      const fallbackText = product.name || product.sku || "Producto";
       const mediaUrl = product.video_url || product.image_url;
 
       if (mediaUrl) {
-        await enqueueCommand("send_media", { chatId: waId, mediaUrl, caption });
-      } else if (caption) {
-        await enqueueCommand("send_message", { chatId: waId, text: caption });
+        await enqueueCommand("send_media", { chatId: waId, mediaUrl, caption: caption || fallbackText });
+      } else {
+        await enqueueCommand("send_message", { chatId: waId, text: caption || fallbackText });
       }
       return {};
     }

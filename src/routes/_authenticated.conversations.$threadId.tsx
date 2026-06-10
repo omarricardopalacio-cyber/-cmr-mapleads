@@ -237,7 +237,16 @@ function ThreadPage() {
     if (!isLoading && data === null) navigate({ to: "/conversations" });
   }, [data, isLoading, navigate]);
 
-  const mergedMessages = (data?.messages ?? []).length > 0 ? (data?.messages ?? []) : clientMessages;
+  const mergedMessages = (() => {
+    const serverMessages = data?.messages ?? [];
+    if (!serverMessages.length) return clientMessages;
+    if (!clientMessages.length) return serverMessages;
+    const existingIds = new Set(serverMessages.map((m) => m.id));
+    const extraMessages = clientMessages.filter((m) => !existingIds.has(m.id));
+    return [...serverMessages, ...extraMessages].sort(
+      (a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime()
+    );
+  })();
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
@@ -251,17 +260,31 @@ function ThreadPage() {
         { event: "INSERT", schema: "public", table: "messages", filter: `thread_id=eq.${threadId}` },
         (payload) => {
           console.log('[REALTIME] INSERT detectado, actualizando mensajes en tiempo real');
-          // Actualizar clientMessages directamente sin esperar al servidor
-          if (payload.new) {
-            setClientMessages((prev) => {
-              const exists = prev.some((m) => m.id === (payload.new as any).id);
-              if (exists) return prev;
-              return [...prev, payload.new as any];
-            });
-          }
-          // También invalidar la query del servidor
+          if (!payload.new) return;
+          const newMessage = payload.new as any;
+          setClientMessages((prev) => {
+            const exists = prev.some((m) => m.id === newMessage.id);
+            if (exists) return prev;
+            return [...prev, newMessage];
+          });
+
+          qc.setQueryData(["thread", threadId], (oldData: any) => {
+            if (!oldData) return oldData;
+            const currentMessages = Array.isArray(oldData.messages) ? oldData.messages : [];
+            const exists = currentMessages.some((m) => m.id === newMessage.id);
+            if (exists) return oldData;
+            return {
+              ...oldData,
+              messages: [...currentMessages, newMessage].sort(
+                (a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime()
+              ),
+            };
+          });
+
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.invalidateQueries({ queryKey: ["threads"] });
           qc.refetchQueries({ queryKey: ["thread", threadId] });
+          qc.refetchQueries({ queryKey: ["threads"] });
         }
       )
       .on(
@@ -272,16 +295,27 @@ function ThreadPage() {
             waMessageId: (payload.new as any)?.wa_message_id,
             hasMedia: !!(payload.new as any)?.media,
           });
-          // Actualizar el mensaje específico en clientMessages
-          if (payload.new) {
-            setClientMessages((prev) =>
-              prev.map((m) =>
-                m.id === (payload.new as any).id ? { ...m, ...(payload.new as any) } : m
-              )
-            );
-          }
+          if (!payload.new) return;
+          const updatedMessage = payload.new as any;
+          setClientMessages((prev) =>
+            prev.map((m) => (m.id === updatedMessage.id ? { ...m, ...updatedMessage } : m))
+          );
+
+          qc.setQueryData(["thread", threadId], (oldData: any) => {
+            if (!oldData) return oldData;
+            const currentMessages = Array.isArray(oldData.messages) ? oldData.messages : [];
+            return {
+              ...oldData,
+              messages: currentMessages.map((m) =>
+                m.id === updatedMessage.id ? { ...m, ...updatedMessage } : m
+              ),
+            };
+          });
+
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.invalidateQueries({ queryKey: ["threads"] });
           qc.refetchQueries({ queryKey: ["thread", threadId] });
+          qc.refetchQueries({ queryKey: ["threads"] });
         }
       )
       .on(
@@ -291,6 +325,7 @@ function ThreadPage() {
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
           qc.invalidateQueries({ queryKey: ["threads"] });
           qc.refetchQueries({ queryKey: ["thread", threadId] });
+          qc.refetchQueries({ queryKey: ["threads"] });
         }
       )
       .subscribe((status) => {
@@ -371,8 +406,10 @@ function ThreadPage() {
       setText("");
       setShowQr(false);
       qc.invalidateQueries({ queryKey: ["thread", threadId] });
+      qc.invalidateQueries({ queryKey: ["threads"] });
       // Refetch inmediato para mostrar el mensaje encolado sin esperar 3 segundos
       await qc.refetchQueries({ queryKey: ["thread", threadId] });
+      await qc.refetchQueries({ queryKey: ["threads"] });
       toast.success(mediaUrl ? "Multimedia encolada" : "Mensaje encolado");
     } catch (err: unknown) {
       toast.error((err as Error)?.message ?? "Error al enviar");
