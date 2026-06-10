@@ -213,7 +213,10 @@ async function resolveMediaInServiceWorker(
 }
 
 async function dispatchCommand(cmd: BackendCommand): Promise<void> {
-  const normalizedType = typeof cmd.type === "string" ? cmd.type.toUpperCase() : cmd.type;
+  const normalizedType =
+    typeof cmd.type === "string"
+      ? (cmd.type.toUpperCase() as BackendCommand["type"])
+      : cmd.type;
   const command: BackendCommand = { ...cmd, type: normalizedType };
 
   console.log("[ServiceWorker] Comando recibido:", command.type, cmd.id);

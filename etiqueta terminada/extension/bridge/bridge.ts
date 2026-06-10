@@ -19,7 +19,7 @@ export class ContentBridge {
     msg: BridgeMessage;
     resolve: (payload: any) => void;
     reject: (err: Error) => void;
-    timeoutId: number;
+    timeoutId: ReturnType<typeof setTimeout>;
   }> = [];
   public engineReady = false; // Se pone true cuando el injected engine envía eventos
 
@@ -51,16 +51,14 @@ export class ContentBridge {
       if (!this.engineReady) {
         this.engineReady = true;
         console.log("[ContentBridge] Engine confirmado listo (WPP activo)");
-          this.flushQueuedCommands();
-        payload: bridgeMsg.payload,
-        timestamp: Date.now(),
-      };
+        this.flushQueuedCommands();
+      }
 
       // Emitir localmente en el content script (para debug / UI)
       eventBus.emit(bridgeMsg.event, bridgeMsg.payload);
 
       // Enviar al background para ingest
-      sendToBackground("WA_EVENT", { event: bridgeMsg.event, payload: waEvent }).catch(
+      sendToBackground("WA_EVENT", { event: bridgeMsg.event, payload: bridgeMsg.payload }).catch(
         (err) => console.warn("[ContentBridge] Error enviando a background:", err)
       );
     }
