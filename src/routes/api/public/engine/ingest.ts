@@ -591,9 +591,19 @@ async function maybeAiReply(
       if (sentImage) {
         finalReply = '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
       } else {
-        return
+        finalReply = 'Un momento por favor… ¿me confirmas qué producto te interesa?'
       }
     }
+
+    console.info('[ai-reply] finalReply', {
+      orgId,
+      threadId,
+      chatId,
+      sessionId,
+      finalReply,
+      actions,
+      replyLength: finalReply.length,
+    })
 
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,
@@ -611,6 +621,16 @@ async function maybeAiReply(
       model: cfg?.model,
       selected_provider: cfg?.selected_provider,
     })
+
+    if (sessionId && chatId) {
+      await supabaseAdmin.from('engine_commands').insert({
+        org_id: orgId,
+        session_id: sessionId,
+        type: 'SEND_MESSAGE',
+        payload: { chatId, text: 'Disculpa, tuve un problema... ¿puedes repetir tu pedido?' },
+        status: 'pending',
+      })
+    }
   }
 }
 

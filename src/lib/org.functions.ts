@@ -39,9 +39,10 @@ export const ensureOrg = createServerFn({ method: "POST" })
 
       const { error: roleErr } = await supabaseAdmin
         .from("user_roles")
-        .insert({ user_id: userId, org_id: templateOrgId, role: "admin" })
-        .onConflict("user_id,org_id,role")
-        .ignore();
+        .upsert(
+          { user_id: userId, org_id: templateOrgId, role: "admin" },
+          { onConflict: "user_id,org_id,role", ignoreDuplicates: true },
+        );
       if (roleErr) throw new Error(roleErr.message);
 
       return { orgId: templateOrgId, role: "admin" as const, name: org.name };

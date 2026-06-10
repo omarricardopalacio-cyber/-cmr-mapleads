@@ -1120,7 +1120,7 @@ REGLAS GENERALES:
             if (ids.length > 0) {
               msgs.push({
                 role: "system",
-                content: `Se encontraron ${productsFromTool.length} productos. Por favor, ahora envía las imágenes de los tres mejores productos en este orden usando send_product_image con los siguientes product_id: ${ids.join(", ")}. Usa captions exactamente como en la lista:\n${listText}\nNO envíes texto antes de enviar estas imágenes.`,
+                content: `Se encontraron ${productsFromTool.length} productos. Por favor, ahora envía las imágenes de los tres mejores productos en este orden usando send_product_image con los siguientes product_id: ${ids.join(", ")}. Usa captions exactamente como en la lista:\n${listText}\nPrioriza enviar estas imágenes primero. Si necesitas aclarar algo o cerrar la respuesta después de enviarlas, puedes hacerlo con un breve texto adicional.`,
               });
             }
           }

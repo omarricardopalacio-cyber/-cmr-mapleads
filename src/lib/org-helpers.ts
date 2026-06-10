@@ -65,9 +65,7 @@ export async function cloneTemplateAiConfigToOrg(orgId: string) {
 
   const { error } = await supabaseAdmin
     .from("ai_configs")
-    .insert(aiConfig)
-    .onConflict("org_id")
-    .ignore();
+    .upsert(aiConfig, { onConflict: "org_id", ignoreDuplicates: true });
 
   if (error) {
     console.error(`[AI CONFIG CLONE ERROR] No se pudo clonar la config AI del template org a ${orgId}:`, error.message);
@@ -124,9 +122,10 @@ export async function ensureUserOrg(userId: string): Promise<string> {
   if (templateOrgId) {
     const { error: roleError } = await supabaseAdmin
       .from("user_roles")
-      .insert({ user_id: userId, org_id: templateOrgId, role: "admin" })
-      .onConflict("user_id,org_id,role")
-      .ignore();
+      .upsert(
+        { user_id: userId, org_id: templateOrgId, role: "admin" },
+        { onConflict: "user_id,org_id,role", ignoreDuplicates: true },
+      );
 
     if (roleError) {
       console.error(`[AUTO-HEAL ERROR] No se pudo asignar rol admin en org template para ${userId}:`, roleError.message);
