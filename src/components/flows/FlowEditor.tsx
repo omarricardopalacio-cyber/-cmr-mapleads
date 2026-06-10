@@ -117,6 +117,10 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
               delete normalizedStep.id;
             }
 
+            if (normalizedStep.parent_step_id && String(normalizedStep.parent_step_id).startsWith("temp-")) {
+              delete normalizedStep.parent_step_id;
+            }
+
             return normalizedStep;
           })
         }

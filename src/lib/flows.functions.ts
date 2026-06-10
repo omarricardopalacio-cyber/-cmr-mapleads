@@ -238,6 +238,14 @@ export const upsertSteps = createServerFn({ method: "POST" })
           row.id = s.id;
         }
 
+        if (row.id == null) {
+          delete row.id;
+        }
+
+        if (row.parent_step_id && String(row.parent_step_id).startsWith("temp-")) {
+          row.parent_step_id = null;
+        }
+
         return row;
       });
       
