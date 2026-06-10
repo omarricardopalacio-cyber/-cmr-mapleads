@@ -225,7 +225,17 @@ export async function callGrok(opts: {
 let cachedToken: { key: string; token: string; exp: number } | null = null;
 
 async function getVertexAccessTokenFromJSON(saJson: string): Promise<string> {
-  const sa = JSON.parse(saJson);
+  let sa: any;
+  try {
+    sa = JSON.parse(saJson);
+  } catch (err) {
+    throw new Error(`Vertex service account JSON inválido: ${err}`);
+  }
+  
+  // Validar campos requeridos
+  if (!sa.client_email) throw new Error("Vertex SA: falta client_email");
+  if (!sa.private_key) throw new Error("Vertex SA: falta private_key");
+  
   const cacheKey = `${sa.client_email}:${sa.private_key_id ?? ""}`;
   if (cachedToken?.key === cacheKey && cachedToken.exp - 60 > Date.now() / 1000) {
     return cachedToken.token;
@@ -254,6 +264,7 @@ async function getVertexAccessTokenFromJSON(saJson: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`Vertex token ${res.status}: ${await res.text()}`);
   const j: any = await res.json();
+  if (!j.access_token) throw new Error("Vertex token: no access_token en respuesta OAuth");
   cachedToken = { key: cacheKey, token: j.access_token, exp: now + (j.expires_in ?? 3600) };
   return j.access_token;
 }
@@ -389,12 +400,11 @@ export async function callVertexAI(opts: {
       const text = await res.text();
       throw new Error(`Vertex ${res.status}: ${text.slice(0, 400)}`);
     }
-    return res;
+    const j: any = await res.json();
+    return parseVertexResponse(j);
   } finally {
     clearTimeout(timeoutId);
   }
-    const j: any = res.json();
-    return parseVertexResponse(j);
 }
 
 /* ============================================================
