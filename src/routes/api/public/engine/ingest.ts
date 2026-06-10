@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
-import { generateReply } from '@/lib/ai.server'
 import { sanitizeMessageText } from '@/lib/message-text'
 import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
 import { registerFailedAiRequest, sendSupportMessage } from '@/lib/retry-manager.server'

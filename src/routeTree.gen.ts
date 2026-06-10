@@ -34,10 +34,12 @@ import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
 import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public/mapleads/ingest'
 import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/public/engine/upload-media'
+import { Route as ApiPublicEngineRetryProcessorRouteImport } from './routes/api/public/engine/retry-processor'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
+import { Route as ApiAdminEngineFailedRequestsRouteImport } from './routes/api/admin/engine/failed-requests'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -173,6 +175,12 @@ const ApiPublicEngineUploadMediaRoute =
     path: '/api/public/engine/upload-media',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicEngineRetryProcessorRoute =
+  ApiPublicEngineRetryProcessorRouteImport.update({
+    id: '/api/public/engine/retry-processor',
+    path: '/api/public/engine/retry-processor',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
   id: '/api/public/engine/ingest',
   path: '/api/public/engine/ingest',
@@ -194,6 +202,12 @@ const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
   path: '/api/public/cron/dispatch',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAdminEngineFailedRequestsRoute =
+  ApiAdminEngineFailedRequestsRouteImport.update({
+    id: '/api/admin/engine/failed-requests',
+    path: '/api/admin/engine/failed-requests',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -218,10 +232,12 @@ export interface FileRoutesByFullPath {
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
+  '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
 }
@@ -247,10 +263,12 @@ export interface FileRoutesByTo {
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
+  '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
 }
@@ -279,10 +297,12 @@ export interface FileRoutesById {
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
+  '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
+  '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
 }
@@ -311,10 +331,12 @@ export interface FileRouteTypes {
     | '/api/debug/media-diag'
     | '/api/internal/no-response-worker'
     | '/conversations/'
+    | '/api/admin/engine/failed-requests'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
     | '/api/public/mapleads/ingest'
   fileRoutesByTo: FileRoutesByTo
@@ -340,10 +362,12 @@ export interface FileRouteTypes {
     | '/api/debug/media-diag'
     | '/api/internal/no-response-worker'
     | '/conversations'
+    | '/api/admin/engine/failed-requests'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
     | '/api/public/mapleads/ingest'
   id:
@@ -371,10 +395,12 @@ export interface FileRouteTypes {
     | '/api/debug/media-diag'
     | '/api/internal/no-response-worker'
     | '/_authenticated/conversations/'
+    | '/api/admin/engine/failed-requests'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
     | '/api/public/engine/ingest'
+    | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
     | '/api/public/mapleads/ingest'
   fileRoutesById: FileRoutesById
@@ -386,10 +412,12 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
   ApiInternalNoResponseWorkerRoute: typeof ApiInternalNoResponseWorkerRoute
+  ApiAdminEngineFailedRequestsRoute: typeof ApiAdminEngineFailedRequestsRoute
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
+  ApiPublicEngineRetryProcessorRoute: typeof ApiPublicEngineRetryProcessorRoute
   ApiPublicEngineUploadMediaRoute: typeof ApiPublicEngineUploadMediaRoute
   ApiPublicMapleadsIngestRoute: typeof ApiPublicMapleadsIngestRoute
 }
@@ -571,6 +599,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEngineUploadMediaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/engine/retry-processor': {
+      id: '/api/public/engine/retry-processor'
+      path: '/api/public/engine/retry-processor'
+      fullPath: '/api/public/engine/retry-processor'
+      preLoaderRoute: typeof ApiPublicEngineRetryProcessorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/engine/ingest': {
       id: '/api/public/engine/ingest'
       path: '/api/public/engine/ingest'
@@ -597,6 +632,13 @@ declare module '@tanstack/react-router' {
       path: '/api/public/cron/dispatch'
       fullPath: '/api/public/cron/dispatch'
       preLoaderRoute: typeof ApiPublicCronDispatchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/admin/engine/failed-requests': {
+      id: '/api/admin/engine/failed-requests'
+      path: '/api/admin/engine/failed-requests'
+      fullPath: '/api/admin/engine/failed-requests'
+      preLoaderRoute: typeof ApiAdminEngineFailedRequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -666,10 +708,12 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
   ApiInternalNoResponseWorkerRoute: ApiInternalNoResponseWorkerRoute,
+  ApiAdminEngineFailedRequestsRoute: ApiAdminEngineFailedRequestsRoute,
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
+  ApiPublicEngineRetryProcessorRoute: ApiPublicEngineRetryProcessorRoute,
   ApiPublicEngineUploadMediaRoute: ApiPublicEngineUploadMediaRoute,
   ApiPublicMapleadsIngestRoute: ApiPublicMapleadsIngestRoute,
 }

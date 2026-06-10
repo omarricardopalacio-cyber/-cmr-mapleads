@@ -532,7 +532,12 @@ const fallbackVertexProvider = async (
       tools,
     });
   }
-  throw new Error("No hay proveedor alternativo disponible para fallback a Vertex.");
+  // Fallback a Lovable si no hay otros proveedores
+  return callLovableAI({
+    model: (cfg.model as string) || "gpt-4o",
+    messages,
+    tools,
+  });
 };
 
 export async function callAiProvider(

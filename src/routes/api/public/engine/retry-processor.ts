@@ -90,7 +90,7 @@ async function processRetries() {
         const cfgFast = { ...(cfg as Record<string, unknown>) }
         const provider = (cfgFast.selected_provider as string) || (cfgFast.provider as string) || 'lovable'
         if (provider === 'lovable' && (!cfgFast.model || String(cfgFast.model).startsWith('gpt-'))) {
-          cfgFast.model = 'google/gemini-3-flash-preview'
+          cfgFast.model = 'google/gemini-2.5-flash'
         }
 
         const { reply, actions } = await runAiAgent({
