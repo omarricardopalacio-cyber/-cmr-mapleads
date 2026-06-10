@@ -205,13 +205,14 @@ function OrdersModule() {
         throw uploadError
       }
 
-      const { data: urlData, error: urlError } = await supabase.storage
+      const { data: urlData } = supabase.storage
         .from('media')
         .getPublicUrl(key)
 
-      if (urlError || !urlData?.publicUrl) {
-        throw new Error(urlError?.message || 'No se pudo obtener URL pública')
+      if (!urlData?.publicUrl) {
+        throw new Error('No se pudo obtener URL pública')
       }
+
 
       setLogoUrl(urlData.publicUrl)
       window.localStorage.setItem(`orderGuideLogo-${orgId}`, urlData.publicUrl)
