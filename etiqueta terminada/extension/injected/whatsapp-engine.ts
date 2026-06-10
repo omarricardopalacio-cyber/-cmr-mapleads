@@ -7,7 +7,7 @@ import { waitForWPP, isWPPReady } from "./wpp-bootstrap";
 import { initEventEngine } from "./event-engine";
 import { senderEngine } from "./sender-engine";
 import { resolveCommandMedia } from "./command-media";
-import { postFromInjected } from "../bridge/postmessage";
+import { postFromInjected, postFromContent } from "../bridge/postmessage";
 import * as chatDetector from "./chat-detector";
 import * as contactDetector from "./contact-detector";
 
@@ -17,6 +17,25 @@ if ((window as any).__MAPLE_WA_ENGINE_INITIALIZED) {
 } else {
   (window as any).__MAPLE_WA_ENGINE_INITIALIZED = true;
   init();
+}
+
+const pendingRequests = new Map<string, (payload: any) => void>();
+
+function requestExtension(event: string, payload: unknown): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(id);
+      reject(new Error("[WhatsAppEngine] Timeout esperando respuesta de extensión"));
+    }, 20000);
+
+    pendingRequests.set(id, (result) => {
+      clearTimeout(timeout);
+      resolve(result);
+    });
+
+    postFromContent("WA_REQUEST", { id, event, payload });
+  });
 }
 
 async function init(): Promise<void> {
@@ -71,14 +90,18 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     id: event.data?.id,
   });
 
-  // Chrome MV3: content script (isolated world) and injected script (main world)
-  // do NOT share the same window object. event.source from content script postMessage
-  // will NOT equal window. We remove this check to allow commands through.
-  // Security note: we still verify msg.source === "MAPLE_WA_CONTENT" below.
-  // if (event.source !== window.parent && event.source !== window) return;
-
   const msg = event.data;
   if (msg?.source !== "MAPLE_WA_CONTENT") return;
+
+  if (msg?.channel === "WA_RESPONSE" && msg?.id) {
+    const resolver = pendingRequests.get(msg.id);
+    if (resolver) {
+      resolver(msg.payload);
+      pendingRequests.delete(msg.id);
+    }
+    return;
+  }
+
   if (msg?.channel !== "WA_COMMAND") return;
 
   const { id, event: rawCmdEvent, payload } = msg;
@@ -112,7 +135,6 @@ async function handleCommands(event: MessageEvent): Promise<void> {
 
         console.log("[WhatsAppEngine] Calling senderEngine.send with chatId:", cmdPayload.chatId);
         const sendResult = await senderEngine.send({
-          commandId: id,
           chatId: cmdPayload.chatId as string,
           text: cmdPayload.text as string | undefined,
           media: resolved.dataUri,
@@ -135,37 +157,50 @@ async function handleCommands(event: MessageEvent): Promise<void> {
       }
 
       case "SEND_MEDIA": {
-        // Backend envía: { chatId, mediaUrl (data URI base64 or signed URL), mimeType, caption }
+        // Backend envía: { chatId, mediaUrl / media_url (data URI base64 or signed URL), mimeType, caption }
         const resolved = await resolveCommandMedia(payload as Record<string, unknown>);
-        const mediaData =
-          resolved.dataUri ||
-          payload.media ||
-          payload.base64 ||
-          payload.mediaUrl ||
-          payload.media_url;
+        const payloadUrl = typeof payload.mediaUrl === "string"
+          ? payload.mediaUrl
+          : typeof payload.media_url === "string"
+          ? payload.media_url
+          : undefined;
+        const mediaUrl = payload.media || resolved.dataUri || payloadUrl;
         const mimeType = resolved.mimeType || payload.mimeType || payload.mime_type;
-
         console.log("[WhatsAppEngine] SEND_MEDIA payload:", JSON.stringify({
           chatId: payload.chatId,
-          mediaUrl: payload.mediaUrl || payload.media_url,
-          hasResolvedDataUri: !!resolved.dataUri,
-          hasInlineMedia: !!payload.media,
-          hasBase64: !!payload.base64,
+          mediaUrl: payloadUrl,
+          resolvedDataUri: !!resolved.dataUri,
           mimeType,
           caption: payload.caption,
         }));
 
-        if (!mediaData) {
+        let mediaData = payload.media || resolved.dataUri;
+        if (!mediaData && payloadUrl && payloadUrl.startsWith("http")) {
+          const fetchResult = await requestExtension("FETCH_MEDIA", {
+            url: payloadUrl,
+            mimeType,
+          });
+          console.log("[WhatsAppEngine] FETCH_MEDIA response recibida del extension:", fetchResult);
+          if (fetchResult?.error) {
+            error = fetchResult.error;
+            break;
+          }
+          mediaData = fetchResult.dataUri ?? fetchResult.blob ?? fetchResult.media ?? fetchResult.data;
+          console.log("[WhatsAppEngine] Media fetched from extension:", {
+            hasDataUri: typeof mediaData === "string" && mediaData.startsWith("data:"),
+            mimeType: fetchResult.mimeType,
+          });
+        }
+
+        const finalMedia = mediaData || payloadUrl;
+        if (!finalMedia) {
           error = "MEDIA_MISSING";
           break;
         }
-
-        const mediaValue = normalizeMediaString(mediaData, mimeType);
         const sendResult = await senderEngine.send({
-          commandId: id,
           chatId: payload.chatId,
           text: payload.caption || payload.text,
-          media: typeof mediaValue === "string" ? mediaValue : (mediaValue as unknown as string),
+          media: finalMedia,
           caption: payload.caption,
           quotedMsgId: payload.quotedMsgId,
           options: {
@@ -240,21 +275,4 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     id,
     payload: responsePayload,
   });
-}
-
-function normalizeMediaString(mediaData: unknown, mimeType?: string): unknown {
-  if (typeof mediaData !== "string") return mediaData;
-  if (mediaData.startsWith("data:")) return mediaData;
-  if (isPlainBase64String(mediaData)) {
-    return `data:${mimeType || "application/octet-stream"};base64,${mediaData}`;
-  }
-  return mediaData;
-}
-
-function isPlainBase64String(value: string): boolean {
-  if (!value || value.length < 100) return false;
-  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:")) return false;
-  const clean = value.replace(/\s+/g, "");
-  if (clean.length % 4 !== 0) return false;
-  return /^[A-Za-z0-9+/]+={0,2}$/.test(clean);
 }

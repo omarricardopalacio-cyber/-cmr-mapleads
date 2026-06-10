@@ -342,7 +342,7 @@ export const runFlowManually = createServerFn({ method: "POST" })
         for (let i = 0; i < 50; i++) {
           const { data: refreshedRun, error: refreshError } = await supabaseAdmin
             .from("flow_runs")
-            .select("id, status, current_step_id")
+            .select("id, flow_id, status, current_step_id, contact_id, org_id, next_execution_at, last_interaction_at")
             .eq("id", currentRun.id)
             .single();
           if (refreshError || !refreshedRun) break;
@@ -374,7 +374,7 @@ export const runFlowManually = createServerFn({ method: "POST" })
       for (let i = 0; i < 50; i++) {
         const { data: refreshedRun, error: refreshError } = await supabaseAdmin
           .from("flow_runs")
-          .select("id, status, current_step_id")
+          .select("id, flow_id, status, current_step_id, contact_id, org_id, next_execution_at, last_interaction_at")
           .eq("id", currentRun.id)
           .single();
         if (refreshError || !refreshedRun) break;

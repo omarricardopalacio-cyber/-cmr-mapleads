@@ -15,7 +15,9 @@
     "https://web.whatsapp.com/*",
     "https://*.maple-crm.com/*",
     "https://*.lovable.dev/*",
-    "https://*.lovable.app/*"
+    "https://*.lovable.app/*",
+    "https://*.supabase.co/*",
+    "https://*.supabase.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",

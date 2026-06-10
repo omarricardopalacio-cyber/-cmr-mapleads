@@ -165,6 +165,28 @@ async function blobToDataUri(blob: Blob): Promise<string> {
   });
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function fetchUrlToDataUri(url: string, fallbackMime?: string): Promise<{ dataUri: string; mimeType: string }> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch media URL: ${response.status}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const base64 = arrayBufferToBase64(arrayBuffer);
+  const mimeType = response.headers.get("content-type") || fallbackMime || "application/octet-stream";
+  return { dataUri: `data:${mimeType};base64,${base64}`, mimeType };
+}
+
 async function resolveMediaInServiceWorker(
   payload: Record<string, unknown>
 ): Promise<{ payload: Record<string, unknown>; error?: string }> {
@@ -173,50 +195,28 @@ async function resolveMediaInServiceWorker(
     return { payload };
   }
 
-  // Si la media ya está enlined como base64, no hay que convertirla.
-  if (typeof payload.media === "string" && payload.media.startsWith("data:")) {
-    return { payload };
-  }
-  if (typeof payload.base64 === "string" && payload.base64.length > 0) {
-    const mime = (payload.mimeType || payload.mime_type || "application/octet-stream") as string;
+  try {
+    console.log("[ServiceWorker] Remote media URL detectada, convirtiendo a data URI:", url);
+    const mimeType = (payload.mimeType || payload.mime_type) as string | undefined;
+    const { dataUri } = await fetchUrlToDataUri(url, mimeType);
     return {
       payload: {
         ...payload,
-        media: payload.base64.startsWith("data:") ? payload.base64 : `data:${mime};base64,${payload.base64}`,
+        media: dataUri,
+        mediaUrl: dataUri,
+        mimeType: mimeType || undefined,
       },
     };
-  }
-
-  try {
-    console.log("[ServiceWorker] Convierte URL pública de media a data URI:", url);
-    const res = await fetch(url);
-    if (!res.ok) {
-      const error = `Failed to fetch media (${res.status})`;
-      console.warn("[ServiceWorker] No se pudo convertir media remota a data URI, enviando URL original:", error);
-      return { payload, error };
-    }
-    const blob = await res.blob();
-    const dataUri = await blobToDataUri(blob);
-
-    const normalizedPayload = {
-      ...payload,
-      media: dataUri,
-    } as Record<string, unknown>;
-    delete normalizedPayload.mediaUrl;
-    delete normalizedPayload.media_url;
-    return { payload: normalizedPayload };
   } catch (err: any) {
-    const message = err?.message || String(err);
-    console.warn("[ServiceWorker] No se pudo convertir media remota a base64, enviando URL original:", message);
-    return { payload, error: message };
+    console.error("[ServiceWorker] No se pudo convertir media remota a data URI:", err);
+    return { payload, error: err?.message || String(err) };
   }
 }
 
 async function dispatchCommand(cmd: BackendCommand): Promise<void> {
-  const normalizedType =
-    typeof cmd.type === "string"
-      ? (cmd.type.toUpperCase() as BackendCommand["type"])
-      : cmd.type;
+  const normalizedType = typeof cmd.type === "string"
+    ? (cmd.type.toUpperCase() as BackendCommand["type"])
+    : cmd.type;
   const command: BackendCommand = { ...cmd, type: normalizedType };
 
   console.log("[ServiceWorker] Comando recibido:", command.type, cmd.id);
@@ -225,7 +225,9 @@ async function dispatchCommand(cmd: BackendCommand): Promise<void> {
   if ((command.type === "SEND_MESSAGE" || command.type === "SEND_MEDIA") && (payload.mediaUrl || payload.media_url)) {
     const resolved = await resolveMediaInServiceWorker(payload);
     if (resolved.error) {
-      console.warn("[ServiceWorker] No se pudo convertir media remota a data URI, enviando URL original:", resolved.error);
+      console.error("[ServiceWorker] Abortando comando por fallo de descarga de media:", resolved.error);
+      await sendCommandAck(command, { error: resolved.error });
+      return;
     }
     payload = resolved.payload;
   }
@@ -473,8 +475,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
 
       case "WA_REQUEST":
-        const result = await handleRequest(message);
-        sendResponse({ ok: true, payload: result });
+        console.log("[ServiceWorker] WA_REQUEST recibido desde content:", message.event, message.payload);
+        try {
+          const result = await handleRequest(message);
+          console.log("[ServiceWorker] WA_REQUEST result:", result?.mimeType ? { mimeType: result.mimeType, hasDataUri: !!result.dataUri } : result);
+          sendResponse({ ok: true, payload: result });
+        } catch (err: any) {
+          console.error("[ServiceWorker] Error en WA_REQUEST handleRequest:", err);
+          sendResponse({ ok: false, error: err?.message ?? String(err) });
+        }
         break;
 
       case "CONFIG":
@@ -645,7 +654,8 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
 }
 
 async function handleRequest(message: any): Promise<any> {
-  switch (message.payload?.type) {
+  const requestType = message.event || message.payload?.type;
+  switch (requestType) {
     case "GET_SESSIONS":
       return Array.from(activeSessions.values());
     case "GET_QUEUE_SIZE":
@@ -657,6 +667,28 @@ async function handleRequest(message: any): Promise<any> {
         backendUrl: backendUrl || "",
         sessionToken: sessionToken || "",
       };
+    case "FETCH_MEDIA": {
+      const url = message.payload?.url;
+      if (!url || typeof url !== "string") {
+        throw new Error("FETCH_MEDIA requires a valid url");
+      }
+      console.log("[ServiceWorker] FETCH_MEDIA url:", url);
+      const resp = await fetch(url);
+      console.log("[ServiceWorker] FETCH_MEDIA http status:", resp.status, resp.statusText);
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch media: ${resp.status}`);
+      }
+      const arrayBuffer = await resp.arrayBuffer();
+      const mimeType =
+        resp.headers.get("content-type") || message.payload?.mimeType || "application/octet-stream";
+      const base64 = arrayBufferToBase64(arrayBuffer);
+      const dataUri = `data:${mimeType};base64,${base64}`;
+      console.log("[ServiceWorker] FETCH_MEDIA convertido a dataUri, size:", dataUri.length, "mimeType:", mimeType);
+      return {
+        dataUri,
+        mimeType,
+      };
+    }
     default:
       return null;
   }

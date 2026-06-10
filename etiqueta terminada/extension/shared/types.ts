@@ -169,7 +169,7 @@ export interface BridgeMessage {
   direction: "INJECTED_TO_CONTENT" | "CONTENT_TO_INJECTED" | "CONTENT_TO_BACKGROUND" | "BACKGROUND_TO_CONTENT";
   channel: "WA_EVENT" | "WA_COMMAND" | "WA_REQUEST" | "WA_RESPONSE";
   id?: string;
-  event?: WAEventType;
+  event?: WAEventType | string;
   payload?: any;
   error?: string;
 }

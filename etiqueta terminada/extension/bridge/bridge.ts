@@ -5,7 +5,7 @@
 
 import { eventBus } from "./event-bus";
 import { postFromContent, postFromInjected, sendToBackground, broadcastToTabs } from "./postmessage";
-import type { BridgeMessage, WAEvent } from "../shared/types";
+import type { BridgeMessage, WAEvent, WAEventType } from "../shared/types";
 import { CONSTANTS } from "../shared/contracts";
 
 // ============================================================
@@ -15,12 +15,6 @@ import { CONSTANTS } from "../shared/contracts";
 export class ContentBridge {
   private initialized = false;
   private pendingResponses: Map<string, (payload: any) => void> = new Map();
-  private queuedCommands: Array<{
-    msg: BridgeMessage;
-    resolve: (payload: any) => void;
-    reject: (err: Error) => void;
-    timeoutId: ReturnType<typeof setTimeout>;
-  }> = [];
   public engineReady = false; // Se pone true cuando el injected engine envía eventos
 
   init() {
@@ -51,14 +45,20 @@ export class ContentBridge {
       if (!this.engineReady) {
         this.engineReady = true;
         console.log("[ContentBridge] Engine confirmado listo (WPP activo)");
-        this.flushQueuedCommands();
       }
 
+      const waEvent: WAEvent = {
+        id: bridgeMsg.id || `${Date.now()}`,
+        type: bridgeMsg.event as WAEventType,
+        payload: bridgeMsg.payload,
+        timestamp: Date.now(),
+      };
+
       // Emitir localmente en el content script (para debug / UI)
-      eventBus.emit(bridgeMsg.event, bridgeMsg.payload);
+      eventBus.emit(bridgeMsg.event as WAEventType, bridgeMsg.payload);
 
       // Enviar al background para ingest
-      sendToBackground("WA_EVENT", { event: bridgeMsg.event, payload: bridgeMsg.payload }).catch(
+      sendToBackground("WA_EVENT", { event: bridgeMsg.event, payload: waEvent }).catch(
         (err) => console.warn("[ContentBridge] Error enviando a background:", err)
       );
     }
@@ -67,9 +67,38 @@ export class ContentBridge {
     if (bridgeMsg.channel === "WA_RESPONSE" && bridgeMsg.id) {
       const resolver = this.pendingResponses.get(bridgeMsg.id);
       if (resolver) {
+        console.log("[ContentBridge] WA_RESPONSE recibido para id:", bridgeMsg.id);
         resolver(bridgeMsg.payload);
         this.pendingResponses.delete(bridgeMsg.id);
+      } else {
+        console.warn("[ContentBridge] WA_RESPONSE sin resolver registrado para id:", bridgeMsg.id, bridgeMsg.payload);
       }
+      return;
+    }
+
+    // Peticiones del injected script a este content script
+    if (bridgeMsg.channel === "WA_REQUEST" && bridgeMsg.event === "FETCH_MEDIA") {
+      console.log("[ContentBridge] WA_REQUEST FETCH_MEDIA recibido desde injected:", bridgeMsg.id, bridgeMsg.payload);
+      (async () => {
+        try {
+          const result = await sendToBackground("WA_REQUEST", {
+            event: "FETCH_MEDIA",
+            payload: bridgeMsg.payload,
+          });
+          console.log("[ContentBridge] Resultado de background WA_REQUEST FETCH_MEDIA:", result);
+          postFromContent("WA_RESPONSE", {
+            id: bridgeMsg.id,
+            payload: result?.payload ?? { error: "Sin respuesta de background" },
+          });
+        } catch (err: any) {
+          console.error("[ContentBridge] Error enviando FETCH_MEDIA a background:", err);
+          postFromContent("WA_RESPONSE", {
+            id: bridgeMsg.id,
+            payload: { error: err?.message ?? String(err) },
+          });
+        }
+      })();
+      return;
     }
   };
 
@@ -96,7 +125,7 @@ export class ContentBridge {
 
     // Broadcast de eventos
     if (bridgeMsg.channel === "WA_EVENT") {
-      eventBus.emit(bridgeMsg.event!, bridgeMsg.payload);
+      eventBus.emit(bridgeMsg.event as WAEventType, bridgeMsg.payload);
       sendResponse({ ok: true });
       return false;
     }
@@ -109,11 +138,6 @@ export class ContentBridge {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(msg.id!);
-        const index = this.queuedCommands.findIndex((item) => item.msg.id === msg.id);
-        if (index >= 0) {
-          clearTimeout(this.queuedCommands[index].timeoutId);
-          this.queuedCommands.splice(index, 1);
-        }
         reject(new Error("[ContentBridge] Timeout esperando respuesta del injected script"));
       }, 15000);
 
@@ -122,44 +146,12 @@ export class ContentBridge {
         resolve(payload);
       });
 
-      if (!this.engineReady) {
-        console.log("[ContentBridge] Engine no listo, encolando comando para enviarlo cuando se active:", msg.event, msg.id);
-        const queuedTimeout = setTimeout(() => {
-          const index = this.queuedCommands.findIndex((item) => item.msg.id === msg.id);
-          if (index >= 0) {
-            const item = this.queuedCommands[index];
-            this.queuedCommands.splice(index, 1);
-            item.reject(new Error("[ContentBridge] Timeout esperando engine listo"));
-          }
-        }, 15000);
-
-        this.queuedCommands.push({ msg, resolve, reject, timeoutId: queuedTimeout });
-        return;
-      }
-
       postFromContent("WA_COMMAND", {
         id: msg.id,
         event: msg.event,
         payload: msg.payload,
       });
     });
-  }
-
-  private flushQueuedCommands(): void {
-    if (this.queuedCommands.length === 0) return;
-
-    console.log("[ContentBridge] Flush de comandos encolados, engine ya listo. Cantidad:", this.queuedCommands.length);
-    const queued = [...this.queuedCommands];
-    this.queuedCommands.length = 0;
-
-    for (const item of queued) {
-      clearTimeout(item.timeoutId);
-      postFromContent("WA_COMMAND", {
-        id: item.msg.id,
-        event: item.msg.event,
-        payload: item.msg.payload,
-      });
-    }
   }
 
   destroy() {

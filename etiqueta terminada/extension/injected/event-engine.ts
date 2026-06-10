@@ -8,6 +8,12 @@ import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
 import { isBase64Thumbnail, sanitizeMessageBody } from "../shared/message-text";
 
+declare global {
+  interface Window {
+    __MAPLE_CONTACT_ENRICHER_LOADED?: boolean;
+  }
+}
+
 let listenersInitialized = false;
 let cleanupFns: Array<() => void> = [];
 
@@ -90,7 +96,7 @@ function registerNewMessage(WPP: NonNullable<typeof window.WPP>): void {
     WPP.prependListener("chat.new_message", handler, { objectify: true });
   } else if (typeof WPP.on === "function") {
     console.warn("[EventEngine] WPP.prependListener no disponible, usando on() para chat.new_message");
-    (WPP as any).on("chat.new_message", handler, { objectify: true });
+    WPP.on("chat.new_message", handler);
   } else {
     console.warn("[EventEngine] WPP no soporta prependListener ni on para chat.new_message");
   }
@@ -625,8 +631,8 @@ export function destroyEventEngine(): void {
 // los contactos con foto de perfil, nombre y teléfono.
 // ============================================================
 (function(){
-  if ((window as any).__MAPLE_CONTACT_ENRICHER_LOADED) return;
-  (window as any).__MAPLE_CONTACT_ENRICHER_LOADED = true;
+  if (window.__MAPLE_CONTACT_ENRICHER_LOADED) return;
+  window.__MAPLE_CONTACT_ENRICHER_LOADED = true;
 
   const LID_CACHE = new Map();   // waId(lid) -> phone(digits)
   const SENT_CACHE = new Map();  // waId -> timestamp last emit

@@ -4,7 +4,7 @@
 
 import { eventBus } from "../bridge/event-bus";
 import { sendToBackground } from "../bridge/postmessage";
-import type { BridgeMessage, WAEvent } from "../shared/types";
+import type { BridgeMessage, WAEvent, WAEventType } from "../shared/types";
 
 // Escuchar eventos del injected script y reenviar al backend
 export function setupBridgeListener(): void {
@@ -16,16 +16,15 @@ export function setupBridgeListener(): void {
     const bridgeMsg = msg as BridgeMessage & { source: string };
 
     if (bridgeMsg.channel === "WA_EVENT" && bridgeMsg.event) {
-      // Reenviar al background para ingest
       const waEvent: WAEvent = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        type: bridgeMsg.event,
+        type: bridgeMsg.event as WAEventType,
         payload: bridgeMsg.payload,
         timestamp: Date.now(),
       };
 
       sendToBackground("WA_EVENT", {
-        event: bridgeMsg.event,
+        event: bridgeMsg.event as WAEventType,
         payload: waEvent,
       }).catch((err) => {
         console.warn("[BridgeListener] Error enviando a background:", err);

@@ -2,7 +2,7 @@
 // MAPLE WA ENGINE — PostMessage Bridge (Injected ↔ Content)
 // ============================================================
 
-import type { BridgeMessage, WAEventType } from "../shared/types";
+import type { BridgeMessage } from "../shared/types";
 import { CONSTANTS } from "../shared/contracts";
 
 // ID único para requests
@@ -16,7 +16,7 @@ function generateId(): string {
 
 export function postFromInjected(
   channel: BridgeMessage["channel"],
-  data: { event?: WAEventType; payload?: any; id?: string }
+  data: { event?: string; payload?: any; id?: string }
 ): void {
   const message: BridgeMessage = {
     direction: "INJECTED_TO_CONTENT",
@@ -27,7 +27,7 @@ export function postFromInjected(
   };
   window.postMessage(
     { source: "MAPLE_WA_INJECTED", ...message },
-    "*"
+    "https://web.whatsapp.com"
   );
 }
 
@@ -37,7 +37,7 @@ export function postFromInjected(
 
 export function postFromContent(
   channel: BridgeMessage["channel"],
-  data: { event?: WAEventType; payload?: any; id?: string }
+  data: { event?: string; payload?: any; id?: string }
 ): void {
   const message: BridgeMessage = {
     direction: "CONTENT_TO_INJECTED",
@@ -48,7 +48,7 @@ export function postFromContent(
   };
   window.postMessage(
     { source: "MAPLE_WA_CONTENT", ...message },
-    "*"
+    "https://web.whatsapp.com"
   );
 }
 
@@ -58,7 +58,7 @@ export function postFromContent(
 
 export function sendToBackground(
   channel: BridgeMessage["channel"],
-  data: { event?: WAEventType; payload?: any; id?: string }
+  data: { event?: string; payload?: any; id?: string }
 ): Promise<any> {
   const message = {
     source: "MAPLE_WA_CONTENT",
@@ -76,7 +76,7 @@ export function sendToBackground(
 
 export async function broadcastToTabs(
   channel: BridgeMessage["channel"],
-  data: { event?: WAEventType; payload?: any }
+  data: { event?: string; payload?: any }
 ): Promise<void> {
   const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
   const message = {
