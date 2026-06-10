@@ -1249,21 +1249,12 @@ REGLAS GENERALES:
       result = await callAiProvider(cfg, msgs, tools, notifyRetryMessage);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn('[runAiAgent] round failed, attempting fallback or terminating', {
+      console.warn('[runAiAgent] round failed, attempting fallback or continuing', {
         round,
         error: errMsg,
         provider: cfg.selected_provider || cfg.provider,
         hasActions: actions.length > 0,
       });
-      
-      // Si ya tenemos actions (imágenes, tools), salimos del loop gracefully
-      if (actions.length > 0) {
-        console.info('[runAiAgent] already have actions/results, stopping loop to avoid compounding errors', {
-          round,
-          actionsCount: actions.length,
-        });
-        break;
-      }
       
       // Si es Vertex y hay proveedor alternativo, intentar fallback
       if ((cfg.selected_provider === 'vertex' || cfg.provider === 'vertex') &&
@@ -1273,7 +1264,10 @@ REGLAS GENERALES:
           result = await fallbackVertexProvider(cfg, msgs, tools);
         } catch (fallbackErr) {
           console.error('[runAiAgent] fallback also failed', fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
-          break;
+          // No break: permitir que el loop continúe en la siguiente ronda
+          // Usar respuesta genérica para mantener conversación viva
+          result = { text: '', toolCalls: undefined };
+          continue;
         }
       } else {
         // Error que no es de Vertex o no hay fallback disponible
@@ -1281,8 +1275,13 @@ REGLAS GENERALES:
       }
     }
 
+    if (!result) {
+      console.warn('[runAiAgent] result is undefined after error handling, using safe fallback');
+      result = { text: '', toolCalls: undefined };
+    }
+
     const { text, toolCalls } = result;
-    lastText = text;
+    lastText = text || lastText;
 
     if (!toolCalls?.length) {
       const finalText = text || lastText;
