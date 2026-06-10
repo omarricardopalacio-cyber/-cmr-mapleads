@@ -1232,7 +1232,44 @@ REGLAS GENERALES:
   };
 
   for (let round = 0; round < 6; round++) {
-    const { text, toolCalls } = await callAiProvider(cfg, msgs, tools, notifyRetryMessage);
+    let result;
+    try {
+      result = await callAiProvider(cfg, msgs, tools, notifyRetryMessage);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn('[runAiAgent] round failed, attempting fallback or terminating', {
+        round,
+        error: errMsg,
+        provider: cfg.selected_provider || cfg.provider,
+        hasActions: actions.length > 0,
+      });
+      
+      // Si ya tenemos actions (imágenes, tools), salimos del loop gracefully
+      if (actions.length > 0) {
+        console.info('[runAiAgent] already have actions/results, stopping loop to avoid compounding errors', {
+          round,
+          actionsCount: actions.length,
+        });
+        break;
+      }
+      
+      // Si es Vertex y hay proveedor alternativo, intentar fallback
+      if ((cfg.selected_provider === 'vertex' || cfg.provider === 'vertex') &&
+          (errMsg.includes('Vertex 429') || errMsg.includes('Vertex 503') || errMsg.includes('RESOURCE_EXHAUSTED'))) {
+        try {
+          console.info('[runAiAgent] Vertex failed in loop, attempting fallback provider');
+          result = await fallbackVertexProvider(cfg, msgs, tools);
+        } catch (fallbackErr) {
+          console.error('[runAiAgent] fallback also failed', fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
+          break;
+        }
+      } else {
+        // Error que no es de Vertex o no hay fallback disponible
+        throw err;
+      }
+    }
+
+    const { text, toolCalls } = result;
     lastText = text;
 
     if (!toolCalls?.length) {
