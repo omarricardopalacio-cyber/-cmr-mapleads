@@ -353,7 +353,19 @@ export const runFlowManually = createServerFn({ method: "POST" })
       .single();
       
     if (error) throw new Error(error.message);
-    if (run) await processRun(run);
+    // Ejecutar pasos eagerly hasta toparnos con un wait/end (con tope de seguridad)
+    let cur = run;
+    for (let i = 0; i < 50 && cur; i++) {
+      await processRun(cur);
+      const { data: refreshed } = await supabaseAdmin
+        .from("flow_runs")
+        .select("id, flow_id, current_step_id, status, contact_id, next_execution_at, last_interaction_at, org_id")
+        .eq("id", cur.id)
+        .maybeSingle();
+      if (!refreshed) break;
+      if (["wait_node", "completed", "paused", "cancelled"].includes(refreshed.status)) break;
+      cur = refreshed;
+    }
     return { run };
   });
 
