@@ -570,16 +570,15 @@ REGLAS ESTRICTAS PARA ESTA RESPUESTA:
       cfg: cfgFast,
     })
 
-    if (actions.some((a) => a === 'send_product_image' || a === 'send_product_video')) {
-      return
-    }
+    const hasProductMediaActions = actions.some((a) => a === 'send_product_image' || a === 'send_product_video')
+    const finalReply = reply?.trim() || (hasProductMediaActions ? 'Dime cuál de estas opciones te agrada?' : '')
+    if (!finalReply) return
 
-    if (!reply?.trim()) return
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,
       session_id: sessionId,
       type: 'SEND_MESSAGE',
-      payload: { chatId, text: reply.trim() },
+      payload: { chatId, text: finalReply },
       status: 'pending',
     })
   } catch (err) {
