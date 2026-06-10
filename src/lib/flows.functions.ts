@@ -336,6 +336,21 @@ export const runFlowManually = createServerFn({ method: "POST" })
         .single();
 
       if (error) throw new Error(error.message);
+      if (run) {
+        await processRun(run);
+        let currentRun = run;
+        for (let i = 0; i < 50; i++) {
+          const { data: refreshedRun, error: refreshError } = await supabaseAdmin
+            .from("flow_runs")
+            .select("id, status, current_step_id")
+            .eq("id", currentRun.id)
+            .single();
+          if (refreshError || !refreshedRun) break;
+          if (["wait_node", "completed", "paused"].includes(refreshedRun.status)) break;
+          currentRun = refreshedRun;
+          await processRun(currentRun);
+        }
+      }
       return { run };
     }
 
@@ -353,18 +368,20 @@ export const runFlowManually = createServerFn({ method: "POST" })
       .single();
       
     if (error) throw new Error(error.message);
-    // Ejecutar pasos eagerly hasta toparnos con un wait/end (con tope de seguridad)
-    let cur = run;
-    for (let i = 0; i < 50 && cur; i++) {
-      await processRun(cur);
-      const { data: refreshed } = await supabaseAdmin
-        .from("flow_runs")
-        .select("id, flow_id, current_step_id, status, contact_id, next_execution_at, last_interaction_at, org_id")
-        .eq("id", cur.id)
-        .maybeSingle();
-      if (!refreshed) break;
-      if (["wait_node", "completed", "paused", "cancelled"].includes(refreshed.status)) break;
-      cur = refreshed;
+    if (run) {
+      await processRun(run);
+      let currentRun = run;
+      for (let i = 0; i < 50; i++) {
+        const { data: refreshedRun, error: refreshError } = await supabaseAdmin
+          .from("flow_runs")
+          .select("id, status, current_step_id")
+          .eq("id", currentRun.id)
+          .single();
+        if (refreshError || !refreshedRun) break;
+        if (["wait_node", "completed", "paused"].includes(refreshedRun.status)) break;
+        currentRun = refreshedRun;
+        await processRun(currentRun);
+      }
     }
     return { run };
   });
