@@ -371,20 +371,30 @@ export async function callVertexAI(opts: {
     body.tools = [{ functionDeclarations: openAIToolsToVertex(opts.tools) }];
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Vertex ${res.status}: ${text.slice(0, 400)}`);
+  // Agregar AbortController con timeout de 45 segundos
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+  
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Vertex ${res.status}: ${text.slice(0, 400)}`);
+    }
+    return res;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  const j: any = await res.json();
-  return parseVertexResponse(j);
+    const j: any = res.json();
+    return parseVertexResponse(j);
 }
 
 /* ============================================================
@@ -783,15 +793,32 @@ export async function runAiAgent({
   messages: Msg[];
   cfg: Record<string, unknown>;
 }): Promise<{ reply: string; actions: string[] }> {
-  // Cargar integración de catálogo (si está activa)
-  const catalogCfg = await getCatalogConfig(orgId);
+  let catalogCfg, threadRow, orderFieldsData, knowledgeSourcesData;
+  
+  // Envolver todas las queries de BD en try-catch
+  try {
+    // Cargar integración de catálogo (si está activa)
+    catalogCfg = await getCatalogConfig(orgId);
+  } catch (err) {
+    console.error('[runAiAgent] getCatalogConfig failed', err, { orgId });
+    catalogCfg = null;
+  }
+  
   const tools = catalogCfg ? [...CRM_TOOLS, ...CATALOG_TOOLS] : CRM_TOOLS;
 
-  const { data: threadRow } = await supabaseAdmin
-    .from('threads')
-    .select('purchase_intent')
-    .eq('id', threadId)
-    .maybeSingle();
+  // Cargar thread con manejo de error
+  try {
+    const result = await supabaseAdmin
+      .from('threads')
+      .select('purchase_intent')
+      .eq('id', threadId)
+      .maybeSingle();
+    threadRow = result.data;
+  } catch (err) {
+    console.error('[runAiAgent] threads query failed', err, { threadId, orgId });
+    threadRow = null;
+  }
+  
   const purchaseIntent = (threadRow as any)?.purchase_intent || 'none';
   const isCollectingOrder = purchaseIntent === 'collecting_data';
   const orderStateText = `\n\n=== ESTADO ACTUAL DEL THREAD ===\nestado_pedido: ${purchaseIntent}\n${
@@ -827,24 +854,36 @@ REGLAS GENERALES:
 - Si el cliente muestra interés en un producto, continúa desde ahí o pasa al modo de pedido.
 `.trim();
 
-  // Load order fields
-  const { data: orderFieldsData } = await supabaseAdmin
-    .from("order_fields")
-    .select("name, is_required")
-    .eq("org_id", orgId)
-    .order("display_order", { ascending: true });
+  // Load order fields con manejo de error
+  try {
+    const result = await supabaseAdmin
+      .from("order_fields")
+      .select("name, is_required")
+      .eq("org_id", orgId)
+      .order("display_order", { ascending: true });
+    orderFieldsData = result.data;
+  } catch (err) {
+    console.error('[runAiAgent] order_fields query failed', err, { orgId });
+    orderFieldsData = null;
+  }
     
   const orderFields = orderFieldsData ?? [];
   const orderFieldsText = orderFields.length 
     ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si desea agendar o hacer pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. Si falta algún dato requerido, insiste amablemente pero no sigas sin él. Repite las preguntas solo cuando sean necesarias.\n4. Cuando tengas todos los datos, muestra un resumen claro y pregunta: "¿La información es correcta para confirmar su pedido?"\n5. SOLO cuando el cliente confirme explícitamente, ejecuta la herramienta confirm_order con form_data como JSON. NO digas "pedido registrado" ni confirmes el pedido si no ejecutas confirm_order.\n6. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no puede considerarse pedido confirmado.\n7. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso."`
     : "";
 
-  // Load knowledge sources
-  const { data: knowledgeSourcesData } = await supabaseAdmin
-    .from("knowledge_sources")
-    .select("name, source_type, content")
-    .eq("org_id", orgId)
-    .eq("is_active", true);
+  // Load knowledge sources con manejo de error
+  try {
+    const result = await supabaseAdmin
+      .from("knowledge_sources")
+      .select("name, source_type, content")
+      .eq("org_id", orgId)
+      .eq("is_active", true);
+    knowledgeSourcesData = result.data;
+  } catch (err) {
+    console.error('[runAiAgent] knowledge_sources query failed', err, { orgId });
+    knowledgeSourcesData = null;
+  }
 
   const knowledgeSourcesText = knowledgeSourcesData?.length
     ? `\n\n=== FUENTES DE CONOCIMIENTO ADICIONALES ===\n${knowledgeSourcesData

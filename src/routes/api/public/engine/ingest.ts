@@ -613,21 +613,40 @@ async function maybeAiReply(
       status: 'pending',
     })
   } catch (err) {
-    console.error('[ai-reply] error', err, {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : '';
+    
+    console.error('[ai-reply] error - DETALLES COMPLETOS:', {
+      message: errMsg,
+      stack: errStack?.slice(0, 500),
       orgId,
       threadId,
       chatId,
       provider: cfg?.provider,
       model: cfg?.model,
       selected_provider: cfg?.selected_provider,
+      hasVertexKey: !!cfg?.vertex_service_account_json,
     })
+    
+    // Generar mensaje de error más específico
+    let errorMessage = 'Disculpa, tuve un problema... ¿puedes repetir tu pedido?';
+    
+    if (errMsg.includes('Vertex')) {
+      errorMessage = 'Error en el servicio de IA (Vertex). Por favor, intenta de nuevo.';
+    } else if (errMsg.includes('timeout') || errMsg.includes('AbortError')) {
+      errorMessage = 'La respuesta tardó demasiado. Por favor, intenta de nuevo en unos segundos.';
+    } else if (errMsg.includes('429')) {
+      errorMessage = 'Sistema ocupado. Por favor, espera un momento e intenta de nuevo.';
+    } else if (errMsg.includes('API') || errMsg.includes('key')) {
+      errorMessage = 'Error de configuración del servicio. Por favor, contacta al administrador.';
+    }
 
     if (sessionId && chatId) {
       await supabaseAdmin.from('engine_commands').insert({
         org_id: orgId,
         session_id: sessionId,
         type: 'SEND_MESSAGE',
-        payload: { chatId, text: 'Disculpa, tuve un problema... ¿puedes repetir tu pedido?' },
+        payload: { chatId, text: errorMessage },
         status: 'pending',
       })
     }
