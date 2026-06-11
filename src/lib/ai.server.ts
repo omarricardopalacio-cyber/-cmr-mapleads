@@ -832,24 +832,75 @@ export async function executeToolCall(
       // Parsing failed, no insert attempt.
     } else {
       // Evitar duplicados: si ya hay un pedido confirmado en este hilo con los mismos datos.
+        const isRecoveryFormData = (data: Record<string, unknown>) => {
+        const origin = String(data?.Origen ?? data?._source_message_id ?? data?.origin ?? "");
+        return origin.includes("Recuperación automática") || origin.includes("Reparación automática") || Boolean(data?._source_message_id);
+      };
+
       if (threadId) {
-        const { data: existingOrder, error: existingError } = await (supabaseAdmin as any)
+        const { data: existingOrders, error: existingError } = await (supabaseAdmin as any)
           .from("orders")
           .select("id, form_data")
           .eq("org_id", orgId)
           .eq("thread_id", threadId)
           .eq("status", "confirmed")
-          .limit(1)
-          .maybeSingle();
+          .order("created_at", { ascending: false });
 
-        if (!existingError && existingOrder) {
-          const orderData = typeof existingOrder.form_data === "string"
-            ? JSON.parse(existingOrder.form_data || "{}")
-            : existingOrder.form_data || {};
-          const sameData = stableStringify(orderData) === stableStringify(formData);
-          if (sameData) {
-            result = "Ya existe un pedido confirmado igual para esta conversación. No se creó un duplicado.";
-            details = `Pedido duplicado evitado para hilo ${threadId}`;
+        if (!existingError && Array.isArray(existingOrders) && existingOrders.length) {
+          const newIsRecovery = isRecoveryFormData(formData);
+          let recoveryOrderToUpdate: { id: string; form_data: unknown } | null = null;
+
+          for (const existingOrder of existingOrders) {
+            let existingData: Record<string, unknown> = {};
+            try {
+              existingData = typeof existingOrder.form_data === "string"
+                ? JSON.parse(existingOrder.form_data || "{}")
+                : existingOrder.form_data || {};
+            } catch {
+              existingData = {};
+            }
+
+            const sameData = stableStringify(existingData) === stableStringify(formData);
+            const existingIsRecovery = isRecoveryFormData(existingData);
+
+            if (sameData) {
+              result = "Ya existe un pedido confirmado igual para esta conversación. No se creó un duplicado.";
+              details = `Pedido duplicado evitado para hilo ${threadId}`;
+              return { name, result };
+            }
+
+            if (newIsRecovery && !existingIsRecovery) {
+              result = "Ya existe un pedido confirmado igual para esta conversación. No se creó un duplicado.";
+              details = `Pedido duplicado evitado para hilo ${threadId}`;
+              return { name, result };
+            }
+
+            if (existingIsRecovery && !sameData && !recoveryOrderToUpdate) {
+              recoveryOrderToUpdate = existingOrder;
+            }
+          }
+
+          if (recoveryOrderToUpdate) {
+            const { error: updateError } = await (supabaseAdmin as any)
+              .from("orders")
+              .update({ form_data: formData, status: "confirmed" })
+              .eq("id", recoveryOrderToUpdate.id)
+              .eq("org_id", orgId);
+
+            if (updateError) {
+              result = `Error actualizando el pedido: ${updateError.message}`;
+              details = `orders update failed: ${updateError.message}`;
+              return { name, result };
+            }
+
+            await (supabaseAdmin as any)
+              .from("threads")
+              .update({ purchase_intent: "compro" })
+              .eq("id", threadId)
+              .eq("org_id", orgId);
+
+            result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+            details = `Pedido actualizado con datos reales en el registro de recuperación (id ${recoveryOrderToUpdate.id}).`;
             return { name, result };
           }
         }
@@ -887,7 +938,7 @@ export async function executeToolCall(
     } else {
       try {
         const q = (args.query || "").toString().trim();
-        const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 5);
+        const limit = Math.min(Math.max(Number(args.limit) || 6, 1), 6);
         const products = await searchCatalog(catalogCfg, q, limit);
         ctx.lastProducts = products;
 
@@ -1027,7 +1078,7 @@ MODO A — RECOPILANDO DATOS DEL PEDIDO:
 
 MODO B — DESCUBRIENDO PRODUCTOS:
 1. Cuando el cliente pregunta por catálogo, modelos, fotos, videos, precios, stock o referencias, llama primero a search_products con la palabra clave.
-2. Si hay resultados, responde enviando imágenes de los mejores 3 productos usando send_product_image una vez por producto.
+2. Si hay resultados, responde enviando imágenes de los mejores 6 productos usando send_product_image una vez por producto.
 3. El caption de cada imagen debe ser corto y contener nombre y precio: "<nombre> — $<precio>".
 4. Después de enviar las imágenes, escribe un mensaje corto y natural invitando al cliente a elegir o preguntar más. Evita listados de texto.
 5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), usa send_product_image con product_reference exactamente como lo dijo.
@@ -1038,7 +1089,7 @@ MODO B — DESCUBRIENDO PRODUCTOS:
    d. NO digas que enviarás video — directamente EJECUTA la herramienta send_product_video DENTRO DEL MISMO TURNO.
    e. Si el cliente dice que no, continúa normalmente sin enviar video.
 
-- Si ya mostraste hasta 3 imágenes de productos y el cliente elige uno, envía SÓLO una imagen adicional del producto elegido y agrega el valor de envío en ese mensaje. No repitas varias imágenes adicionales.
+- Si ya mostraste hasta 6 imágenes de productos y el cliente elige uno, envía SÓLO una imagen adicional del producto elegido y agrega el valor de envío en ese mensaje. No repitas varias imágenes adicionales.
 - Al confirmar el producto seleccionado, menciona claramente el valor de envío junto al precio final.
 7. Si el cliente pide video DIRECTAMENTE (ej: "¿tienes video de esto?", "muéstrame video"), LLAMA send_product_video INMEDIATAMENTE sin esperar confirmación adicional.
 8. Si no hay video disponible, dilo y ofrece alternativamente send_product_image o detalles en texto.
@@ -1435,7 +1486,7 @@ REGLAS GENERALES:
           const parsed = JSON.parse(exec.result || "{}");
           const productsFromTool = parsed?.products ?? [];
           if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
-            const top = productsFromTool.slice(0, 3);
+            const top = productsFromTool.slice(0, 6);
             const ids = top.map((p: any) => p.id).filter(Boolean);
             const listText = top
               .map((p: any, i: number) => `${i + 1}. ${p.name} — $${p.price ?? ""} (id: ${p.id})`)
@@ -1446,7 +1497,7 @@ REGLAS GENERALES:
                 .join('\n');
               msgs.push({
                 role: "system",
-                content: `Resultados de catálogo listos (${productsFromTool.length}). EN ESTE MISMO TURNO, emite ${top.length} llamadas tool_calls en paralelo, UNA por producto, exactamente como sigue:\n${calls}\n\nNO envíes texto adicional en este mismo turno. Después de que las imágenes se entreguen, en el SIGUIENTE turno emite un mensaje corto de cierre OBLIGATORIO invitando al cliente a elegir (por ejemplo: "¿Cuál te llama la atención?" o "¿Quieres más detalles de alguno?"). Nunca dejes la conversación solo con imágenes — el mensaje de cierre en el turno siguiente es obligatorio. Si el cliente muestra interés en comprar, ofrece preguntar "¿Deseas agendar tu pedido?" para pasar a la recolección de datos.`,
+                content: `Resultados de catálogo listos (${productsFromTool.length}). EN ESTE MISMO TURNO, emite hasta ${top.length} llamadas tool_calls en paralelo, UNA por producto, exactamente como sigue:\n${calls}\n\nNO envíes texto adicional en este mismo turno. Después de que las imágenes se entreguen, en el SIGUIENTE turno emite un mensaje corto de cierre OBLIGATORIO invitando al cliente a elegir (por ejemplo: "¿Cuál te llama la atención?" o "¿Quieres más detalles de alguno?"). Nunca dejes la conversación solo con imágenes — el mensaje de cierre en el turno siguiente es obligatorio. Si el cliente muestra interés en comprar, ofrece preguntar "¿Deseas agendar tu pedido?" para pasar a la recolección de datos.`,
               });
             }
           }

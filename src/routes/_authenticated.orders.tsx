@@ -258,15 +258,25 @@ function OrdersModule() {
   }
 
   function printGuide(order: any) {
-    const fd = typeof order.form_data === 'string' ? JSON.parse(order.form_data) : (order.form_data || {})
-    const orderLogoUrl = fd.logo_url || fd.logoUrl || fd.logo || ''
+    let fd: Record<string, unknown> = {}
+    try {
+      fd = typeof order.form_data === 'string'
+        ? JSON.parse(order.form_data || '{}')
+        : order.form_data || {}
+    } catch {
+      fd = {}
+    }
+
+    const orderLogoUrl = String(fd.logo_url || fd.logoUrl || fd.logo || '')
     const logoUrl = organizationOrderLogoUrl || orderLogoUrl || ''
-    const orderFieldsList = fields.map((field) => field.name)
+    const orderFieldsList = Array.isArray(fields) ? fields.map((field) => String(field.name)) : []
+
     const formatValue = (value: unknown) => {
       if (value === null || value === undefined || value === '') return '-'
       if (typeof value === 'object') return JSON.stringify(value, null, 2)
       return String(value)
     }
+
     const escapeHtml = (text: string) =>
       text
         .replace(/&/g, '&amp;')
@@ -275,16 +285,25 @@ function OrdersModule() {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;')
 
+    const normalizedFieldLabels = new Map(orderFieldsList.map((name) => [name, name]))
     const fixedRows = orderFieldsList
-      .filter((name) => name in fd)
-      .map((name) => ({ label: name, value: formatValue(fd[name]) }))
+      .filter((name) => Object.prototype.hasOwnProperty.call(fd, name))
+      .map((name) => ({ label: normalizedFieldLabels.get(name) ?? name, value: formatValue(fd[name]) }))
+
+    const excludedKeys = new Set([
+      'logo_url',
+      'logoUrl',
+      'logo',
+      '_source_message_id',
+      'Origen',
+      'Historial reciente',
+      'Confirmación cliente',
+      'Respuesta de confirmación enviada',
+      'Registrado en',
+    ])
 
     const extras = Object.entries(fd)
-      .filter(
-        ([key]) =>
-          !['logo_url', 'logoUrl', 'logo', '_source_message_id', 'Origen', 'Historial reciente', 'Confirmación cliente', 'Respuesta de confirmación enviada', 'Registrado en'].includes(key) &&
-          !orderFieldsList.includes(key),
-      )
+      .filter(([key]) => !excludedKeys.has(key) && !orderFieldsList.includes(key))
       .map(([key, value]) => ({ label: key, value: formatValue(value) }))
 
     const itemRows = Array.isArray(fd.items) ? fd.items : []
@@ -317,23 +336,23 @@ function OrdersModule() {
           <div class="header">
             ${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Logo" />` : ''}
             <h2>Guía de Pedido</h2>
-            <div class="subtitle">Pedido #${escapeHtml(order.id)}</div>
+            <div class="subtitle">Pedido #${escapeHtml(String(order.id))}</div>
           </div>
 
           <div class="section">
             <div class="section-title">Datos del Pedido</div>
             <div class="row"><div class="label">Fecha</div><div class="val">${escapeHtml(new Date(order.created_at).toLocaleString())}</div></div>
-            <div class="row"><div class="label">Teléfono</div><div class="val">${escapeHtml(order.contacts?.phone || 'No registrado')}</div></div>
-            <div class="row"><div class="label">Estado</div><div class="val">${escapeHtml(order.status || 'Sin estado')}</div></div>
+            <div class="row"><div class="label">Teléfono</div><div class="val">${escapeHtml(String(order.contacts?.phone || 'No registrado'))}</div></div>
+            <div class="row"><div class="label">Estado</div><div class="val">${escapeHtml(String(order.status || 'Sin estado'))}</div></div>
           </div>
 
           <div class="section">
             <div class="section-title">Detalles del Pedido</div>
             ${fixedRows.length ? fixedRows.map((row) => `
-              <div class="row"><div class="label">${escapeHtml(row.label)}</div><div class="val">${escapeHtml(row.value)}</div></div>
+              <div class="row"><div class="label">${escapeHtml(String(row.label))}</div><div class="val">${escapeHtml(String(row.value))}</div></div>
             `).join('') : '<div class="row"><div class="val">No hay datos estructurados.</div></div>'}
             ${extras.length ? extras.map((row) => `
-              <div class="row"><div class="label">${escapeHtml(row.label)}</div><div class="val">${escapeHtml(row.value)}</div></div>
+              <div class="row"><div class="label">${escapeHtml(String(row.label))}</div><div class="val">${escapeHtml(String(row.value))}</div></div>
             `).join('') : ''}
           </div>
 
@@ -345,9 +364,9 @@ function OrdersModule() {
                 <tbody>
                   ${itemRows.map((item: any) => `
                     <tr>
-                      <td>${escapeHtml(item.name || item.product || item.description || 'Artículo')}</td>
-                      <td>${escapeHtml(item.quantity?.toString() || item.qty?.toString() || '-')}</td>
-                      <td>${escapeHtml(item.price?.toString() || item.unit_price?.toString() || '-')}</td>
+                      <td>${escapeHtml(String(item.name || item.product || item.description || 'Artículo'))}</td>
+                      <td>${escapeHtml(String(item.quantity ?? item.qty ?? '-'))}</td>
+                      <td>${escapeHtml(String(item.price ?? item.unit_price ?? '-'))}</td>
                     </tr>
                   `).join('')}
                 </tbody>
