@@ -1037,6 +1037,9 @@ MODO B — DESCUBRIENDO PRODUCTOS:
    c. Si el cliente confirma (sí, si, claro, ok, dale, etc.), EJECUTA INMEDIATAMENTE send_product_video con el product_id o product_reference del producto en cuestión.
    d. NO digas que enviarás video — directamente EJECUTA la herramienta send_product_video DENTRO DEL MISMO TURNO.
    e. Si el cliente dice que no, continúa normalmente sin enviar video.
+
+- Si ya mostraste hasta 3 imágenes de productos y el cliente elige uno, envía SÓLO una imagen adicional del producto elegido y agrega el valor de envío en ese mensaje. No repitas varias imágenes adicionales.
+- Al confirmar el producto seleccionado, menciona claramente el valor de envío junto al precio final.
 7. Si el cliente pide video DIRECTAMENTE (ej: "¿tienes video de esto?", "muéstrame video"), LLAMA send_product_video INMEDIATAMENTE sin esperar confirmación adicional.
 8. Si no hay video disponible, dilo y ofrece alternativamente send_product_image o detalles en texto.
 9. Si no hay productos, RESPONDE DE FORMA NATURAL Y CONVERSACIONAL (no robótica):
@@ -1253,8 +1256,9 @@ REGLAS GENERALES:
       .map((m) => m.content ?? "")
       .join(" \n");
 
-    const confirmationPrompt = /\b(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa]|pedido.*bien|confirmar.*pedido|confirmaci[oó]n.*pedido|¿.*correct[oa].*pedido|¿.*informaci[oó]n.*correcta|¿.*quieres que registre|¿.*quieres que lo registre)\b/i;
-    return isExplicitCustomerConfirmation(lastUser) && confirmationPrompt.test(recentAssistantPrompts);
+    const confirmationPrompt = /\b(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa]|pedido.*bien|confirmar.*pedido|confirmaci[oó]n.*pedido|¿.*correct[oa].*pedido|¿.*informaci[oó]n.*correcta|¿.*quieres que registre|¿.*quieres que lo registre|registralo|reg[íi]stralo|guardalo|confirmalo)\b/i;
+    const orderContextPrompt = /\b(pedido|resumen|confirmaci[oó]n|datos.*pedido|guardar|registrar|confirmar)\b/i;
+    return isExplicitCustomerConfirmation(lastUser) && (confirmationPrompt.test(recentAssistantPrompts) || orderContextPrompt.test(recentAssistantPrompts));
   };
 
   const markCollectingOrderDataIfNeeded = async (replyText: string) => {

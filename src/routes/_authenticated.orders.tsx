@@ -112,6 +112,9 @@ function OrdersModule() {
 
       if (configRes.error) {
         console.error('Error cargando logo de pedidos:', configRes.error)
+        if (!String(configRes.error.message ?? '').includes('order_logo_url')) {
+          toast.error('Error cargando logo de pedidos: ' + configRes.error.message)
+        }
       } else if (configRes.data) {
         setOrganizationOrderLogoUrl(configRes.data.order_logo_url ?? null)
       }
@@ -200,7 +203,12 @@ function OrdersModule() {
         .single()
 
       if (error) {
-        toast.error('Error guardando logo del módulo de pedidos: ' + error.message)
+        const missingColumn = String(error.message ?? '').includes('order_logo_url')
+        toast.error(
+          missingColumn
+            ? 'Error guardando logo del módulo de pedidos: la columna order_logo_url no existe en la base de datos. Ejecuta la migración.'
+            : 'Error guardando logo del módulo de pedidos: ' + error.message,
+        )
       } else {
         toast.success('Logo del módulo de pedidos guardado')
         setOrganizationOrderLogoUrl((data as any)?.order_logo_url ?? null)

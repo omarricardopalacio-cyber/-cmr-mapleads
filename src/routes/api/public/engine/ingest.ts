@@ -613,9 +613,64 @@ async function maybeAiReply(
       status: 'pending',
     })
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
+    let errMsg = err instanceof Error ? err.message : String(err);
     const errStack = err instanceof Error ? err.stack : '';
-    
+    console.warn('[ai-reply] first attempt failed, trying one immediate retry', {
+      message: errMsg,
+      orgId,
+      threadId,
+      chatId,
+      provider: cfg?.provider,
+      model: cfg?.model,
+      selected_provider: cfg?.selected_provider,
+    });
+
+    try {
+      const retryResult = await runAiAgent({
+        orgId,
+        threadId,
+        contactId,
+        sessionId,
+        chatId,
+        messages: historyWithContext,
+        cfg: cfgFast,
+      });
+
+      let retryReply = retryResult.reply?.trim() || '';
+      if (!retryReply) {
+        const sentImage = retryResult.actions?.includes('send_product_image') || retryResult.actions?.includes('send_product_video');
+        retryReply = sentImage
+          ? '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
+          : 'Un momento por favor… ¿me confirmas qué producto te interesa?';
+      }
+
+      console.info('[ai-reply] retry succeeded', {
+        orgId,
+        threadId,
+        chatId,
+        replyLength: retryReply.length,
+      });
+
+      await supabaseAdmin.from('engine_commands').insert({
+        org_id: orgId,
+        session_id: sessionId,
+        type: 'SEND_MESSAGE',
+        payload: { chatId, text: retryReply },
+        status: 'pending',
+      });
+      return;
+    } catch (retryErr) {
+      errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      console.error('[ai-reply] retry failed, guardando para reintento automático', {
+        message: errMsg,
+        orgId,
+        threadId,
+        chatId,
+        provider: cfg?.provider,
+        model: cfg?.model,
+      });
+    }
+
     console.error('[ai-reply] error - DETALLES COMPLETOS:', {
       message: errMsg,
       stack: errStack?.slice(0, 500),
@@ -626,7 +681,7 @@ async function maybeAiReply(
       model: cfg?.model,
       selected_provider: cfg?.selected_provider,
       hasVertexKey: !!cfg?.vertex_service_account_json,
-    })
+    });
     
     // Registrar la solicitud fallida para reintento automático después de 3 minutos
     const requestId = await registerFailedAiRequest(
