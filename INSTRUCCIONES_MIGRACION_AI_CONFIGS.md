@@ -1,5 +1,7 @@
 # Instrucciones para Ejecutar Migración del CHECK Constraint en ai_configs
 
+> Nota importante: esta migración debe ejecutarse como SQL puro en el editor de Supabase. No pegues código de archivos TypeScript o JavaScript en el SQL editor; eso causa errores como `syntax error at or near "{"`.
+
 ## Problema
 El constraint en la tabla `ai_configs` solo permitía los proveedores: 'lovable' y 'vertex'. Esto causa error al guardar configuraciones con OpenAI o Grok.
 
