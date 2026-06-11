@@ -56,13 +56,13 @@ function OrdersModule() {
           return;
         }
         
-        // Si aÃºn no existe, usar el serverFn para crear la organizaciÃ³n
+        // Si aún no existe, usar el serverFn para crear la organización
         const res = await ensure({});
         if (res?.orgId) setOrgId(res.orgId);
-        else toast.error('No se pudo encontrar tu organizaciÃ³n.');
+        else toast.error('No se pudo encontrar tu organización.');
       } catch (err: any) {
         console.error('Error initOrg:', err);
-        toast.error('Error cargando organizaciÃ³n: ' + err.message);
+        toast.error('Error cargando organización: ' + err.message);
       }
     }
     initOrg();
@@ -119,7 +119,7 @@ function OrdersModule() {
         setOrganizationOrderLogoUrl(configRes.data.order_logo_url ?? null)
       }
     } catch (err: any) {
-      console.error('Error inesperado cargando datos del mÃ³dulo de pedidos:', err)
+      console.error('Error inesperado cargando datos del módulo de pedidos:', err)
       toast.error('Error cargando datos: ' + err.message)
     } finally {
       setLoading(false)
@@ -129,11 +129,11 @@ function OrdersModule() {
   async function addField(e: React.FormEvent) {
     e.preventDefault()
     if (!newFieldName.trim()) {
-      toast.error('El nombre del campo no puede estar vacÃ­o');
+      toast.error('El nombre del campo no puede estar vacío');
       return;
     }
     if (!orgId) {
-      toast.error('No se ha cargado tu identificador de organizaciÃ³n. Por favor, refresca la pÃ¡gina.');
+      toast.error('No se ha cargado tu identificador de organización. Por favor, refresca la página.');
       return;
     }
     
@@ -148,7 +148,7 @@ function OrdersModule() {
     if (error) {
       toast.error('Error creando campo')
     } else if (data) {
-      toast.success('Campo aÃ±adido')
+      toast.success('Campo añadido')
       setFields([...fields, data])
       setNewFieldName('')
     }
@@ -164,7 +164,7 @@ function OrdersModule() {
   }
 
   async function deleteOrder(id: string) {
-    if (!window.confirm('Â¿EstÃ¡s seguro de eliminar este pedido? Esta acciÃ³n no se puede deshacer.')) return;
+    if (!window.confirm('¿Estás seguro de eliminar este pedido? Esta acción no se puede deshacer.')) return;
     const { error } = await supabase.from('orders').delete().eq('id', id)
     if (error) {
       toast.error('Error eliminando pedido: ' + error.message)
@@ -189,7 +189,7 @@ function OrdersModule() {
     }
 
     if (!orgId) {
-      toast.error('No se ha cargado tu organizaciÃ³n. Por favor, refresca la pÃ¡gina.')
+      toast.error('No se ha cargado tu organización. Por favor, refresca la página.')
       return
     }
 
@@ -204,11 +204,11 @@ function OrdersModule() {
         const missingColumn = String(error.message ?? '').includes('order_logo_url')
         toast.error(
           missingColumn
-            ? 'Error guardando logo del mÃ³dulo de pedidos: la columna order_logo_url no existe en la base de datos. Ejecuta la migraciÃ³n.'
-            : 'Error guardando logo del mÃ³dulo de pedidos: ' + error.message,
+            ? 'Error guardando logo del módulo de pedidos: la columna order_logo_url no existe en la base de datos. Ejecuta la migración.'
+            : 'Error guardando logo del módulo de pedidos: ' + error.message,
         )
       } else {
-        toast.success('Logo del mÃ³dulo de pedidos guardado')
+        toast.success('Logo del módulo de pedidos guardado')
         setOrganizationOrderLogoUrl((data as any)?.order_logo_url ?? null)
       }
     } catch (err: any) {
@@ -221,7 +221,7 @@ function OrdersModule() {
   function exportToCSV() {
     if (!orders.length) return toast.info('No hay pedidos para exportar')
     
-    // Obtener todos los keys Ãºnicos de los formularios
+    // Obtener todos los keys únicos de los formularios
     const allKeys = new Set<string>()
     orders.forEach(o => {
       const fd = typeof o.form_data === 'string' ? JSON.parse(o.form_data) : (o.form_data || {})
@@ -229,7 +229,7 @@ function OrdersModule() {
     })
     
     const keys = Array.from(allKeys)
-    const header = ['ID', 'Fecha', 'Estado', 'TelÃ©fono', ...keys].join(',')
+    const header = ['ID', 'Fecha', 'Estado', 'Teléfono', ...keys].join(',')
     
     const rows = orders.map(o => {
       const fd = typeof o.form_data === 'string' ? JSON.parse(o.form_data) : (o.form_data || {})
@@ -285,15 +285,15 @@ function OrdersModule() {
 
     const FIELD_ALIASES: Record<string, string[]> = {
       Nombre: ['nombre', 'nombre completo', 'cliente', 'nombre del cliente', 'name'],
-      TelÃ©fono: ['telefono', 'telÃ©fono', 'celular', 'movil', 'mÃ³vil', 'whatsapp'],
+      'Teléfono': ['telefono', 'teléfono', 'celular', 'movil', 'móvil', 'whatsapp'],
       Ciudad: ['ciudad', 'municipio', 'localidad'],
       Barrio: ['barrio', 'sector'],
-      DirecciÃ³n: ['direccion', 'direcciÃ³n', 'domicilio', 'dir'],
-      Producto: ['producto', 'productos', 'articulo', 'artÃ­culo', 'pedido', 'referencia'],
+      'Dirección': ['direccion', 'dirección', 'domicilio', 'dir'],
+      Producto: ['producto', 'productos', 'articulo', 'artículo', 'pedido', 'referencia'],
       Cantidad: ['cantidad', 'unidades', 'qty'],
     }
 
-        const normalize = (value: string) =>
+    const normalize = (value: string) =>
       value
         .toLowerCase()
         .normalize('NFD')
@@ -305,17 +305,17 @@ function OrdersModule() {
       const found: Record<string, string> = {}
       if (!text) return found
 
-      const lines = text.split(/\r?\n|â€¢|Â·|\*|-/)
+      const lines = text.split(/\r?\n|•|·|\*|-/)
       const productLines: string[] = []
 
       for (const raw of lines) {
         const cleaned = raw
-          .replace(/^[\s*Â·â€¢\-]+/, '')
+          .replace(/^[\s*·•\-]+/, '')
           .replace(/\*\*/g, '')
           .replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}]\s*/u, '')
           .trim()
 
-        const match = cleaned.match(/^([A-Za-zÃÃ‰ÃÃ“ÃšÃ‘Ã¡Ã©Ã­Ã³ÃºÃ±0-9 ]{2,60})\s*[:\-]\s*(.+)$/)
+        const match = cleaned.match(/^([A-Za-zÁÉÍÓÚÑáéíóúñ0-9 ]{2,60})\s*[:\-]\s*(.+)$/)
         if (!match) continue
 
         const key = normalize(match[1])
@@ -365,11 +365,11 @@ function OrdersModule() {
     const itemRows = Array.isArray(fd.items) ? fd.items : []
     if (itemRows.length && !parsed.Producto) {
       parsed.Producto = itemRows
-        .map((item: any) => `${item.name || item.product || item.description || 'ArtÃ­culo'}${item.quantity ? ` x${item.quantity}` : ''}`)
+        .map((item: any) => `${item.name || item.product || item.description || 'Artículo'}${item.quantity ? ` x${item.quantity}` : ''}`)
         .join(', ')
     }
 
-    const fixedRows = ['Nombre', 'TelÃ©fono', 'Ciudad', 'Barrio', 'DirecciÃ³n', 'Producto', 'Cantidad'].map((label) => {
+    const fixedRows = ['Nombre', 'Teléfono', 'Ciudad', 'Barrio', 'Dirección', 'Producto', 'Cantidad'].map((label) => {
       const value = directLookup(label) || parsed[label] || '-'
       return { label, value }
     })
@@ -381,8 +381,8 @@ function OrdersModule() {
       '_source_message_id',
       'Origen',
       'Historial reciente',
-      'ConfirmaciÃ³n cliente',
-      'Respuesta de confirmaciÃ³n enviada',
+      'Confirmación cliente',
+      'Respuesta de confirmación enviada',
       'Registrado en',
       'Resumen mostrado al cliente',
       'items',
@@ -398,7 +398,7 @@ function OrdersModule() {
     const html = `
       <html>
         <head>
-          <title>GuÃ­a de Pedido</title>
+          <title>Guía de Pedido</title>
           <style>
             body { font-family: system-ui, sans-serif; max-width: 420px; margin: 20px auto; padding: 20px; border: 1px dashed #ccc; }
             .header { text-align: center; margin-bottom: 20px; }
@@ -420,14 +420,14 @@ function OrdersModule() {
         <body>
           <div class="header">
             ${logoUrl ? `<img class="logo" src="${escapeHtml(logoUrl)}" alt="Logo" />` : ''}
-            <h2>GuÃ­a de Pedido</h2>
+            <h2>Guía de Pedido</h2>
             <div class="subtitle">Pedido #${escapeHtml(String(order.id))}</div>
           </div>
 
           <div class="section">
             <div class="section-title">Datos del Pedido</div>
             <div class="row"><div class="label">Fecha</div><div class="val">${escapeHtml(new Date(order.created_at).toLocaleString())}</div></div>
-            <div class="row"><div class="label">TelÃ©fono</div><div class="val">${escapeHtml(String(order.contacts?.phone || 'No registrado'))}</div></div>
+            <div class="row"><div class="label">Teléfono</div><div class="val">${escapeHtml(String(order.contacts?.phone || 'No registrado'))}</div></div>
             <div class="row"><div class="label">Estado</div><div class="val">${escapeHtml(String(order.status || 'Sin estado'))}</div></div>
           </div>
 
@@ -443,13 +443,13 @@ function OrdersModule() {
 
           ${itemRows.length ? `
             <div class="section">
-              <div class="section-title">ArtÃ­culos</div>
+              <div class="section-title">Artículos</div>
               <table class="item-table">
                 <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th></tr></thead>
                 <tbody>
                   ${itemRows.map((item: any) => `
                     <tr>
-                      <td>${escapeHtml(String(item.name || item.product || item.description || 'ArtÃ­culo'))}</td>
+                      <td>${escapeHtml(String(item.name || item.product || item.description || 'Artículo'))}</td>
                       <td>${escapeHtml(String(item.quantity ?? item.qty ?? '-'))}</td>
                       <td>${escapeHtml(String(item.price ?? item.unit_price ?? '-'))}</td>
                     </tr>
@@ -471,7 +471,7 @@ function OrdersModule() {
   return (
     <div className="flex-1 space-y-4 p-8 pt-6">
       <div className="flex items-center justify-between space-y-2">
-        <h2 className="text-3xl font-bold tracking-tight">MÃ³dulo de Pedidos</h2>
+        <h2 className="text-3xl font-bold tracking-tight">Módulo de Pedidos</h2>
       </div>
 
       <Tabs defaultValue="list" className="space-y-4">
@@ -504,8 +504,8 @@ function OrdersModule() {
                       </div>
                     )}
                     <div className="min-w-40 text-sm">
-                      <div className="font-medium">Logo del mÃ³dulo de pedidos</div>
-                      <div className="text-xs text-muted-foreground">Se usa en las guÃ­as/tickets.</div>
+                      <div className="font-medium">Logo del módulo de pedidos</div>
+                      <div className="text-xs text-muted-foreground">Se usa en las guías/tickets.</div>
                     </div>
                   </div>
                 </div>
@@ -530,7 +530,7 @@ function OrdersModule() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Fecha</TableHead>
-                        <TableHead>TelÃ©fono</TableHead>
+                        <TableHead>Teléfono</TableHead>
                         <TableHead>Estado</TableHead>
                         <TableHead>Datos principales</TableHead>
                         <TableHead className="text-right">Acciones</TableHead>
@@ -549,7 +549,7 @@ function OrdersModule() {
                             <TableCell>{o.status}</TableCell>
                             <TableCell className="max-w-50 truncate">{summary || '-'}</TableCell>
                             <TableCell className="text-right space-x-1">
-                              <Button variant="ghost" size="icon" onClick={() => printGuide(o)} title="Imprimir GuÃ­a / Ticket">
+                              <Button variant="ghost" size="icon" onClick={() => printGuide(o)} title="Imprimir Guía / Ticket">
                                 <Printer className="h-4 w-4 text-blue-600" />
                               </Button>
                               <Button variant="ghost" size="icon" onClick={() => deleteOrder(o.id)} title="Eliminar pedido">
@@ -572,14 +572,14 @@ function OrdersModule() {
             <CardHeader>
               <CardTitle>Campos del Formulario</CardTitle>
               <CardDescription>
-                Define quÃ© datos debe pedirle la IA al cliente para agendar un pedido. 
-                (Ej: Nombre completo, DirecciÃ³n, Barrio, Producto de interÃ©s).
+                Define qué datos debe pedirle la IA al cliente para agendar un pedido. 
+                (Ej: Nombre completo, Dirección, Barrio, Producto de interés).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <form onSubmit={addField} className="flex gap-2">
                 <Input 
-                  placeholder="Nuevo campo (ej. DirecciÃ³n de entrega)" 
+                  placeholder="Nuevo campo (ej. Dirección de entrega)" 
                   value={newFieldName} 
                   onChange={(e) => setNewFieldName(e.target.value)} 
                   className="max-w-sm"
@@ -604,7 +604,7 @@ function OrdersModule() {
                     {fields.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={4} className="text-center text-muted-foreground h-24">
-                          No has definido ningÃºn campo.
+                          No has definido ningún campo.
                         </TableCell>
                       </TableRow>
                     )}
@@ -612,7 +612,7 @@ function OrdersModule() {
                       <TableRow key={f.id}>
                         <TableCell className="font-medium">{f.name}</TableCell>
                         <TableCell>Texto</TableCell>
-                        <TableCell>SÃ­</TableCell>
+                        <TableCell>Sí</TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="icon" onClick={() => deleteField(f.id)}>
                             <Trash2 className="h-4 w-4 text-red-500" />
