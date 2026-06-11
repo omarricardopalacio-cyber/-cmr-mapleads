@@ -815,6 +815,40 @@ export async function executeToolCall(
     const rawFormData = args.form_data;
     let formData: Record<string, unknown> | null = null;
 
+    const isNonEmptyValue = (value: unknown) => {
+      if (value === null || value === undefined) return false;
+      if (typeof value === "string") return value.trim().length > 0;
+      if (typeof value === "number" || typeof value === "boolean") return true;
+      if (Array.isArray(value)) return value.length > 0;
+      if (typeof value === "object") return Object.keys(value).length > 0;
+      return false;
+    };
+
+    const isRecoveryOnlyKey = (key: string) => {
+      const normalized = key.trim().toLowerCase();
+      return [
+        "origen",
+        "_source_message_id",
+        "source_message_id",
+        "confirmación cliente",
+        "confirmación cliente",
+        "resumen mostrado al cliente",
+        "respuesta de confirmación enviada",
+        "historial reciente",
+        "registrado en",
+        "origin",
+      ].includes(normalized);
+    };
+
+    const hasValidOrderFields = (data: Record<string, unknown>) => {
+      const keys = Object.keys(data || {});
+      if (!keys.length) return false;
+      return keys.some((key) => {
+        if (isRecoveryOnlyKey(key)) return false;
+        return isNonEmptyValue(data[key]);
+      });
+    };
+
     if (typeof rawFormData === "string") {
       try {
         formData = rawFormData.trim() ? JSON.parse(rawFormData) : {};
@@ -830,6 +864,9 @@ export async function executeToolCall(
 
     if (result) {
       // Parsing failed, no insert attempt.
+    } else if (!hasValidOrderFields(formData || {})) {
+      result = "Datos del pedido inválidos o incompletos: form_data debe contener al menos un campo de pedido válido.";
+      details = "form_data inválido o vacío";
     } else {
       // Evitar duplicados: si ya hay un pedido confirmado en este hilo con los mismos datos.
         const isRecoveryFormData = (data: Record<string, unknown>) => {
@@ -1256,7 +1293,7 @@ REGLAS GENERALES:
   const buildSafeReply = (replyText: string) => {
     if (isOrderClaimWithoutConfirmation(replyText) && !orderConfirmed) {
       return {
-        reply: "Permíteme un momento para registrar tu pedido en el sistema...",
+        reply: "Aún no he registrado tu pedido. Estoy verificando los datos para confirmarlo correctamente.",
         actions,
       };
     }
@@ -1322,6 +1359,9 @@ REGLAS GENERALES:
 
   const recoverMissingOrderConfirmation = async (replyText: string) => {
     if (!isOrderClaimWithoutConfirmation(replyText) || actions.includes("confirm_order") || orderConfirmed) {
+      return false;
+    }
+    if (!shouldConfirmOrderFromHistory()) {
       return false;
     }
 
