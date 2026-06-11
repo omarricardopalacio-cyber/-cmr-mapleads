@@ -102,6 +102,13 @@ function OrdersModule() {
       }
     } catch (err: any) {
       console.error('Error inesperado cargando datos del módulo de pedidos:', err)
+      toast.error('Error cargando datos: ' + err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function addField(e: React.FormEvent) {
     e.preventDefault()
     if (!newFieldName.trim()) {
       toast.error('El nombre del campo no puede estar vacío');
