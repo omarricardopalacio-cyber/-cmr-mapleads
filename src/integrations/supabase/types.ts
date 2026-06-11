@@ -73,6 +73,7 @@ export type Database = {
           vertex_model: string | null
           vertex_project: string | null
           vertex_service_account_json: string | null
+          order_logo_url: string | null
         }
         Insert: {
           enabled?: boolean
@@ -90,6 +91,7 @@ export type Database = {
           vertex_model?: string | null
           vertex_project?: string | null
           vertex_service_account_json?: string | null
+          order_logo_url?: string | null
         }
         Update: {
           enabled?: boolean
@@ -107,6 +109,7 @@ export type Database = {
           vertex_model?: string | null
           vertex_project?: string | null
           vertex_service_account_json?: string | null
+          order_logo_url?: string | null
         }
         Relationships: [
           {

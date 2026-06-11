@@ -32,7 +32,8 @@ export async function registerFailedAiRequest(
   contextData?: Record<string, unknown>
 ): Promise<string | null> {
   const now = new Date();
-  const nextRetryAt = new Date(now.getTime() + 3 * 60 * 1000); // 3 minutos
+  const delayMinutes = retryCount === 0 ? 1 : 3;
+  const nextRetryAt = new Date(now.getTime() + delayMinutes * 60 * 1000);
 
   try {
     const { data, error } = await (supabaseAdmin as any)

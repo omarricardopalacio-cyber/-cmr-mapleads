@@ -48,7 +48,31 @@ async function processRetries() {
           processed++
           continue
         }
+        // Si el cliente ya respondió después del fallo, no reintentamos en silencio.
+        if (req.created_at) {
+          const { data: laterUserMsgs, error: laterError } = await supabaseAdmin
+            .from('messages')
+            .select('id')
+            .eq('thread_id', req.thread_id)
+            .eq('direction', 'in')
+            .gt('sent_at', req.created_at.toISOString())
+            .limit(1)
 
+          if (laterError) {
+            console.warn('[retry-processor] failed to check newer user messages', {
+              requestId: req.id,
+              error: laterError.message,
+            })
+          } else if (laterUserMsgs?.length) {
+            console.info('[retry-processor] skipping retry because user already responded', {
+              requestId: req.id,
+              threadId: req.thread_id,
+            })
+            await updateFailedRequest(req.id!, { status: 'resolved' })
+            processed++
+            continue
+          }
+        }
         // Recuperar historial de mensajes
         const { data: prior } = await supabaseAdmin
           .from('messages')

@@ -26,8 +26,8 @@ function OrdersModule() {
   const [fields, setFields] = useState<any[]>([])
   const [newFieldName, setNewFieldName] = useState('')
   const [loading, setLoading] = useState(true)
-  const [uploadingLogoOrderId, setUploadingLogoOrderId] = useState<string | null>(null)
-  const [logoUploadTargetId, setLogoUploadTargetId] = useState<string | null>(null)
+  const [organizationOrderLogoUrl, setOrganizationOrderLogoUrl] = useState<string | null>(null)
+  const [uploadingLogo, setUploadingLogo] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const ensure = useServerFn(ensureOrg)
@@ -78,7 +78,7 @@ function OrdersModule() {
     if (!orgId) return;
     setLoading(true)
     try {
-      const [ordersRes, fieldsRes] = await Promise.all([
+      const [ordersRes, fieldsRes, configRes] = await Promise.all([
         supabase
           .from('orders')
           .select('*, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)')
@@ -88,7 +88,12 @@ function OrdersModule() {
           .from('order_fields')
           .select('*')
           .eq('org_id', orgId)
-          .order('display_order', { ascending: true })
+          .order('display_order', { ascending: true }),
+        supabase
+          .from('ai_configs')
+          .select('order_logo_url')
+          .eq('org_id', orgId)
+          .maybeSingle(),
       ])
 
       if (ordersRes.error) {
@@ -103,6 +108,12 @@ function OrdersModule() {
         toast.error('Error cargando campos de pedido: ' + fieldsRes.error.message)
       } else if (fieldsRes.data) {
         setFields(fieldsRes.data)
+      }
+
+      if (configRes.error) {
+        console.error('Error cargando logo de pedidos:', configRes.error)
+      } else if (configRes.data) {
+        setOrganizationOrderLogoUrl(configRes.data.order_logo_url ?? null)
       }
     } catch (err: any) {
       console.error('Error inesperado cargando datos del módulo de pedidos:', err)
@@ -160,50 +171,44 @@ function OrdersModule() {
     }
   }
 
-  function startLogoUpload(orderId: string) {
-    setLogoUploadTargetId(orderId)
+  function startLogoUpload() {
     fileInputRef.current?.click()
   }
 
   async function handleLogoFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
-    const orderId = logoUploadTargetId
     event.target.value = ''
-    setLogoUploadTargetId(null)
-    if (!file || !orderId) return
+    if (!file) return
 
     if (!file.type.startsWith('image/')) {
       toast.error('Solo se admite imagen para el logo')
       return
     }
 
-    setUploadingLogoOrderId(orderId)
+    if (!orgId) {
+      toast.error('No se ha cargado tu organización. Por favor, refresca la página.')
+      return
+    }
+
+    setUploadingLogo(true)
     try {
       const { url } = await uploadMedia(file)
-      const order = orders.find((o) => o.id === orderId)
-      const currentData = typeof order?.form_data === 'string' ? JSON.parse(order.form_data || '{}') : (order?.form_data || {})
-      const updatedFormData = {
-        ...currentData,
-        logo_url: url,
-      }
-
       const { data, error } = await supabase
-        .from('orders')
-        .update({ form_data: updatedFormData })
-        .eq('id', orderId)
+        .from('ai_configs')
+        .upsert({ org_id: orgId, order_logo_url: url }, { onConflict: ['org_id'] })
         .select()
         .single()
 
       if (error) {
-        toast.error('Error guardando logo en el pedido: ' + error.message)
+        toast.error('Error guardando logo del módulo de pedidos: ' + error.message)
       } else {
-        toast.success('Logo guardado en el pedido')
-        setOrders(orders.map((o) => (o.id === orderId ? data : o)))
+        toast.success('Logo del módulo de pedidos guardado')
+        setOrganizationOrderLogoUrl((data as any)?.order_logo_url ?? null)
       }
     } catch (err: any) {
       toast.error('Error subiendo logo: ' + err.message)
     } finally {
-      setUploadingLogoOrderId(null)
+      setUploadingLogo(false)
     }
   }
 
@@ -246,7 +251,8 @@ function OrdersModule() {
 
   function printGuide(order: any) {
     const fd = typeof order.form_data === 'string' ? JSON.parse(order.form_data) : (order.form_data || {})
-    const logoUrl = fd.logo_url || fd.logoUrl || fd.logo || ''
+    const orderLogoUrl = fd.logo_url || fd.logoUrl || fd.logo || ''
+    const logoUrl = organizationOrderLogoUrl || orderLogoUrl || ''
     const orderFieldsList = fields.map((field) => field.name)
     const formatValue = (value: unknown) => {
       if (value === null || value === undefined || value === '') return '-'
@@ -364,12 +370,37 @@ function OrdersModule() {
         
         <TabsContent value="list">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Pedidos Registrados</CardTitle>
-                <CardDescription>
-                  Datos recopilados por la IA o agentes humanos.
-                </CardDescription>
+            <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                  <div>
+                    <CardTitle>Pedidos Registrados</CardTitle>
+                    <CardDescription>
+                      Datos recopilados por la IA o agentes humanos.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-3 rounded-md border border-muted/50 bg-muted/5 p-3">
+                    {organizationOrderLogoUrl ? (
+                      <img
+                        src={organizationOrderLogoUrl}
+                        alt="Logo de pedidos"
+                        className="h-10 w-24 rounded object-contain"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-24 items-center justify-center rounded border border-dashed border-slate-300 text-xs text-slate-500">
+                        Sin logo
+                      </div>
+                    )}
+                    <div className="min-w-40 text-sm">
+                      <div className="font-medium">Logo del módulo de pedidos</div>
+                      <div className="text-xs text-muted-foreground">Se usa en las guías/tickets.</div>
+                    </div>
+                  </div>
+                </div>
+                <Button onClick={startLogoUpload} variant="outline" size="sm" disabled={uploadingLogo}>
+                  <ImagePlus className="mr-2 h-4 w-4" />
+                  {organizationOrderLogoUrl ? 'Actualizar logo' : 'Subir logo'}
+                </Button>
               </div>
               <Button onClick={exportToCSV} variant="outline" size="sm">
                 <Download className="mr-2 h-4 w-4" />
@@ -406,14 +437,6 @@ function OrdersModule() {
                             <TableCell>{o.status}</TableCell>
                             <TableCell className="max-w-50 truncate">{summary || '-'}</TableCell>
                             <TableCell className="text-right space-x-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => startLogoUpload(o.id)}
-                                title={o.form_data?.logo_url ? 'Actualizar logo del pedido' : 'Subir logo al pedido'}
-                              >
-                                <ImagePlus className="h-4 w-4 text-emerald-600" />
-                              </Button>
                               <Button variant="ghost" size="icon" onClick={() => printGuide(o)} title="Imprimir Guía / Ticket">
                                 <Printer className="h-4 w-4 text-blue-600" />
                               </Button>
