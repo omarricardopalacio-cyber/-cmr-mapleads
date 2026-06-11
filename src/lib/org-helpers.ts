@@ -37,7 +37,7 @@ export async function getTemplateOrgId(): Promise<string | null> {
 }
 
 export async function cloneTemplateAiConfigToOrg(orgId: string) {
-  const existing = await supabaseAdmin
+  const { data: existing } = await supabaseAdmin
     .from("ai_configs")
     .select("org_id")
     .eq("org_id", orgId)

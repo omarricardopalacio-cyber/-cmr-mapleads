@@ -628,43 +628,32 @@ async function maybeAiReply(
       hasVertexKey: !!cfg?.vertex_service_account_json,
     })
     
-    // Detectar si es error de Vertex después de reintentos agotados
-    const isVertexError = errMsg.includes('Vertex') && errMsg.includes('after all retry attempts');
-    let errorMessage = 'Disculpa, tuve un problema... ¿puedes repetir tu pedido?';
-    
-    if (isVertexError) {
-      // Registrar la solicitud fallida para reintento automático después de 3 minutos
-      const requestId = await registerFailedAiRequest(
-        orgId,
-        threadId,
-        chatId,
-        sessionId,
-        text,
-        errMsg,
-        0,
-        3,
-        {
-          messageHistory: historyWithContext,
-          cfgProvider: cfg?.selected_provider || cfg?.provider,
-          cfgModel: cfg?.model,
-        }
-      );
-
-      // Enviar mensaje de apoyo
-      if (requestId && sessionId) {
-        await sendSupportMessage(orgId, sessionId, chatId, requestId, threadId);
+    // Registrar la solicitud fallida para reintento automático después de 3 minutos
+    const requestId = await registerFailedAiRequest(
+      orgId,
+      threadId,
+      chatId,
+      sessionId,
+      text,
+      errMsg,
+      0,
+      3,
+      {
+        messageHistory: historyWithContext,
+        cfgProvider: cfg?.selected_provider || cfg?.provider,
+        cfgModel: cfg?.model,
       }
+    );
 
-      errorMessage = 'dame un ratito ya te envio 😉';
-    } else if (errMsg.includes('timeout') || errMsg.includes('AbortError')) {
-      errorMessage = 'La respuesta tardó demasiado. Por favor, intenta de nuevo en unos segundos.';
-    } else if (errMsg.includes('429')) {
-      errorMessage = 'Sistema ocupado. Por favor, espera un momento e intenta de nuevo.';
-    } else if (errMsg.includes('API') || errMsg.includes('key')) {
-      errorMessage = 'Error de configuración del servicio. Por favor, contacta al administrador.';
+    // Enviar mensaje de apoyo
+    if (requestId && sessionId) {
+      await sendSupportMessage(orgId, sessionId, chatId, requestId, threadId);
     }
 
-    if (sessionId && chatId && !isVertexError) {
+    // Mostrar mensaje amigable mientras el sistema reintenta
+    const errorMessage = 'dame un ratito ya te envio 😉';
+
+    if (sessionId && chatId) {
       await supabaseAdmin.from('engine_commands').insert({
         org_id: orgId,
         session_id: sessionId,

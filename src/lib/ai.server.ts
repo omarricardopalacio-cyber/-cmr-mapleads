@@ -725,6 +725,19 @@ async function queueOutgoingMedia(
   return `${kind === "video" ? "Video" : "Imagen"} enviado al cliente.`;
 }
 
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export async function executeToolCall(
   toolCall: { id: string; function: { name: string; arguments: string | Record<string, unknown> } },
   ctx: ToolExecCtx,
@@ -818,6 +831,30 @@ export async function executeToolCall(
     if (result) {
       // Parsing failed, no insert attempt.
     } else {
+      // Evitar duplicados: si ya hay un pedido confirmado en este hilo con los mismos datos.
+      if (threadId) {
+        const { data: existingOrder, error: existingError } = await (supabaseAdmin as any)
+          .from("orders")
+          .select("id, form_data")
+          .eq("org_id", orgId)
+          .eq("thread_id", threadId)
+          .eq("status", "confirmed")
+          .limit(1)
+          .maybeSingle();
+
+        if (!existingError && existingOrder) {
+          const orderData = typeof existingOrder.form_data === "string"
+            ? JSON.parse(existingOrder.form_data || "{}")
+            : existingOrder.form_data || {};
+          const sameData = stableStringify(orderData) === stableStringify(formData);
+          if (sameData) {
+            result = "Ya existe un pedido confirmado igual para esta conversación. No se creó un duplicado.";
+            details = `Pedido duplicado evitado para hilo ${threadId}`;
+            return { name, result };
+          }
+        }
+      }
+
       const { data: inserted, error: insertError } = await (supabaseAdmin as any)
         .from("orders")
         .insert({
@@ -984,7 +1021,7 @@ Eres un asistente comercial por WhatsApp. Tu objetivo es ATENDER, AGENDAR/PREPAR
 MODO A — RECOPILANDO DATOS DEL PEDIDO:
 1. Si estado_pedido indica "collecting_data", NO llames search_products ni envíes imágenes nuevas.
 2. Pide el siguiente dato requerido del pedido con una sola pregunta breve.
-3. Si ya tienes todos los datos y el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON.
+3. Si ya tienes todos los datos y el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON EN ESTE MISMO TURNO. Si no lo haces, no completes la conversación ni digas que el pedido está registrado.
 4. NO digas que el pedido está registrado o confirmado sin ejecutar confirm_order.
 5. Solo sal de este modo si el cliente cambia de tema y vuelve a preguntar por productos.
 
@@ -1153,8 +1190,10 @@ REGLAS GENERALES:
   const isOrderClaimWithoutConfirmation = (replyText: string) => {
     const lower = String(replyText).toLowerCase();
     const patterns: RegExp[] = [
-      /pedido[\s\S]{0,60}(registrad[oa]|guardad[oa]|confirmad[oa]|en proceso|procesad[oa])/i,
+      /pedido[\s\S]{0,60}(registrad[oa]|guardad[oa]|confirmad[oa]|en proceso|procesad[oa]|fue registrado|fue guardado|ya est[aá] registrado|ya est[aá] en proceso)/i,
       /(registrad[oa]|guardad[oa]|confirmad[oa])[\s\S]{0,40}(su |tu |el )?pedido/i,
+      /su pedido .* (registrad[oa]|guardad[oa]|confirmad[oa])/i,
+      /pedido .* (es |est[aá] |ya )?(registrad[oa]|guardad[oa]|confirmad[oa])/i,
       /gracias por su compra/i,
       /muchas gracias por su compra/i,
       /pedido ha sido (registrad|guardad|confirmad)/i,
@@ -1194,7 +1233,10 @@ REGLAS GENERALES:
 
   const isExplicitCustomerConfirmation = (text: string) => {
     const normalized = text.trim().toLowerCase();
-    return /^(s[ií]|si|correcto|confirmo|confirmado|ok|okay|dale|listo|est[aá] bien|as[ií] es|claro|de acuerdo)[\s.!¡¿?]*$/i.test(normalized);
+    if (!normalized) return false;
+    const shortAffirmative = /^(s[ií]|si|ok|okay|dale|listo|claro|vale|perfecto|confirmo|confirmado|adelante|de acuerdo)([\s.!¡¿?]|$)/i;
+    const explicitConfirmation = /\b(correcto|est[aá] bien|todo bien|confirmar|confirmado|confirmo|adelante|de acuerdo|registrad[oa]|guardad[oa]|guardarlo|guardar|pedido.*bien)\b/i;
+    return shortAffirmative.test(normalized) || explicitConfirmation.test(normalized);
   };
 
   const shouldConfirmOrderFromHistory = () => {
@@ -1204,14 +1246,15 @@ REGLAS GENERALES:
     const lastUserIndex = visibleHistory.map((m) => m.role).lastIndexOf("user");
     if (lastUserIndex <= 0) return false;
     const lastUser = visibleHistory[lastUserIndex]?.content ?? "";
-    const previousAssistant = [...visibleHistory.slice(0, lastUserIndex)]
-      .reverse()
-      .find((m) => m.role === "assistant")?.content ?? "";
+    const assistantHistory = [...visibleHistory.slice(0, lastUserIndex)].reverse();
+    const recentAssistantPrompts = assistantHistory
+      .filter((m) => m.role === "assistant")
+      .slice(0, 4)
+      .map((m) => m.content ?? "")
+      .join(" \n");
 
-    return (
-      isExplicitCustomerConfirmation(lastUser) &&
-      /(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa])/i.test(previousAssistant)
-    );
+    const confirmationPrompt = /\b(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa]|pedido.*bien|confirmar.*pedido|confirmaci[oó]n.*pedido|¿.*correct[oa].*pedido|¿.*informaci[oó]n.*correcta|¿.*quieres que registre|¿.*quieres que lo registre)\b/i;
+    return isExplicitCustomerConfirmation(lastUser) && confirmationPrompt.test(recentAssistantPrompts);
   };
 
   const markCollectingOrderDataIfNeeded = async (replyText: string) => {

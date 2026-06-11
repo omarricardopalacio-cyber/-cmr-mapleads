@@ -35,7 +35,7 @@ export async function registerFailedAiRequest(
   const nextRetryAt = new Date(now.getTime() + 3 * 60 * 1000); // 3 minutos
 
   try {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await (supabaseAdmin as any)
       .from('failed_ai_requests')
       .insert({
         org_id: orgId,
@@ -101,7 +101,7 @@ export async function sendSupportMessage(
 export async function getPendingRetryRequests(): Promise<FailedAiRequest[]> {
   try {
     const now = new Date();
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await (supabaseAdmin as any)
       .from('failed_ai_requests')
       .select('*')
       .eq('status', 'pending')
@@ -143,7 +143,7 @@ export async function updateFailedRequest(
   updates: Partial<FailedAiRequest>
 ): Promise<void> {
   try {
-    await supabaseAdmin
+    await (supabaseAdmin as any)
       .from('failed_ai_requests')
       .update({
         ...updates,
@@ -161,13 +161,13 @@ export async function updateFailedRequest(
 export async function cleanupOldResolvedRequests(): Promise<void> {
   try {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    await supabaseAdmin
+    await (supabaseAdmin as any)
       .from('failed_ai_requests')
       .delete()
       .eq('status', 'resolved')
       .lt('updated_at', oneHourAgo.toISOString());
 
-    await supabaseAdmin
+    await (supabaseAdmin as any)
       .from('failed_ai_requests')
       .delete()
       .eq('status', 'failed')
