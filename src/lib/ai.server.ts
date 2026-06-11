@@ -398,13 +398,13 @@ export async function callVertexAI(opts: {
     requestSizeBytes,
   });
 
-  const maxAttempts = opts.maxAttempts ?? 7;
+  const maxAttempts = opts.maxAttempts ?? 3;
   let lastError: Error | null = null;
   const retriedAttempts = new Set<number>();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
 
     try {
       const res = await fetch(url, {
@@ -573,7 +573,7 @@ export async function callAiProvider(
         tools,
         vertexServiceAccountJson: cfg.vertex_service_account_json as string | undefined,
         onRetry,
-        maxAttempts: 7,
+        maxAttempts: 3,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -846,63 +846,61 @@ export async function executeToolCall(
           .eq("status", "confirmed")
           .order("created_at", { ascending: false });
 
-        if (!existingError && Array.isArray(existingOrders) && existingOrders.length) {
-          const newIsRecovery = isRecoveryFormData(formData);
-          let recoveryOrderToUpdate: { id: string; form_data: unknown } | null = null;
-
-          for (const existingOrder of existingOrders) {
-            let existingData: Record<string, unknown> = {};
+        const parseFormData = (value: unknown): Record<string, unknown> => {
+          if (typeof value === "string") {
             try {
-              existingData = typeof existingOrder.form_data === "string"
-                ? JSON.parse(existingOrder.form_data || "{}")
-                : existingOrder.form_data || {};
+              return value.trim() ? JSON.parse(value) : {};
             } catch {
-              existingData = {};
-            }
-
-            const sameData = stableStringify(existingData) === stableStringify(formData);
-            const existingIsRecovery = isRecoveryFormData(existingData);
-
-            if (sameData) {
-              result = "Ya existe un pedido confirmado igual para esta conversación. No se creó un duplicado.";
-              details = `Pedido duplicado evitado para hilo ${threadId}`;
-              return { name, result };
-            }
-
-            if (newIsRecovery && !existingIsRecovery) {
-              result = "Ya existe un pedido confirmado igual para esta conversación. No se creó un duplicado.";
-              details = `Pedido duplicado evitado para hilo ${threadId}`;
-              return { name, result };
-            }
-
-            if (existingIsRecovery && !sameData && !recoveryOrderToUpdate) {
-              recoveryOrderToUpdate = existingOrder;
+              return {};
             }
           }
+          if (typeof value === "object" && value !== null) {
+            return value as Record<string, unknown>;
+          }
+          return {};
+        };
 
-          if (recoveryOrderToUpdate) {
-            const { error: updateError } = await (supabaseAdmin as any)
-              .from("orders")
-              .update({ form_data: formData, status: "confirmed" })
-              .eq("id", recoveryOrderToUpdate.id)
-              .eq("org_id", orgId);
+        if (!existingError && Array.isArray(existingOrders) && existingOrders.length) {
+          const normalizedFormData = (formData || {}) as Record<string, unknown>;
+          const newIsRecovery = isRecoveryFormData(normalizedFormData);
 
-            if (updateError) {
-              result = `Error actualizando el pedido: ${updateError.message}`;
-              details = `orders update failed: ${updateError.message}`;
-              return { name, result };
-            }
+          const existingOrder = existingOrders.find((order) => {
+            const existing = parseFormData(order.form_data);
+            return !isRecoveryFormData(existing);
+          }) ?? existingOrders[0];
 
-            await (supabaseAdmin as any)
-              .from("threads")
-              .update({ purchase_intent: "compro" })
-              .eq("id", threadId)
-              .eq("org_id", orgId);
+          const existingData = parseFormData(existingOrder.form_data);
+          const existingIsRecovery = isRecoveryFormData(existingData);
+          const sameData = stableStringify(existingData) === stableStringify(normalizedFormData);
 
-            result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
-            details = `Pedido actualizado con datos reales en el registro de recuperación (id ${recoveryOrderToUpdate.id}).`;
+          if (sameData || (newIsRecovery && !existingIsRecovery)) {
+            result = "Ya existe un pedido confirmado para esta conversación. No se creó un duplicado.";
+            details = `Pedido duplicado evitado para hilo ${threadId}`;
             return { name, result };
           }
+
+          const mergedFormData = { ...existingData, ...normalizedFormData };
+          const { error: updateError } = await (supabaseAdmin as any)
+            .from("orders")
+            .update({ form_data: mergedFormData, status: "confirmed" })
+            .eq("id", existingOrder.id)
+            .eq("org_id", orgId);
+
+          if (updateError) {
+            result = `Error actualizando el pedido: ${updateError.message}`;
+            details = `orders update failed: ${updateError.message}`;
+            return { name, result };
+          }
+
+          await (supabaseAdmin as any)
+            .from("threads")
+            .update({ purchase_intent: "compro" })
+            .eq("id", threadId)
+            .eq("org_id", orgId);
+
+          result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+          details = `Pedido existente actualizado (id ${existingOrder.id}) para hilo ${threadId}.`;
+          return { name, result };
         }
       }
 

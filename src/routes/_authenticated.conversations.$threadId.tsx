@@ -136,9 +136,9 @@ function ThreadPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => list({ data: { threadId } }),
-    refetchInterval: 3000,  // Reducido de 5s a 3s para detectar cambios más rápido
-    refetchOnMount: true,   // Refetch cuando monta el componente
-    refetchOnWindowFocus: true,  // Refetch cuando vuelve a la ventana
+    refetchInterval: 8000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
     retry: false,
   });
 
@@ -284,8 +284,6 @@ function ThreadPage() {
 
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
           qc.invalidateQueries({ queryKey: ["threads"] });
-          qc.refetchQueries({ queryKey: ["thread", threadId] });
-          qc.refetchQueries({ queryKey: ["threads"] });
         }
       )
       .on(
@@ -315,8 +313,6 @@ function ThreadPage() {
 
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
           qc.invalidateQueries({ queryKey: ["threads"] });
-          qc.refetchQueries({ queryKey: ["thread", threadId] });
-          qc.refetchQueries({ queryKey: ["threads"] });
         }
       )
       .on(
@@ -325,8 +321,6 @@ function ThreadPage() {
         () => {
           qc.invalidateQueries({ queryKey: ["thread", threadId] });
           qc.invalidateQueries({ queryKey: ["threads"] });
-          qc.refetchQueries({ queryKey: ["thread", threadId] });
-          qc.refetchQueries({ queryKey: ["threads"] });
         }
       )
       .subscribe((status) => {
