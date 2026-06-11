@@ -95,3 +95,17 @@ export const updateSessionConfig = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+export const deleteSession = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ sessionId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const { error } = await supabaseAdmin
+      .from("wa_sessions")
+      .delete()
+      .eq("id", data.sessionId)
+      .eq("org_id", orgId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });

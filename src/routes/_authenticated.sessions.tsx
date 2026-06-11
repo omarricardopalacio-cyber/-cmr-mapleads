@@ -1,16 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   listSessions,
   createSession,
   updateSessionMe,
   updateSessionConfig,
+  deleteSession,
 } from "@/lib/sessions.functions";
 import { listOrgMembers } from "@/lib/crm.functions";
 import { listFlows } from "@/lib/automations.functions";
-import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import {
   Copy,
@@ -46,7 +45,7 @@ import {
   MonitorSmartphone,
   User,
   Workflow,
-  Terminal,
+  Trash,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/sessions")({
@@ -75,8 +74,6 @@ function SessionsPage() {
   const createFn = useServerFn(createSession);
   const qc = useQueryClient();
   const [label, setLabel] = useState("");
-  const [logs, setLogs] = useState<Array<{ id: string; text: string; ts: Date }>>([]);
-  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["wa-sessions"],
@@ -100,46 +97,6 @@ function SessionsPage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
-
-  useEffect(() => {
-    const channel = supabase
-      .channel("session-events")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "events" },
-        (payload) => {
-          const ev = payload.new as Record<string, unknown>;
-          const type = String(ev.type ?? "unknown");
-          const sessionId = String(ev.session_id ?? "").slice(0, 8);
-          const raw = (ev.payload as Record<string, unknown> | undefined) ?? {};
-          const device = (raw.device as Record<string, unknown> | undefined) ?? {};
-          const battery = device.battery ?? raw.battery;
-          const now = new Date();
-          let text = `[${now.toLocaleTimeString()}] ${type.toUpperCase()} | session:${sessionId}`;
-          if (type === "HEARTBEAT" || type === "SESSION_READY") {
-            text += ` | Batería: ${battery ?? "?"}%`;
-          } else if (type === "message-in") {
-            text += ` | Mensaje de ${String(raw.from ?? raw.chatId ?? "?")}`;
-          } else if (type === "message-out") {
-            text += ` | Enviado a ${String(raw.to ?? raw.chatId ?? "?")}`;
-          } else if (type === "ack") {
-            text += ` | ACK ${String(raw.status ?? "ok")}`;
-          }
-          setLogs((prev) => {
-            const next = [...prev, { id: String(ev.id ?? Date.now()), text, ts: now }];
-            return next.slice(-100);
-          });
-        }
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
 
   const backendBase = "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app";
 
@@ -182,26 +139,6 @@ function SessionsPage() {
         )}
       </div>
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <Terminal className="h-4 w-4 text-emerald-500" />
-          <span className="text-sm font-medium">Consola de red en vivo</span>
-          <Badge variant="outline" className="text-[10px]">{logs.length} eventos</Badge>
-        </div>
-        <div className="h-[320px] bg-black border border-green-900/50 rounded-lg p-3 overflow-hidden">
-          <ScrollArea className="h-full">
-            <div className="font-mono text-xs space-y-1 text-green-500">
-              {logs.length === 0 && (
-                <div className="text-green-700 italic">Esperando eventos de la extensión maple...</div>
-              )}
-              {logs.map((log) => (
-                <div key={log.id} className="break-all">{log.text}</div>
-              ))}
-              <div ref={logsEndRef} />
-            </div>
-          </ScrollArea>
-        </div>
-      </div>
     </div>
   );
 }
@@ -225,6 +162,16 @@ function SessionCard({ session, backendBase }: { session: SessionRow; backendBas
     queryKey: ["flows"],
     queryFn: () => flowsFn({}),
     enabled: cfgOpen,
+  });
+
+  const deleteSessionFn = useServerFn(deleteSession);
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteSessionFn({ data: { sessionId: id } }),
+    onSuccess: () => {
+      toast.success("Sesión eliminada");
+      qc.invalidateQueries({ queryKey: ["wa-sessions"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const meMut = useMutation({
@@ -266,10 +213,26 @@ function SessionCard({ session, backendBase }: { session: SessionRow; backendBas
             <CardTitle className="text-sm font-semibold truncate">{session?.label ?? "Sesión sin nombre"}</CardTitle>
             <div className="text-[11px] text-muted-foreground truncate">{session?.phone_number ?? session?.me_wa_id ?? "Sin número"}</div>
           </div>
-          <Badge variant={isConnected ? "default" : "destructive"} className={`text-[10px] gap-1 ${isConnected ? "bg-emerald-500 hover:bg-emerald-600" : ""}`}>
-            {isConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-            {isConnected ? "Conectado" : "Desconectado"}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={isConnected ? "default" : "destructive"} className={`text-[10px] gap-1 ${isConnected ? "bg-emerald-500 hover:bg-emerald-600" : ""}`}>
+              {isConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+              {isConnected ? "Conectado" : "Desconectado"}
+            </Badge>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-8 text-xs gap-1"
+              onClick={() => {
+                if (window.confirm("¿Eliminar esta sesión? Esta acción no se puede deshacer.")) {
+                  deleteMut.mutate(session.id);
+                }
+              }}
+              disabled={deleteMut.isPending}
+            >
+              <Trash className="h-3 w-3" />
+              Borrar
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 text-xs">
