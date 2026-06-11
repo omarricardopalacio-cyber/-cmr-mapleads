@@ -484,6 +484,29 @@ async function enrollContactInFlow(contactId: string, orgId: string, sessionId: 
   }
 }
 
+async function loadThreadHistory(orgId: string, threadId: string, userText: string) {
+  const { data: prior } = await supabaseAdmin
+    .from('messages')
+    .select('direction, text, sent_at')
+    .eq('thread_id', threadId)
+    .not('text', 'is', null)
+    .order('sent_at', { ascending: false })
+    .limit(200)
+
+  const priorMsgs = ((prior ?? []) as any[])
+    .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
+    .reverse()
+    .map((m: any) => ({
+      role: (m.direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
+      content: String(m.text).trim(),
+    }))
+
+  const lastPrior = priorMsgs[priorMsgs.length - 1]
+  return lastPrior && lastPrior.role === 'user' && lastPrior.content === userText.trim()
+    ? priorMsgs
+    : [...priorMsgs, { role: 'user' as const, content: userText }]
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -524,27 +547,7 @@ async function maybeAiReply(
     if ((count ?? 0) > 0) return
   }
 
-  const { data: prior } = await supabaseAdmin
-    .from('messages')
-    .select('direction, text, sent_at')
-    .eq('thread_id', threadId)
-    .not('text', 'is', null)
-    .order('sent_at', { ascending: false })
-    .limit(20)
-
-  const priorMsgs = ((prior ?? []) as any[])
-    .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
-    .reverse()
-    .map((m: any) => ({
-      role: (m.direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
-      content: String(m.text).trim(),
-    }))
-
-  const lastPrior = priorMsgs[priorMsgs.length - 1]
-  const history =
-    lastPrior && lastPrior.role === 'user' && lastPrior.content === text.trim()
-      ? priorMsgs
-      : [...priorMsgs, { role: 'user' as const, content: text }]
+  const history = await loadThreadHistory(orgId, threadId, text)
 
   let historyWithContext = history
   if (autoRepliesWereSent) {
@@ -556,10 +559,15 @@ async function maybeAiReply(
     historyWithContext = [...history, systemNote]
   }
 
+  let runAiAgent: any = null
+  let cfgFast: Record<string, unknown> | null = null
+  let provider = 'lovable'
+
   try {
-    const { runAiAgent } = await import('@/lib/ai.server')
-    const cfgFast = { ...(cfg as Record<string, unknown>) }
-    const provider = (cfgFast.selected_provider as string) || (cfgFast.provider as string) || 'lovable'
+    const importedAi = await import('@/lib/ai.server')
+    runAiAgent = importedAi.runAiAgent
+    cfgFast = { ...(cfg as Record<string, unknown>) }
+    provider = (cfgFast.selected_provider as string) || (cfgFast.provider as string) || 'lovable'
     if (provider === 'lovable' && (!cfgFast.model || String(cfgFast.model).startsWith('gpt-'))) {
       cfgFast.model = 'google/gemini-3-flash-preview'
     }
@@ -575,7 +583,7 @@ async function maybeAiReply(
       historyLength: historyWithContext.length,
     })
 
-    const { reply, actions } = await runAiAgent({
+    const firstAttempt = await runAiAgent({
       orgId,
       threadId,
       contactId,
@@ -585,7 +593,38 @@ async function maybeAiReply(
       cfg: cfgFast,
     })
 
-    let finalReply = reply?.trim() || ''
+    let actions = firstAttempt.actions ?? []
+    let finalReply = firstAttempt.reply?.trim() || ''
+
+    if (!finalReply && actions.length === 0) {
+      console.warn('[ai-reply] empty first response, attempting second immediate retry', {
+        orgId,
+        threadId,
+        chatId,
+        provider: cfgFast.provider,
+        model: cfgFast.model,
+      })
+      const retryHistory = [
+        ...historyWithContext,
+        {
+          role: 'system' as const,
+          content:
+            'Si no respondiste antes, por favor responde ahora con un mensaje breve y claro usando el historial completo. No dejes la respuesta vacía.',
+        },
+      ]
+      const retryResult = await runAiAgent({
+        orgId,
+        threadId,
+        contactId,
+        sessionId,
+        chatId,
+        messages: retryHistory,
+        cfg: cfgFast,
+      })
+      actions = retryResult.actions ?? []
+      finalReply = retryResult.reply?.trim() || ''
+    }
+
     if (!finalReply) {
       const sentImage = actions?.includes('send_product_image') || actions?.includes('send_product_video')
       if (sentImage) {
@@ -620,10 +659,70 @@ async function maybeAiReply(
       orgId,
       threadId,
       chatId,
-      provider: cfg?.provider,
-      model: cfg?.model,
+      provider,
+      model: cfgFast?.model,
       selected_provider: cfg?.selected_provider,
     });
+
+    if (runAiAgent && cfgFast) {
+      try {
+        const retryResult = await runAiAgent({
+          orgId,
+          threadId,
+          contactId,
+          sessionId,
+          chatId,
+          messages: [
+            ...historyWithContext,
+            {
+              role: 'system' as const,
+              content:
+                'Reintenta ahora y responde con texto. Si ya enviaste datos, no dejes la respuesta en blanco. Usa todo el historial para generar la respuesta.',
+            },
+          ],
+          cfg: cfgFast,
+        });
+
+        let retryReply = retryResult.reply?.trim() || '';
+        if (!retryReply) {
+          const sentImage = retryResult.actions?.includes('send_product_image') || retryResult.actions?.includes('send_product_video');
+          retryReply = sentImage
+            ? '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
+            : 'Un momento por favor… ¿me confirmas qué producto te interesa?';
+        }
+
+        console.info('[ai-reply] retry succeeded', {
+          orgId,
+          threadId,
+          chatId,
+          replyLength: retryReply.length,
+        });
+
+        await supabaseAdmin.from('engine_commands').insert({
+          org_id: orgId,
+          session_id: sessionId,
+          type: 'SEND_MESSAGE',
+          payload: { chatId, text: retryReply },
+          status: 'pending',
+        });
+        return;
+      } catch (retryErr) {
+        errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        console.error('[ai-reply] retry failed, guardando para reintento automático', {
+          message: errMsg,
+          orgId,
+          threadId,
+          chatId,
+          provider,
+          model: cfgFast.model,
+        });
+      }
+    } else {
+      console.error('[ai-reply] retry unavailable because AI runner or config is missing', {
+        orgId,
+        threadId,
+      });
+    }
 
     try {
       const retryResult = await runAiAgent({
