@@ -77,7 +77,7 @@ function OrdersModule() {
       const [ordersRes, fieldsRes] = await Promise.all([
         supabase
           .from('orders')
-          .select('*, contacts(phone, name, first_name)')
+          .select('*, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)')
           .eq('org_id', orgId)
           .order('created_at', { ascending: false }),
         supabase
@@ -86,17 +86,22 @@ function OrdersModule() {
           .eq('org_id', orgId)
           .order('display_order', { ascending: true })
       ])
-      
-      if (ordersRes.data) setOrders(ordersRes.data)
-      if (fieldsRes.data) setFields(fieldsRes.data)
-    } catch (err: any) {
-      toast.error('Error cargando datos: ' + err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
 
-  async function addField(e: React.FormEvent) {
+      if (ordersRes.error) {
+        console.error('Error cargando pedidos:', ordersRes.error)
+        toast.error('Error cargando pedidos: ' + ordersRes.error.message)
+      } else if (ordersRes.data) {
+        setOrders(ordersRes.data)
+      }
+
+      if (fieldsRes.error) {
+        console.error('Error cargando campos de pedido:', fieldsRes.error)
+        toast.error('Error cargando campos de pedido: ' + fieldsRes.error.message)
+      } else if (fieldsRes.data) {
+        setFields(fieldsRes.data)
+      }
+    } catch (err: any) {
+      console.error('Error inesperado cargando datos del módulo de pedidos:', err)
     e.preventDefault()
     if (!newFieldName.trim()) {
       toast.error('El nombre del campo no puede estar vacío');
@@ -274,7 +279,7 @@ function OrdersModule() {
                             <TableCell className="font-medium">{new Date(o.created_at).toLocaleDateString()}</TableCell>
                             <TableCell>{o.contacts?.phone || '-'}</TableCell>
                             <TableCell>{o.status}</TableCell>
-                            <TableCell className="max-w-[200px] truncate">{summary || '-'}</TableCell>
+                            <TableCell className="max-w-50 truncate">{summary || '-'}</TableCell>
                             <TableCell className="text-right">
                               <Button variant="ghost" size="icon" onClick={() => printGuide(o)} title="Imprimir Guía / Ticket">
                                 <Printer className="h-4 w-4 text-blue-600" />
