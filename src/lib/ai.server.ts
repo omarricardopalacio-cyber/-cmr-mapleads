@@ -816,6 +816,91 @@ async function loadLastSentProduct(ctx: ToolExecCtx): Promise<CatalogProduct | n
   }
 }
 
+/**
+ * Guarda el producto en foco (el que se está conversando) en la BD para memoria persistente.
+ */
+async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): Promise<void> {
+  if (!p?.id || !ctx.threadId) return;
+  try {
+    const snapshot = {
+      id: p.id,
+      name: p.name,
+      price: p.price ?? null,
+      sku: p.sku ?? null,
+      image_url: p.image_url ?? null,
+      video_url: p.video_url ?? null,
+    };
+    await (supabaseAdmin as any)
+      .from("threads")
+      .update({
+        focused_product_id: p.id,
+        focused_product_snapshot: snapshot,
+        focused_updated_at: new Date().toISOString(),
+      })
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId);
+  } catch (err) {
+    console.warn("[saveFocusedProduct] no se pudo guardar el foco", err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Carga el producto en foco guardado; expira a 6h; enriquece desde catálogo si es posible, fallback a snapshot.
+ */
+async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
+  if (!ctx.threadId || !ctx.catalogCfg) return null;
+  try {
+    const { data: thread } = await (supabaseAdmin as any)
+      .from("threads")
+      .select("focused_product_id, focused_product_snapshot, focused_updated_at")
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle();
+
+    if (!thread?.focused_product_id) return null;
+
+    const age = new Date().getTime() - new Date(thread.focused_updated_at).getTime();
+    if (age > 6 * 60 * 60 * 1000) return null; // Expira a 6h
+
+    try {
+      const enriched = await getCatalogProduct(ctx.catalogCfg, thread.focused_product_id);
+      if (enriched) return enriched;
+    } catch {
+      /* continúa con snapshot */
+    }
+
+    return (thread.focused_product_snapshot as CatalogProduct) ?? null;
+  } catch (err) {
+    console.warn("[loadFocusedProduct] falló", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/**
+ * Resuelve el producto en foco: desde BD persistido, o desde handoff flujo→IA (último enviado).
+ */
+async function resolveFocus(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
+  const persisted = await loadFocusedProduct(ctx);
+  if (persisted) return persisted;
+  const lastSent = await loadLastSentProduct(ctx);
+  if (lastSent) {
+    await saveFocusedProduct(ctx, lastSent);
+    return lastSent;
+  }
+  return null;
+}
+
+/**
+ * ¿La consulta menciona un producto NUEVO o se refiere al que está en foco?
+ */
+function mentionsFocusedProduct(query: string, product: CatalogProduct | null): boolean {
+  if (!query || !product) return false;
+  const q = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const nameWords = product.name.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+  const skuTokens = (product.sku || "").split(/[-_]/).filter((t) => t.length >= 2);
+  return nameWords.some((w) => q.includes(w)) || skuTokens.some((t) => q.includes(t));
+}
+
 const normFieldKey = (s: string) =>
   String(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
@@ -1417,9 +1502,11 @@ export async function executeToolCall(
 function normalizeCatalogQuery(text: string): string {
   let t = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   t = t.replace(/[.?¡¿!,;:]/g, " ").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ");
-  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|porfa|porfis|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi, " ");
+  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|porfa|porfis|mandame|enviarme|pasame|compartirme|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi, " ");
   // Palabras "meta": describen lo que se pide SOBRE el producto, no el producto.
   t = t.replace(/\b(video|videos|foto|fotos|imagen|imagenes|informacion|info|detalle|detalles|caracteristica|caracteristicas|especificacion|especificaciones|precio|precios|disponible|disponibles|stock|mas|mejor)\b/gi, " ");
+  // Palabras vagas / demostrativos que impiden detectar productos nuevos
+  t = t.replace(/\b(algun|alguno|alguna|algunos|algunas|como|se|ve|asi|eso|esto|esta|este|estos|estas|ese|esa|esos|esas|aqui|ahi|alli|mismo|igual|tan|muy|me|te|le|al|es|son)\b/gi, " ");
   t = t.replace(/\b(un|uno|una|unos|unas|el|la|los|las|de|del|para|con|en|sobre|y|o|u|que|lo)\b/gi, " ");
   return t.replace(/\s+/g, " ").trim();
 }
@@ -1543,6 +1630,9 @@ export async function runAiAgent({
   // selecciones por número ("la 3") entre turnos.
   ctx.lastProducts = await loadRecentlyShownProducts(ctx);
 
+  // Resolver el producto en foco (memoria persistente del producto conversado)
+  const focusedProduct = await resolveFocus(ctx);
+
   const resolveProductFromConversation = async (): Promise<CatalogProduct | null> => {
     if (!catalogCfg) return null;
     const recent = [...visibleChat].reverse().slice(0, 8);
@@ -1571,7 +1661,7 @@ export async function runAiAgent({
         if (hits[0]) return hits[0];
       }
     }
-    return (await loadLastSentProduct(ctx)) ?? (await resolveProductFromConversation());
+    return focusedProduct ?? (await loadLastSentProduct(ctx)) ?? (await resolveProductFromConversation());
   };
 
   const selectedProductForDetails = await resolveCurrentProductForDetails();
@@ -1588,9 +1678,9 @@ export async function runAiAgent({
   
   const isCatalogQuestion = !isOrderIntent && (hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword || looksLikeDirectProductSearch) && !isProductDetailQuestion(lastUserText)));
   
-  // Producto de contexto para el flujo de pedido: el elegido o el último mostrado.
+  // Producto de contexto para el flujo de pedido: prioriza foco, luego elegido, luego último mostrado.
   const orderContextProduct = isOrderIntent && !selectedProductForDetails && catalogCfg
-    ? ((await loadLastSentProduct(ctx)) ?? ctx.lastProducts?.filter(Boolean).slice(-1)[0] ?? null)
+    ? (focusedProduct ?? (await loadLastSentProduct(ctx)) ?? ctx.lastProducts?.filter(Boolean).slice(-1)[0] ?? null)
     : null;
   const startOrderFlow = isOrderIntent && !isCollectingOrder && !!(selectedProductForDetails || orderContextProduct);
 
@@ -1800,11 +1890,16 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     );
     const mediaProduct =
       selectedProductForDetails ??
+      focusedProduct ??
       (await loadLastSentProduct(ctx)) ??
       ctx.lastProducts?.filter(Boolean).slice(-1)[0] ??
       (await resolveProductFromConversation());
 
-    if (mediaProduct) {
+    // Ruteo inteligente: ¿la consulta nombra un producto NUEVO o se refiere al que está en foco?
+    const namesNewProduct = !!catalogQuery && catalogQuery.length >= 3 && !mentionsFocusedProduct(catalogQuery, mediaProduct);
+
+    if (mediaProduct && !namesNewProduct) {
+      await saveFocusedProduct(ctx, mediaProduct); // Guardar foco para próximos turnos
       const kind: "video" | "image" = wantsVideo && mediaProduct.video_url ? "video" : "image";
       const url = kind === "video" ? mediaProduct.video_url : mediaProduct.image_url;
 
@@ -1899,7 +1994,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         ...visibleChat.slice(-6),
         { role: "user", content: lastUserText },
       ]);
-      if (focused.text?.trim()) return { reply: focused.text.trim(), actions: ["product_detail_from_catalog"] };
+      if (focused.text?.trim()) {
+        await saveFocusedProduct(ctx, selectedProductForDetails);
+        return { reply: focused.text.trim(), actions: ["product_detail_from_catalog"] };
+      }
     } catch (err) {
       console.warn("[runAiAgent] Falló el detalle del producto enfocado, se utilizará la respuesta determinista del catálogo", {
         error: err instanceof Error ? err.message : String(err),
@@ -1907,6 +2005,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         threadId,
       });
     }
+    await saveFocusedProduct(ctx, selectedProductForDetails);
     return {
       reply: buildProductDetailReply(selectedProductForDetails),
       actions: ["detalle_del_producto_del_catálogo"],
@@ -1936,6 +2035,8 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         }
 
         const details = formatProductDetailsForCustomer(chosen);
+        // Guardar producto en foco (memoria persistente)
+        await saveFocusedProduct(ctx, chosen);
         // Enviar las características/beneficios como UN mensaje, y la pregunta de
         // cierre como un mensaje SEPARADO (mejor lectura en WhatsApp).
         await queueOutgoingText(ctx, `¡Buena elección! 🙌\n\n${details}`);
