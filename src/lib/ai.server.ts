@@ -201,7 +201,7 @@ export async function callGrok(opts: {
 }): Promise<{ text: string; toolCalls?: any[] }> {
   const body: any = { model: opts.model, messages: opts.messages };
   if (opts.tools?.length) body.tools = opts.tools;
-  const res = await fetch("https://api.x.ai/v1/chat/completions", {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -211,7 +211,7 @@ export async function callGrok(opts: {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Grok ${res.status}: ${text.slice(0, 300)}`);
+    throw new Error(`Groq ${res.status}: ${text.slice(0, 300)}`);
   }
   const j: any = await res.json();
   const message = j.choices?.[0]?.message;
@@ -503,38 +503,40 @@ export async function getAiConfigFromDb(orgId: string) {
 const hasOpenAICredentials = (cfg: Record<string, unknown>) => !!(cfg.openai_api_key as string);
 const hasGrokCredentials = (cfg: Record<string, unknown>) => !!(cfg.grok_api_key as string);
 const hasLovableCredentials = () => !!process.env.LOVABLE_API_KEY;
+const normalizeOpenAIModel = (model?: string) => model?.startsWith("gpt-") ? model : "gpt-4o-mini";
+const normalizeGrokModel = (model?: string) => /^(llama|gemma|mixtral|compound)/i.test(model ?? "") ? model! : "llama-3.1-8b-instant";
+const normalizeLovableModel = (model?: string) => model?.includes("/") ? model : "google/gemini-3-flash-preview";
 
 const fallbackVertexProvider = async (
   cfg: Record<string, unknown>,
   messages: Msg[],
   tools?: any[],
 ) => {
+  if (hasGrokCredentials(cfg)) {
+    return callGrok({
+      apiKey: cfg.grok_api_key as string,
+      model: normalizeGrokModel(cfg.model as string),
+      messages,
+      tools,
+    });
+  }
   if (hasOpenAICredentials(cfg)) {
     return callOpenAI({
       apiKey: cfg.openai_api_key as string,
-      model: (cfg.model as string) || "gpt-4o",
+      model: normalizeOpenAIModel(cfg.model as string),
       messages,
       tools,
     });
   }
   if (hasLovableCredentials()) {
     return callLovableAI({
-      model: (cfg.model as string) || "gpt-4o",
+      model: normalizeLovableModel(cfg.model as string),
       messages,
       tools,
     });
   }
-  if (hasGrokCredentials(cfg)) {
-    return callGrok({
-      apiKey: cfg.grok_api_key as string,
-      model: (cfg.model as string) || "gpt-4o",
-      messages,
-      tools,
-    });
-  }
-  // Fallback a Lovable si no hay otros proveedores
   return callLovableAI({
-    model: (cfg.model as string) || "gpt-4o",
+    model: normalizeLovableModel(cfg.model as string),
     messages,
     tools,
   });
@@ -552,13 +554,13 @@ export async function callAiProvider(
   if (provider === "openai") {
     const key = cfg.openai_api_key as string;
     if (!key) throw new Error("Falta openai_api_key");
-    return callOpenAI({ apiKey: key, model, messages, tools });
+    return callOpenAI({ apiKey: key, model: normalizeOpenAIModel(model), messages, tools });
   }
 
   if (provider === "grok") {
     const key = cfg.grok_api_key as string;
     if (!key) throw new Error("Falta grok_api_key");
-    return callGrok({ apiKey: key, model, messages, tools });
+    return callGrok({ apiKey: key, model: normalizeGrokModel(model), messages, tools });
   }
 
   if (provider === "vertex") {
@@ -598,7 +600,7 @@ export async function callAiProvider(
   }
 
   // Default: Lovable
-  return callLovableAI({ model, messages, tools });
+  return callLovableAI({ model: normalizeLovableModel(model), messages, tools });
 }
 
 /* ============================================================
@@ -624,10 +626,69 @@ function mapProductsForTool(products: CatalogProduct[]) {
     stock: p.stock,
     sku: p.sku,
     description: (p.description ?? "").slice(0, 220),
+    attributes: p.attributes ? Object.fromEntries(Object.entries(p.attributes).slice(0, 8)) : undefined,
     has_image: !!p.image_url,
-    has_video: !!p.video_url,
     badge: p.badge,
   }));
+}
+
+function formatProductDetailsForCustomer(p: CatalogProduct): string {
+  const lines = [`${p.name}${p.sku ? ` (${p.sku})` : ""}`];
+  if (p.price != null && String(p.price).trim() !== "") lines.push(`Valor: $${p.price}`);
+  if (p.description?.trim()) lines.push(`Detalle: ${p.description.trim()}`);
+  if (p.attributes && Object.keys(p.attributes).length) {
+    for (const [key, value] of Object.entries(p.attributes).slice(0, 6)) {
+      if (value == null || String(value).trim() === "") continue;
+      lines.push(`${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`);
+    }
+  }
+  if (p.stock != null) lines.push(`Disponibilidad: ${p.stock > 0 ? "disponible" : "por confirmar"}`);
+  if (p.video_url) lines.push("Tengo video disponible si quieres verlo mejor 😊");
+  return lines.join("\n");
+}
+
+function isProductDetailQuestion(text: string): boolean {
+  const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return /\b(detalle|detalles|informacion|info|caracteristica|caracteristicas|especificacion|especificaciones|material|hech[oa]|sirve|funciona|garantia|garantía|medida|medidas|tamano|tamaño|peso|voltaje|temperatura|color|tipo de cabello|cabello)\b/.test(t);
+}
+
+function buildProductDetailReply(product: CatalogProduct): string {
+  const hasDetails = Boolean(product.description?.trim() || (product.attributes && Object.keys(product.attributes).length));
+  const price = product.price != null && String(product.price).trim() !== "" ? ` Su valor es $${product.price}.` : "";
+  if (!hasDetails) {
+    return `Del ${product.name}${price} no tengo más especificaciones cargadas en el catálogo. Dame un minuto ya te verifico 😊`;
+  }
+  return `${formatProductDetailsForCustomer(product)}\n\n¿Te sirve para avanzar con el pedido? 😊`;
+}
+
+function selectRelevantText(raw: string, query: string, maxChars: number): string {
+  const text = (raw || "").trim();
+  if (!text || text.length <= maxChars) return text;
+  const terms = query
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 4);
+  const blocks = text
+    .split(/\n{2,}|(?=Producto:|Referencia:|SKU:|Pregunta:|FAQ:)/i)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  const scored = blocks
+    .map((block, idx) => {
+      const normalized = block.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const score = terms.reduce((acc, term) => acc + (normalized.includes(term) ? 1 : 0), 0);
+      return { block, index: idx, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  const selected = scored.length ? scored : blocks.slice(0, 3).map((block, idx) => ({ block, idx, score: 0 }));
+  let out = "";
+  for (const item of selected) {
+    if (out.length >= maxChars) break;
+    out += (out ? "\n\n" : "") + item.block.slice(0, Math.min(item.block.length, maxChars - out.length));
+  }
+  return out.slice(0, maxChars);
 }
 
 /**
@@ -1361,8 +1422,6 @@ export async function runAiAgent({
     console.error('[runAiAgent] getCatalogConfig failed', err, { orgId });
     catalogCfg = null;
   }
-  
-  const tools = catalogCfg ? [...CRM_TOOLS, ...CATALOG_TOOLS] : CRM_TOOLS;
 
   // Cargar thread con manejo de error
   try {
@@ -1384,6 +1443,49 @@ export async function runAiAgent({
       ? 'El cliente ESTÁ entregando datos del pedido. NO busques productos: pide el siguiente dato faltante o ejecuta confirm_order si ya tienes todo.'
       : 'El cliente NO está en modo recolección de datos. Atiende normalmente según la jerarquía de modos.'
   }`;
+
+  const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
+  const visibleChat = messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim());
+  const lastUserText = [...visibleChat].reverse().find((m) => m.role === "user")?.content?.trim() ?? "";
+
+  const previousDetailQuestion = [...visibleChat]
+    .reverse()
+    .filter((m) => m.role === "user" && m.content?.trim() !== lastUserText)
+    .find((m) => isProductDetailQuestion(m.content))?.content?.trim() ?? "";
+
+  const detailQuestionText = isProductDetailQuestion(lastUserText)
+    ? lastUserText
+    : /^(\?+|¿\?+|\?\?|y\??|me responde\??|me confirmas\??)$/i.test(lastUserText.trim())
+    ? previousDetailQuestion || lastUserText
+    : lastUserText;
+
+  // Reconstruir los productos mostrados recientemente para poder resolver
+  // selecciones por número ("la 3") entre turnos.
+  ctx.lastProducts = await loadRecentlyShownProducts(ctx);
+
+  const resolveCurrentProductForDetails = async (): Promise<CatalogProduct | null> => {
+    if (!catalogCfg || !isProductDetailQuestion(detailQuestionText)) return null;
+    for (const msg of [...visibleChat].reverse()) {
+      if (msg.role === "user") {
+        const sel = parseSelectionNumber(msg.content);
+        if (sel != null && ctx.lastProducts?.[sel - 1]) return ctx.lastProducts[sel - 1];
+      }
+      const chosenMatch = msg.content.match(/(?:buena elecci[oó]n|excelente elecci[oó]n)[\s\S]{0,80}?\b(?:el|la)\s+([^\n🙌😊.]+)/i);
+      if (chosenMatch) {
+        const hits = await searchCatalog(catalogCfg, chosenMatch[1].trim(), 3);
+        if (hits[0]) return hits[0];
+      }
+    }
+    return loadLastSentProduct(ctx);
+  };
+
+  const selectedProductForDetails = await resolveCurrentProductForDetails();
+  const isCatalogQuestion = /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(lastUserText);
+  const promptMode = isCollectingOrder ? "pedido" : selectedProductForDetails ? "product_detail" : isCatalogQuestion ? "catalog" : "general";
+
+  const tools = promptMode === "pedido" || promptMode === "product_detail"
+    ? CRM_TOOLS
+    : catalogCfg ? [...CRM_TOOLS, ...CATALOG_TOOLS] : CRM_TOOLS;
 
   const PRODUCT_FLOW_GUIDE = `
 Eres un asistente comercial por WhatsApp. Tu objetivo es ATENDER, AGENDAR/PREPARAR PEDIDOS y MOSTRAR PRODUCTOS cuando corresponda.
@@ -1412,35 +1514,26 @@ MODO B — DESCUBRIENDO PRODUCTOS:
 - Al confirmar el producto seleccionado, menciona claramente el valor de envío junto al precio final.
 7. Si el cliente pide video DIRECTAMENTE (ej: "¿tienes video de esto?", "muéstrame video"), LLAMA send_product_video INMEDIATAMENTE sin esperar confirmación adicional.
 8. Si no hay video disponible, dilo y ofrece alternativamente send_product_image o detalles en texto.
-9. Si no hay productos, RESPONDE DE FORMA NATURAL Y CONVERSACIONAL (no robótica):
-   a. Analiza el contexto del historial para entender mejor qué busca el cliente.
-   b. Varía la pregunta según el contexto. Ejemplos:
-      - Si el cliente fue vago: "Indícame de cuáles buscas" o "¿Sabes cuál es el nombre exacto?"
-      - Si buscó algo específico: "¿Hay uno en especial que tengas en mente?" o "¿Cuál buscas exactamente?"
-      - Si es la primera búsqueda: "¿Buscar alguno en especial?" o "¿Hay alguno en particular?"
-      - Si ya buscó antes: "¿Algo más en específico?" o "¿Otro modelo?"
-   c. SÉ BREVE: máximo 1 pregunta seguimiento, no digas "palabra clave" ni "detalle" (suena a bot).
-   d. Si es totalmente válido, ofrece los alternativos: "No tengo exactamente eso, pero tengo estos:" + mostrar productos similares.
 
 MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES, DETALLES):
 1. Si el cliente pregunta por características, especificaciones, detalles técnicos o información que NO está en tu BASE DE CONOCIMIENTO:
-   a. NO digas "No dispongo de esa información exacta" ni "Déjanos tu número de WhatsApp..."
-   b. Responde SIEMPRE con: "Dame un minuto ya te verifico 😊"
-   c. INMEDIATAMENTE DESPUÉS, ejecuta la herramienta send_message con el contenido "[SUPPORT_WIDGET:context:verificar-datos]" para activar el widget de apoyo.
-   d. El agente humano verá la solicitud y te enviará la información necesaria para responder al cliente.
+   a. NO inventa datos ni utiliza herramientas inexistentes.
+   b. Responde con lo que sí aparece en el catálogo / base de conocimiento.
+   c. Si el dato exacto no está cargado, dilo breve y ofrece verificarlo: "Ese dato exacto no lo tengo cargado, te lo verifico 😊".
 2. Ejemplos de preguntas que activan este modo:
    - "¿Qué material es?" / "¿De qué color viene?" / "¿Cuánto pesa?"
    - "¿Tiene garantía?" / "¿Cuál es la dimensión exacta?"
    - Cualquier pregunta sobre especificaciones no listadas en el catálogo.
-3. IMPORTANTE: NUNCA pidas datos de contacto al cliente cuando falta información. Usa el widget de apoyo en su lugar.
+3. IMPORTANTE: NUNCA pide datos de contacto al cliente cuando falta información.
+`;
 
-REGLAS GENERALES:
-- Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS y las herramientas de catálogo antes de inventar.
-- Haz máximo una pregunta por mensaje.
-- No te presentes si ya hay mensajes previos.
-- No repitas preguntas ya hechas.
-- Si el cliente muestra interés en un producto, continúa desde ahí o pasa al modo de pedido.
-`.trim();
+  const activeFlowGuide = promptMode === "catalog"
+    ? PRODUCT_FLOW_GUIDE
+    : promptMode === "product_detail"
+      ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la BASE DE CONOCIMIENTO relevante.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
+      : promptMode === "pedido"
+        ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
+        : `MODO GENERAL:\nResponde breve y natural. Si el cliente pregunta por productos, usa el catálogo; si muestra intención de compra, guía hacia el pedido.`;
 
   // Load order fields con manejo de error
   try {
@@ -1473,11 +1566,8 @@ REGLAS GENERALES:
     knowledgeSourcesData = null;
   }
 
-  // Cap knowledge sources so the system prompt stays compact. Sending every
-  // source in full on every turn was a major driver of oversized prompts
-  // (Vertex "out of balance"/RESOURCE_EXHAUSTED) and truncated responses.
-  const KS_PER_SOURCE = 1500;
-  const KS_TOTAL = 6000;
+  const KS_PER_SOURCE = promptMode === "general" ? 900 : 500;
+  const KS_TOTAL = promptMode === "general" ? 3000 : promptMode === "pedido" ? 800 : 1500;
   const knowledgeSourcesText = (() => {
     if (!knowledgeSourcesData?.length) return "";
     let used = 0;
@@ -1485,7 +1575,7 @@ REGLAS GENERALES:
     for (const ks of knowledgeSourcesData as any[]) {
       if (used >= KS_TOTAL) break;
       const remaining = KS_TOTAL - used;
-      const body = String(ks.content ?? "").slice(0, Math.min(KS_PER_SOURCE, remaining));
+      const body = selectRelevantText(String(ks.content ?? ""), lastUserText, Math.min(KS_PER_SOURCE, remaining));
       if (!body.trim()) continue;
       blocks.push(`[Tipo: ${ks.source_type} | Nombre: ${ks.name}]\n${body}`);
       used += body.length;
@@ -1526,20 +1616,24 @@ REGLAS GENERALES:
 - Si el cliente ya mostró interés en algo, continúa desde ahí sin empezar de cero.
 - Si el cliente confirma la información del pedido, llama obligatoriamente la herramienta \`confirm_order\` y no digas "pedido registrado" hasta que esa herramienta se ejecute.`;
 
-  const KB_MAX = 8000;
+  const KB_MAX = promptMode === "general" ? 4000 : promptMode === "catalog" ? 1800 : promptMode === "product_detail" ? 2500 : 1200;
   const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
-  const knowledgeBase = knowledgeBaseRaw.length > KB_MAX
-    ? knowledgeBaseRaw.slice(0, KB_MAX) + "\n…(base de conocimiento truncada; usa las herramientas de catálogo para detalles)"
-    : knowledgeBaseRaw;
+  const knowledgeBase = selectRelevantText(knowledgeBaseRaw, `${detailQuestionText}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`, KB_MAX);
+
+  const selectedProductText = selectedProductForDetails
+    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(selectedProductForDetails)}`
+    : "";
 
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
+    `\n\n=== MODO DE PROMPT DINÁMICO ===\nmodo: ${promptMode}\nUsa solo el contexto incluido aquí. Para detalles del producto elegido, prioriza PRODUCTO ELEGIDO y BASE DE CONOCIMIENTO relevante; no reinicies búsqueda ni envías otra ronda de imágenes salvo que el cliente pida otros productos.`,
     conversationRulesText,
+    selectedProductText,
     knowledgeBase
       ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}`
       : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
-    "\n\n" + PRODUCT_FLOW_GUIDE,
+    "\n\n" + activeFlowGuide,
     orderStateText,
     orderFieldsText,
     knowledgeSourcesText,
@@ -1558,16 +1652,38 @@ REGLAS GENERALES:
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
 
-  const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
   const actions: string[] = [];
   const executedToolCalls = new Set<string>();
   let orderConfirmed = false;
   let lastText = "";
   let deliveredProductMedia = false;
 
-  // Reconstruir los productos mostrados recientemente para poder resolver
-  // selecciones por número ("la 3") entre turnos.
-  ctx.lastProducts = await loadRecentlyShownProducts(ctx);
+  if (!isCollectingOrder && promptMode === "product_detail" && selectedProductForDetails) {
+    const focusedSystem = [
+      (cfg.system_prompt as string)?.trim() || "Eres un asesor comercial por WhatsApp.",
+      "\n\nResponde SOLO sobre el producto elegido. Usa el catálogo y la base relevante. No inventes datos técnicos; si falta un dato exacto, dilo y ofrece verificarlo. Responde breve y vendedor, máximo 4 líneas.",
+      selectedProductText,
+      knowledgeBase ? `\n\n=== BASE RELEVANTE ===\n${knowledgeBase}` : "",
+    ].join("");
+    try {
+      const focused = await callAiProvider(cfg, [
+        { role: "system", content: focusedSystem },
+        ...visibleChat.slice(-6),
+        { role: "user", content: lastUserText },
+      ]);
+      if (focused.text?.trim()) return { reply: focused.text.trim(), actions: ["product_detail_from_catalog"] };
+    } catch (err) {
+      console.warn("[runAiAgent] Falló el detalle del producto enfocado, se utilizará la respuesta determinista del catálogo", {
+        error: err instanceof Error ? err.message : String(err),
+        orgId,
+        threadId,
+      });
+    }
+    return {
+      reply: buildProductDetailReply(selectedProductForDetails),
+      actions: ["detalle_del_producto_del_catálogo"],
+    };
+  }
 
   // DETERMINÍSTICO DE CORTOCIRCUITO: si el cliente eligió por número y no estamos
   // recopilando datos del pedido, confirmamos el producto correcto SIN llamar a

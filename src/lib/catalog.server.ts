@@ -37,6 +37,23 @@ export type CatalogProduct = {
   attributes?: Record<string, unknown>;
 };
 
+function extractProductAttributes(raw: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const attrs: Record<string, unknown> = {};
+  for (const key of ["attributes", "specifications", "specs", "details", "caracteristicas", "metadata"]) {
+    const value = raw[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      Object.assign(attrs, value as Record<string, unknown>);
+    }
+  }
+  for (const key of ["marca", "brand", "material", "color", "talla", "tamano", "medidas", "temperatura", "voltaje", "garantia", "garantía"]) {
+    if (raw[key] != null && raw[key] !== "") {
+      attrs[key] = raw[key];
+    }
+  }
+  return Object.keys(attrs).length ? attrs : undefined;
+}
+
 // ── helpers ──────────────────────────────────────────────────
 
 function pgRestUrl(cfg: CatalogConfig, table: string): string {
@@ -217,10 +234,11 @@ export async function searchCatalog(
       price: r.price ?? undefined,
       stock: r.stock ?? null,
       image_url: r.image_url || undefined,
-      video_url: raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
+      video_url: r.video_url || raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
       url: r.slug ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}` : undefined,
       sku: r.sku || undefined,
       badge: r.badge || undefined,
+      attributes: extractProductAttributes(raw),
     };
   });
 }
@@ -250,9 +268,10 @@ export async function getCatalogProduct(
     price: r.price ?? undefined,
     stock: r.stock ?? null,
     image_url: r.image_url || undefined,
-    video_url: raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
+    video_url: r.video_url || raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
     sku: r.sku || undefined,
     badge: r.badge || undefined,
+    attributes: extractProductAttributes(raw),
   };
 }
 

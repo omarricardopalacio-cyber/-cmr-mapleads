@@ -50,6 +50,9 @@ const OPENAI_MODELS = [
 const GROK_MODELS = [
   { id: "grok-3", label: "Grok 3" },
   { id: "grok-3-mini", label: "Grok 3 Mini" },
+  { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant (rápido)" },
+  { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile" },
+  { id: "gemma2-9b-it", label: "Gemma 2 9B" },
 ];
 
 function IntegrationsPage() {
@@ -160,8 +163,8 @@ function IntegrationsPage() {
             <Badge variant="secondary" className="ml-2">API</Badge>
           </TabsTrigger>
           <TabsTrigger value="grok">
-            Grok
-            <Badge variant="secondary" className="ml-2">xAI</Badge>
+            Groq
+            <Badge variant="secondary" className="ml-2">API</Badge>
           </TabsTrigger>
           <TabsTrigger value="vertex">
             Vertex AI
@@ -230,15 +233,15 @@ function IntegrationsPage() {
         <TabsContent value="grok" className="space-y-3 mt-4">
           <Card className="p-5 space-y-3">
             <div className="text-sm text-muted-foreground">
-              Conecta directamente con la API de xAI (Grok) usando tu propia API Key.
+              Conecta directamente con la API de Groq usando tu propia API Key.
             </div>
             <div>
-              <Label>API Key de xAI</Label>
+              <Label>API Key de Groq</Label>
               <Input
                 type="password"
                 value={form.grok_api_key ?? ""}
                 onChange={(e) => update({ grok_api_key: e.target.value })}
-                placeholder="xai-..."
+                placeholder="gsk_..."
               />
             </div>
             <div>
