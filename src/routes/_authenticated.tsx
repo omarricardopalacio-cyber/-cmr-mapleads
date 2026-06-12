@@ -13,12 +13,12 @@ import {
   SidebarTrigger,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
+import { Badge } from "@/components/ui/badge";
 
 import { supabase } from "@/integrations/supabase/client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { ensureOrg } from "@/lib/org.functions";
@@ -26,6 +26,7 @@ import { getPendingRemindersCount, getPendingReminders } from "@/lib/reminders.f
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
+import { getSaasAccess, stopImpersonationFn } from "@/lib/saas-admin.functions";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: ({ context, location }) => {
@@ -39,6 +40,11 @@ export const Route = createFileRoute("/_authenticated")({
 
 function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const saasAccessFn = useServerFn(getSaasAccess);
+  const { data: saasAccess } = useQuery({
+    queryKey: ["saasAccess"],
+    queryFn: () => saasAccessFn({}),
+  });
 
   const main = [
     { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
@@ -68,6 +74,10 @@ function AppSidebar() {
     { title: "Sesiones WhatsApp", url: "/sessions", icon: Smartphone },
     // { title: "Pipelines", url: "/pipelines", icon: KanbanSquare },
     { title: "Integraciones IA", url: "/integrations", icon: Sparkles },
+  ];
+
+  const saas = [
+    { title: "Admin SaaS", url: "/saas-admin", icon: Shield },
   ];
 
   const renderItems = (items: typeof main) =>
@@ -115,6 +125,14 @@ function AppSidebar() {
             <SidebarMenu>{renderItems(system)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        {saasAccess?.isSuperAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Administración</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>{renderItems(saas)}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       <SidebarFooter>
         <SignOutButton />
@@ -160,6 +178,7 @@ function AuthedLayout() {
             <div className="flex-1" />
             <RemindersBell />
           </header>
+          <ImpersonationBanner />
           <main className="flex-1 p-6">
             <Outlet />
           </main>
@@ -178,6 +197,55 @@ type PendingReminder = {
     | { display_name?: string | null; wa_id?: string | null }
     | null;
 };
+
+function ImpersonationBanner() {
+  const stopFn = useServerFn(stopImpersonationFn);
+  const queryClient = useQueryClient();
+  const [isActive, setIsActive] = useState(false);
+
+  useEffect(() => {
+    // Aquí se detectaría si hay una suplantación activa
+    // Por ahora, se puede agregar lógica para obtenerlo de un query
+    const checkImpersonation = () => {
+      const storedImpersonation = localStorage.getItem("activeImpersonation");
+      setIsActive(!!storedImpersonation);
+    };
+    checkImpersonation();
+  }, []);
+
+  if (!isActive) return null;
+
+  const handleStop = async () => {
+    try {
+      await stopFn({});
+      localStorage.removeItem("activeImpersonation");
+      queryClient.invalidateQueries({ queryKey: ["saasAccess"] });
+      setIsActive(false);
+    } catch (error) {
+      console.error("Failed to stop impersonation:", error);
+    }
+  };
+
+  return (
+    <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-3 flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <Shield className="h-4 w-4 text-yellow-600" />
+        <span className="text-sm text-yellow-800">
+          You are currently impersonating an organization
+        </span>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={handleStop}
+        className="gap-2"
+      >
+        <X className="h-4 w-4" />
+        Stop Impersonation
+      </Button>
+    </div>
+  );
+}
 
 function RemindersBell() {
   const countFn = useServerFn(getPendingRemindersCount);
