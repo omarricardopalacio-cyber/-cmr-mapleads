@@ -1043,7 +1043,24 @@ async function queueOutgoingMedia(
     try {
       const { convertUrlToBase64 } = await import("./media");
       const dl = await convertUrlToBase64(mediaUrl);
-      if (dl.mimeType && dl.mimeType !== "application/octet-stream") mimeType = dl.mimeType;
+      const dlMime = (dl.mimeType || "").toLowerCase();
+
+      // Validar que lo descargado sea realmente media del tipo pedido.
+      const isHtmlOrText =
+        dlMime.startsWith("text/") ||
+        dlMime.includes("html") ||
+        dlMime.includes("json") ||
+        dlMime.includes("xml");
+      const mismatchedKind =
+        (kind === "video" && dlMime.startsWith("image/")) ||
+        (kind === "image" && dlMime.startsWith("video/"));
+
+      if (isHtmlOrText || mismatchedKind) {
+        const detalle = dlMime || "desconocido";
+        return `INVALID_MEDIA: el ${kind === "video" ? "video" : "la imagen"} del producto no es un archivo de ${kind === "video" ? "video" : "imagen"} válido (tipo recibido: ${detalle}).`;
+      }
+
+      if (dlMime && dlMime !== "application/octet-stream") mimeType = dl.mimeType;
       const ext = mimeType.split("/")[1]?.split(";")[0] || (kind === "video" ? "mp4" : "jpg");
       const path = `${ctx.orgId}/ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
       const bytes = Buffer.from(dl.base64, "base64");
@@ -1466,6 +1483,12 @@ export async function executeToolCall(
 
             if (sendResult.includes("se omite el duplicado")) {
               result = sendResult;
+            } else if (sendResult.startsWith("INVALID_MEDIA")) {
+              if (kind === "video" && p.image_url) {
+                result = `El video del producto "${p.name}" no se puede enviar (el archivo no es un video válido). Envía la imagen con send_product_image (product_id="${p.id}") y ofrece detalles por texto. NO afirmes que enviaste el video.`;
+              } else {
+                result = `No se pudo enviar ${kind === "video" ? "el video" : "la imagen"} de "${p.name}" porque el archivo no es válido. Ofrece detalles por texto. NO afirmes que lo enviaste.`;
+              }
             } else if (!/enviado al cliente/i.test(sendResult)) {
               result = sendResult;
             } else {
@@ -1920,6 +1943,22 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           name: kind === "video" ? "send_product_video" : "send_product_image",
           arguments: JSON.stringify({ product_id: mediaProduct.id, caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}` }),
         }}, ctx);
+        
+        const sent = /enviado al cliente/i.test(exec.result);
+
+        // Si el video no es válido, NO afirmar que se envió: fallback a imagen.
+        if (kind === "video" && !sent) {
+          if (mediaProduct.image_url) {
+            const imgExec = await executeToolCall({ id: `auto_media_img_${mediaProduct.id}`, function: {
+              name: "send_product_image",
+              arguments: JSON.stringify({ product_id: mediaProduct.id, caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}` }),
+            }}, ctx);
+            actions.push(imgExec.name);
+            return { reply: `El video del ${mediaProduct.name} no está disponible en este momento, pero te envié la imagen. ¿Quieres que te dé más detalles o lo agendamos? 😊`, actions };
+          }
+          return { reply: `Por ahora no puedo enviarte el video del ${mediaProduct.name}, pero con gusto te doy todos los detalles. ¿Qué te gustaría saber? 😊`, actions: actions.length ? actions : ["media_invalid_video"] };
+        }
+
         actions.push(exec.name);
         return { reply: `Aquí tienes ${kind === "video" ? "el video" : "la imagen"} del ${mediaProduct.name}. ¿Tienes alguna consulta o te gustaría agendar el pedido? 😊`, actions };
       }

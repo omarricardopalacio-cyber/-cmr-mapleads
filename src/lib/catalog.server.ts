@@ -253,9 +253,13 @@ async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[
   }
 }
 
-function rankProducts(products: CatalogProduct[], query: string, limit: number): CatalogProduct[] {
+function rankProductsMeta(
+  products: CatalogProduct[],
+  query: string,
+  limit: number,
+): { results: CatalogProduct[]; hasNameMatch: boolean } {
   const q = query.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  if (!q) return products.slice(0, limit);
+  if (!q) return { results: products.slice(0, limit), hasNameMatch: false };
 
   const queryTokens = q.split(/\s+/).filter(Boolean);
   const vocab = buildSearchVocabulary(products);
@@ -326,10 +330,12 @@ function rankProducts(products: CatalogProduct[], query: string, limit: number):
   const nameMatches = matched.filter((sp) => sp.nameHit);
   const pool = nameMatches.length ? nameMatches : matched;
 
-  return pool
+  const results = pool
     .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
     .map((sp) => sp.product)
     .slice(0, limit);
+
+  return { results, hasNameMatch: nameMatches.length > 0 };
 }
 
 /**
@@ -342,12 +348,25 @@ export async function searchCatalog(
   query: string,
   limit = 6,
 ): Promise<CatalogProduct[]> {
+  const q = query.trim();
   const localProducts = await loadLocalProducts(cfg);
-  const localHits = rankProducts(localProducts, query, limit);
-  if (localHits.length) return localHits;
+  const local = rankProductsMeta(localProducts, query, limit);
 
-  const externalProducts = await loadExternalProducts(cfg);
-  return rankProducts(externalProducts, query, limit);
+  // Consulta sin término: devolver lo local si existe (más rápido).
+  if (!q) {
+    if (local.results.length) return local.results;
+    return rankProductsMeta(await loadExternalProducts(cfg), query, limit).results;
+  }
+
+  // Si lo local coincide por NOMBRE, es confiable: úsalo.
+  if (local.hasNameMatch) return local.results;
+
+  // Lo local está vacío o solo coincide por descripción: revisar el externo.
+  const external = rankProductsMeta(await loadExternalProducts(cfg), query, limit);
+  if (external.results.length) return external.results;
+
+  // Último recurso: devolver lo local débil si no hubo nada mejor.
+  return local.results;
 }
 
 /**
