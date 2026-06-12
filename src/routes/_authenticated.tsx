@@ -39,10 +39,9 @@ export const Route = createFileRoute("/_authenticated")({
 
 function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const saasAccessFn = useServerFn(getSaasAccess);
   const { data: saasAccess, isLoading, isError, error } = useQuery({
     queryKey: ["saasAccess"],
-    queryFn: () => saasAccessFn({}),
+    queryFn: () => getSaasAccess({}),
     retry: false,
   });
 
