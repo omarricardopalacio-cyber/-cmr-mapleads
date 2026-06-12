@@ -1417,9 +1417,34 @@ export async function executeToolCall(
 function normalizeCatalogQuery(text: string): string {
   let t = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   t = t.replace(/[.?¡¿!,;:]/g, " ").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ");
-  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi, " ");
-  t = t.replace(/\b(un|uno|una|unos|unas|el|la|los|las|de|para|con|en|sobre|y)\b/gi, " ");
+  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|porfa|porfis|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi, " ");
+  // Palabras "meta": describen lo que se pide SOBRE el producto, no el producto.
+  t = t.replace(/\b(video|videos|foto|fotos|imagen|imagenes|informacion|info|detalle|detalles|caracteristica|caracteristicas|especificacion|especificaciones|precio|precios|disponible|disponibles|stock|mas|mejor)\b/gi, " ");
+  t = t.replace(/\b(un|uno|una|unos|unas|el|la|los|las|de|del|para|con|en|sobre|y|o|u|que|lo)\b/gi, " ");
   return t.replace(/\s+/g, " ").trim();
+}
+
+/** Detecta cuando el cliente pide ver el VIDEO/FOTO de un producto. */
+function isMediaRequest(text: string): boolean {
+  const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return /\b(video|videos|foto|fotos|imagen|imagenes)\b/.test(t);
+}
+
+/**
+ * Extrae posibles referencias de producto (SKU/modelo o nombre destacado) de un texto.
+ */
+function extractProductReferencesFromText(text: string): string[] {
+  const refs: string[] = [];
+  if (!text) return refs;
+  const skuRe = /\b([A-Z]{2,6}[- ]?\d{2,5}(?:-\d{1,3})?|\d{3,5}-\d{1,3})\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = skuRe.exec(text)) !== null) refs.push(m[1].trim());
+  const upperRe = /\b([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9]{2,}(?:\s+[A-ZÁÉÍÓÚÑ0-9][A-ZÁÉÍÓÚÑ0-9-]+){0,4})\b/g;
+  while ((m = upperRe.exec(text)) !== null) {
+    const phrase = m[1].trim();
+    if (phrase.length >= 4 && !/^(JDM|MNS|SKU|WHATSAPP|IA)$/.test(phrase)) refs.push(phrase);
+  }
+  return refs;
 }
 
 async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
@@ -1518,6 +1543,21 @@ export async function runAiAgent({
   // selecciones por número ("la 3") entre turnos.
   ctx.lastProducts = await loadRecentlyShownProducts(ctx);
 
+  const resolveProductFromConversation = async (): Promise<CatalogProduct | null> => {
+    if (!catalogCfg) return null;
+    const recent = [...visibleChat].reverse().slice(0, 8);
+    for (const msg of recent) {
+      const refs = extractProductReferencesFromText(msg.content);
+      refs.sort((a, b) => (/\d/.test(b) ? 1 : 0) - (/\d/.test(a) ? 1 : 0)); // SKUs primero
+      for (const ref of refs) {
+        const hits = await searchCatalog(catalogCfg, ref, 3);
+        const match = resolveProductFromReference(ref, hits) ?? hits[0];
+        if (match) return match;
+      }
+    }
+    return null;
+  };
+
   const resolveCurrentProductForDetails = async (): Promise<CatalogProduct | null> => {
     if (!catalogCfg || !isProductDetailQuestion(detailQuestionText)) return null;
     for (const msg of [...visibleChat].reverse()) {
@@ -1531,7 +1571,7 @@ export async function runAiAgent({
         if (hits[0]) return hits[0];
       }
     }
-    return loadLastSentProduct(ctx);
+    return (await loadLastSentProduct(ctx)) ?? (await resolveProductFromConversation());
   };
 
   const selectedProductForDetails = await resolveCurrentProductForDetails();
@@ -1752,6 +1792,45 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   let orderConfirmed = false;
   let lastText = "";
   let deliveredProductMedia = false;
+
+  // Cortocircuito determinista de media: si el cliente pide ver VIDEO/FOTO de un producto
+  if (!isCollectingOrder && !isCatalogQuestion && catalogCfg && isMediaRequest(lastUserText) && !catalogQuery) {
+    const wantsVideo = /\b(video|videos)\b/i.test(
+      lastUserText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+    );
+    const mediaProduct =
+      selectedProductForDetails ??
+      (await loadLastSentProduct(ctx)) ??
+      ctx.lastProducts?.filter(Boolean).slice(-1)[0] ??
+      (await resolveProductFromConversation());
+
+    if (mediaProduct) {
+      const kind: "video" | "image" = wantsVideo && mediaProduct.video_url ? "video" : "image";
+      const url = kind === "video" ? mediaProduct.video_url : mediaProduct.image_url;
+
+      if (wantsVideo && !mediaProduct.video_url) {
+        if (mediaProduct.image_url) {
+          await executeToolCall({ id: `auto_media_${mediaProduct.id}`, function: {
+            name: "send_product_image",
+            arguments: JSON.stringify({ product_id: mediaProduct.id, caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}` }),
+          }}, ctx);
+          actions.push("send_product_image");
+        }
+        return { reply: `Del ${mediaProduct.name} no tengo video cargado, pero te envié la imagen. ¿Quieres que te dé más detalles o lo agendamos? 😊`,
+                 actions: actions.length ? actions : ["media_no_video"] };
+      }
+
+      if (url) {
+        const exec = await executeToolCall({ id: `auto_media_${mediaProduct.id}`, function: {
+          name: kind === "video" ? "send_product_video" : "send_product_image",
+          arguments: JSON.stringify({ product_id: mediaProduct.id, caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}` }),
+        }}, ctx);
+        actions.push(exec.name);
+        return { reply: `Aquí tienes ${kind === "video" ? "el video" : "la imagen"} del ${mediaProduct.name}. ¿Tienes alguna consulta o te gustaría agendar el pedido? 😊`, actions };
+      }
+    }
+    // Si no se resolvió producto, continúa el flujo normal.
+  }
 
   // Cortocircuito determinista para modo Catálogo (sin IA)
   if (!isCollectingOrder && promptMode === "catalog" && catalogCfg && catalogQuery) {
