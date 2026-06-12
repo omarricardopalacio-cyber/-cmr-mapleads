@@ -103,6 +103,18 @@ async function resolveTenantId(cfg: CatalogConfig): Promise<string | null> {
   return tenantId;
 }
 
+// ── cache ─────────────────────────────────────────────────
+const externalProductsCache = new Map<string, { products: CatalogProduct[]; timestamp: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+function getCacheKey(cfg: CatalogConfig): string {
+  return `${cfg.org_id}:${cfg.catalog_slug}:${cfg.api_token}`;
+}
+
+function clearProductsCache(cfg: CatalogConfig): void {
+  externalProductsCache.delete(getCacheKey(cfg));
+}
+
 // ── public API ────────────────────────────────────────────────
 
 export async function getCatalogConfig(orgId: string): Promise<CatalogConfig | null> {
@@ -230,6 +242,14 @@ async function loadLocalProducts(cfg: CatalogConfig): Promise<CatalogProduct[]> 
 
 async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[]> {
   try {
+    // Check cache first
+    const cacheKey = getCacheKey(cfg);
+    const cached = externalProductsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      console.log(`[catalog] Usando caché de productos externos: ${cached.products.length} productos`);
+      return cached.products;
+    }
+
     const tenantId = await resolveTenantId(cfg);
     if (!tenantId) return [];
     const table = cfg.products_table || "master_products";
@@ -237,8 +257,9 @@ async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[
     url.searchParams.set("tenant_id", `eq.${tenantId}`);
     url.searchParams.set("is_active", "eq.true");
     url.searchParams.set("select", "*");
+    // Limitar a 300 productos en lugar de 1000 para mejorar rendimiento
     const res = await fetch(url.toString(), {
-      headers: { ...anonHeaders(cfg), "Range-Unit": "items", Range: "0-999" },
+      headers: { ...anonHeaders(cfg), "Range-Unit": "items", Range: "0-299" },
     });
     if (!res.ok) {
       const body = await res.text();
@@ -246,7 +267,13 @@ async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[
       return [];
     }
     const rows: any[] = await res.json();
-    return rows.map((r) => mapProductRow(r, cfg));
+    const products = rows.map((r) => mapProductRow(r, cfg));
+    
+    // Cache the results
+    externalProductsCache.set(cacheKey, { products, timestamp: Date.now() });
+    console.log(`[catalog] Cargados y cacheados ${products.length} productos externos`);
+    
+    return products;
   } catch (err) {
     console.warn("[catalog.search] fallback externo falló", err instanceof Error ? err.message : String(err));
     return [];
@@ -373,8 +400,12 @@ export async function searchCatalog(
   limit = 6,
 ): Promise<CatalogProduct[]> {
   const q = query.trim();
-  const localProducts = await loadLocalProducts(cfg);
-  const externalProducts = q ? await loadExternalProducts(cfg) : [];
+  
+  // Cargar en paralelo en lugar de secuencial
+  const [localProducts, externalProducts] = await Promise.all([
+    loadLocalProducts(cfg),
+    q ? loadExternalProducts(cfg) : Promise.resolve([]),
+  ]);
 
   if (!q) {
     if (localProducts.length) return rankProductsMeta(localProducts, query, limit).results;

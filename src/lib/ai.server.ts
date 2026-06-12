@@ -826,7 +826,7 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
   try {
     const { data: thread } = await (supabaseAdmin as any)
       .from("threads")
-      .select("focused_product_snapshot")
+      .select("focused_product_snapshot, contact_id")
       .eq("id", ctx.threadId)
       .eq("org_id", ctx.orgId)
       .maybeSingle();
@@ -850,6 +850,29 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
       })
       .eq("id", ctx.threadId)
       .eq("org_id", ctx.orgId);
+    
+    // Sincronizar al CRM
+    if (thread?.contact_id) {
+      const { data: contact } = await (supabaseAdmin as any)
+        .from("contacts")
+        .select("crm_data")
+        .eq("id", thread.contact_id)
+        .maybeSingle();
+      
+      const crmData = (contact?.crm_data as Record<string, any>) || {};
+      crmData.focused_product_id = p.id;
+      crmData.focused_product_name = p.name;
+      crmData.focused_product_price = p.price ?? null;
+      crmData.focused_product_sku = p.sku ?? null;
+      crmData.focused_product_image = p.image_url ?? null;
+      crmData.focused_product_video = p.video_url ?? null;
+      crmData.last_product_interaction = new Date().toISOString();
+      
+      await (supabaseAdmin as any)
+        .from("contacts")
+        .update({ crm_data: crmData })
+        .eq("id", thread.contact_id);
+    }
   } catch (err) {
     console.warn("[saveFocusedProduct] no se pudo guardar el foco", err instanceof Error ? err.message : String(err));
   }
@@ -1019,24 +1042,49 @@ async function saveCatalogSearchState(ctx: ToolExecCtx, query: string, shownIds:
   try {
     const { data: thread } = await (supabaseAdmin as any)
       .from("threads")
-      .select("focused_product_snapshot")
+      .select("focused_product_snapshot, contact_id")
       .eq("id", ctx.threadId)
       .eq("org_id", ctx.orgId)
       .maybeSingle();
 
     const currentSnapshot = thread?.focused_product_snapshot as Record<string, unknown> | null;
     const snapshot = currentSnapshot ? { ...currentSnapshot } : {};
+    
+    // Mantener historial de búsquedas
+    const searchHistory = (snapshot._search_history as Array<{query: string; timestamp: string}>) || [];
+    searchHistory.push({ query, timestamp: new Date().toISOString() });
+    
     snapshot._catalog_search = {
       query,
       shown_ids: Array.from(new Set(shownIds)),
       updated_at: new Date().toISOString(),
     };
+    snapshot._search_history = searchHistory.slice(-20); // Guardar últimas 20
 
     await (supabaseAdmin as any)
       .from("threads")
       .update({ focused_product_snapshot: snapshot })
       .eq("id", ctx.threadId)
       .eq("org_id", ctx.orgId);
+    
+    // Sincronizar al CRM si hay contacto
+    if (thread?.contact_id) {
+      const { data: contact } = await (supabaseAdmin as any)
+        .from("contacts")
+        .select("crm_data")
+        .eq("id", thread.contact_id)
+        .maybeSingle();
+      
+      const crmData = (contact?.crm_data as Record<string, any>) || {};
+      crmData.last_product_searches = searchHistory.slice(-5).map(s => `${s.query} (${s.timestamp})`);
+      crmData.last_searched_product_ids = shownIds;
+      crmData.last_search_at = new Date().toISOString();
+      
+      await (supabaseAdmin as any)
+        .from("contacts")
+        .update({ crm_data: crmData })
+        .eq("id", thread.contact_id);
+    }
   } catch (err) {
     console.warn("[saveCatalogSearchState] falló", err instanceof Error ? err.message : String(err));
   }
@@ -1562,12 +1610,10 @@ export async function executeToolCall(
         }
 
         if (!products.length) {
-          const fallback = await searchCatalog(catalogCfg, "", limit);
-          ctx.lastProducts = fallback;
           result = JSON.stringify({
             found: 0,
-            message: "No hay coincidencias exactas. Estos son alternativos:",
-            products: mapProductsForTool(fallback),
+            message: "No hay coincidencias para esa búsqueda. Intenta con otros términos o pide recomendaciones.",
+            products: [],
           });
         } else {
           result = JSON.stringify({
