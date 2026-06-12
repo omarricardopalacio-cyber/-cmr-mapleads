@@ -263,6 +263,7 @@ export function rankProductsMeta(
 
   const queryTokens = q.split(/\s+/).filter(Boolean);
   const vocab = buildSearchVocabulary(products);
+  console.log(`[DEBUG rankProductsMeta] query="${query}", q normalized="${q}", tokens=${JSON.stringify(queryTokens)}, total products=${products.length}`);
 
   const scoredProducts = products.map((p) => {
     let score = 0;
@@ -328,7 +329,20 @@ export function rankProductsMeta(
 
   const matched = scoredProducts.filter((sp) => sp.score > 0);
   const nameMatches = matched.filter((sp) => sp.nameHit);
-  const pool = nameMatches.length ? nameMatches : matched;
+  // Combina name matches primero, luego otros matches para obtener mejor cobertura
+  const seen = new Set<string>();
+  const pool: typeof matched = [];
+  for (const m of nameMatches) {
+    pool.push(m);
+    seen.add(m.product.id);
+  }
+  for (const m of matched) {
+    if (!seen.has(m.product.id)) pool.push(m);
+  }
+  console.log(`[DEBUG rankProductsMeta] matched=${matched.length}, nameMatches=${nameMatches.length}, pool=${pool.length}`);
+  if (matched.length > 0) {
+    console.log(`[DEBUG rankProductsMeta] scored samples: ${matched.slice(0, 5).map(sp => `${sp.product.name}(score=${sp.score})`).join(", ")}`);
+  }
 
   const results = pool
     .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))

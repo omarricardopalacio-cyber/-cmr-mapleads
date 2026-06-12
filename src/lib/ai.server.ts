@@ -2161,8 +2161,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     await queueOutgoingText(ctx, "¡Claro que sí! Permíteme 2 min mientras te busco todos los que tenemos 😉");
 
     // 2) Búsqueda en cascada: searchCatalog ya expande términos y filtra de forma estricta.
+    console.log(`[DEBUG SEARCH] lastUserText="${lastUserText}", catalogQuery="${catalogQuery}", currentCatalogQuery="${currentCatalogQuery}"`);
     const products = await searchCatalog(catalogCfg, catalogQuery, 6);
     ctx.lastProducts = products;
+    console.log(`[DEBUG SEARCH] searchCatalog devolvió ${products.length} productos: ${products.map(p => `${p.id}/${p.name}`).join(", ")}`);
+    console.log(`[DEBUG SEARCH] productos con image_url: ${products.filter(p => p.image_url).length}`);
 
     if (!products.length) {
       return {
