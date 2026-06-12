@@ -720,6 +720,90 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
   }
 }
 
+/**
+ * Devuelve el ÚLTIMO producto cuya imagen se le envió al cliente (la señal más
+ * fiable de "qué producto está pidiendo"). Si el cliente eligió uno por número,
+ * el sistema reenvía una sola imagen de ese producto, así que el más reciente
+ * coincide con el elegido. También cubre el caso de un único combo mostrado.
+ */
+async function loadLastSentProduct(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
+  if (!ctx.catalogCfg || !ctx.sessionId || !ctx.chatId) return null;
+  try {
+    const since = new Date(Date.now() - 60 * 60_000).toISOString();
+    const { data } = await (supabaseAdmin as any)
+      .from("engine_commands")
+      .select("payload, created_at")
+      .eq("org_id", ctx.orgId)
+      .eq("session_id", ctx.sessionId)
+      .eq("type", "SEND_MEDIA")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(40);
+
+    if (!data?.length) return null;
+    for (const cmd of data) {
+      const p = cmd?.payload ?? {};
+      if (p.chatId !== ctx.chatId) continue;
+      const idMatch = String(p.dedupe_key ?? "").match(/^image:(.+)$/);
+      if (!idMatch) continue;
+      const prod = await getCatalogProduct(ctx.catalogCfg, idMatch[1]);
+      if (prod) return prod;
+    }
+    return null;
+  } catch (err) {
+    console.warn("[loadLastSentProduct] falló", err);
+    return null;
+  }
+}
+
+const normFieldKey = (s: string) =>
+  String(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+function hasOrderProduct(data: Record<string, unknown>): boolean {
+  return Object.entries(data || {}).some(([k, v]) => {
+    const nk = normFieldKey(k);
+    return /(producto|articulo|art[ií]culo|item|referencia)/.test(nk) && String(v ?? "").trim().length > 0;
+  });
+}
+
+function hasOrderValue(data: Record<string, unknown>): boolean {
+  return Object.entries(data || {}).some(([k, v]) => {
+    const nk = normFieldKey(k);
+    return /(valor|precio|total|monto)/.test(nk) && String(v ?? "").trim().length > 0;
+  });
+}
+
+/**
+ * Completa el pedido con el producto y su valor tomados del contexto de la
+ * conversación cuando el form_data no los trae. Así el pedido nunca queda con
+ * "Producto: -" si el cliente venía hablando de un producto concreto.
+ */
+async function enrichOrderWithProduct(
+  data: Record<string, unknown>,
+  ctx: ToolExecCtx,
+): Promise<Record<string, unknown>> {
+  const out = { ...(data || {}) };
+  const needProduct = !hasOrderProduct(out);
+  const needValue = !hasOrderValue(out);
+  if (!needProduct && !needValue) return out;
+
+  let prod: CatalogProduct | null = await loadLastSentProduct(ctx);
+  if (!prod) {
+    const shown = (ctx.lastProducts ?? []).filter(Boolean) as CatalogProduct[];
+    if (shown.length === 1) prod = shown[0];
+  }
+
+  if (prod) {
+    if (needProduct) {
+      out["Producto"] = prod.sku ? `${prod.name} (${prod.sku})` : prod.name;
+    }
+    if (needValue && prod.price != null && String(prod.price).trim() !== "") {
+      out["Valor"] = String(prod.price);
+    }
+  }
+  return out;
+}
+
 async function resolveProductForSend(
   args: Record<string, unknown>,
   ctx: ToolExecCtx,
@@ -1002,6 +1086,9 @@ export async function executeToolCall(
       result = "Datos del pedido inválidos o incompletos: form_data debe contener al menos un campo de pedido válido.";
       details = "form_data inválido o vacío";
     } else {
+      // Completar producto y valor desde el contexto si el form_data no los trae,
+      // para que el pedido nunca quede con "Producto: -".
+      formData = await enrichOrderWithProduct(formData || {}, ctx);
       // Evitar duplicados: si ya hay un pedido confirmado en este hilo con los mismos datos o en un corto intervalo.
         const isRecoveryFormData = (data: Record<string, unknown>) => {
         const origin = String(data?.Origen ?? data?._source_message_id ?? data?.origin ?? "");
@@ -1370,7 +1457,7 @@ REGLAS GENERALES:
     
   const orderFields = orderFieldsData ?? [];
   const orderFieldsText = orderFields.length 
-    ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si desea agendar o hacer pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. Si falta algún dato requerido, insiste amablemente pero no sigas sin él. Repite las preguntas solo cuando sean necesarias.\n4. Cuando tengas todos los datos, muestra un resumen claro y pregunta: "¿La información es correcta para confirmar su pedido?"\n5. SOLO cuando el cliente confirme explícitamente, ejecuta la herramienta confirm_order con form_data como JSON. NO digas "pedido registrado" ni confirmes el pedido si no ejecutas confirm_order.\n6. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no puede considerarse pedido confirmado.\n7. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso."`
+    ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si deseas agendar o hacer el pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. INTERPRETA LOS DATOS EN CUALQUIER FORMATO: el cliente puede enviarlos con etiquetas ("Nombre: Juan"), separados por "/" o por comas, o cada dato en una línea distinta sin rótulos. Mapea cada valor al campo correcto sin importar el formato y NO le pidas que los reescriba.\n4. Si después de interpretar falta algún dato REQUERIDO, pide ÚNICAMENTE el dato que falta, de forma breve y cortés, una sola pregunta por mensaje, y repite solo hasta que el cliente entregue todos los datos requeridos. No avances ni confirma mientras falten datos requeridos.\n5. SIEMPRE incluye en el form_data el PRODUCTO que el cliente está comprando (nombre/referencia del producto que se venía conversando o que eligió) y su VALOR/precio. Si el cliente no mencionó el producto explícitamente, use el último producto mostrado en la conversación. Usa las claves "Producto" y "Valor".\n6. Cuando tengas TODOS los datos requeridos (incluido Producto y Cantidad), muestra un resumen claro con el producto, valor y datos del cliente, y pregunta: "¿La información es correcta para confirmar su pedido?"\n7. SOLO cuando el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON (incluido Producto y Valor). NO digas "pedido registrado" ni confirma el pedido si no ejecutas confirm_order.\n8. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no se puede considerar el pedido confirmado.\n9. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso".`
     : "";
 
   // Load knowledge sources con manejo de error
@@ -1568,12 +1655,29 @@ REGLAS GENERALES:
       });
       if (field && !out[field]) out[field] = value;
     }
-    // 2) Volcado separado por "/" mapeado posicionalmente a los campos requeridos.
-    if (Object.keys(out).length < Math.min(2, fieldNames.length) && text.includes("/")) {
-      const parts = text.split("/").map((p) => p.trim()).filter(Boolean);
+    // 2) Volcado separado por "/" o "," mapeado posicionalmente a los campos.
+    if (Object.keys(out).length < Math.min(2, fieldNames.length) && /[\/,]/.test(text)) {
+      const sep = text.includes("/") ? "/" : ",";
+      const parts = text.split(sep).map((p) => p.trim()).filter(Boolean);
       if (parts.length >= 2) {
         fieldNames.forEach((fn, i) => {
-          if (parts[i] && !out[fn]) out[fn] = parts[i].replace(/^enviame\s*/i, "").trim();
+          if (parts[i] && !out[fn]) out[fn] = parts[i].replace(/^(enviame|quiero|cantidad)\s*/i, "").trim();
+        });
+      }
+    }
+    // 3) Volcado por líneas SIN etiquetas, mapeado posicionalmente a los campos.
+    // Cubre el caso real: el cliente envía cada dato en una línea distinta
+    // (Nombre / Teléfono / Ciudad / Barrio / Dirección / Cantidad) sin rótulos.
+    if (Object.keys(out).length < Math.min(2, fieldNames.length)) {
+      const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.replace(/^[\s*•·\-]+/, "").trim())
+        .filter(Boolean);
+      if (lines.length >= 2 && lines.length <= fieldNames.length + 3) {
+        fieldNames.forEach((fn, i) => {
+          if (lines[i] && !out[fn]) {
+            out[fn] = lines[i].replace(/^(enviame|quiero|cantidad)\s*/i, "").trim();
+          }
         });
       }
     }

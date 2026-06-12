@@ -290,6 +290,7 @@ function OrdersModule() {
       Barrio: ['barrio', 'sector'],
       'Dirección': ['direccion', 'dirección', 'domicilio', 'dir'],
       Producto: ['producto', 'productos', 'articulo', 'artículo', 'pedido', 'referencia'],
+      Valor: ['valor', 'precio', 'total', 'monto', 'costo'],
       Cantidad: ['cantidad', 'unidades', 'qty'],
     }
 
@@ -369,7 +370,7 @@ function OrdersModule() {
         .join(', ')
     }
 
-    const fixedRows = ['Nombre', 'Teléfono', 'Ciudad', 'Barrio', 'Dirección', 'Producto', 'Cantidad'].map((label) => {
+    const fixedRows = ['Nombre', 'Teléfono', 'Ciudad', 'Barrio', 'Dirección', 'Producto', 'Valor', 'Cantidad'].map((label) => {
       const value = directLookup(label) || parsed[label] || '-'
       return { label, value }
     })
@@ -388,8 +389,13 @@ function OrdersModule() {
       'items',
     ])
 
+    const fixedLabels = new Set(['Nombre', 'Teléfono', 'Ciudad', 'Barrio', 'Dirección', 'Producto', 'Valor', 'Cantidad'])
+    const fixedAliasKeys = new Set(
+      Object.entries(FIELD_ALIASES).flatMap(([, aliases]) => aliases.map(normalize)),
+    )
+
     const extras = Object.entries(fd)
-      .filter(([key]) => !excludedKeys.has(key) && !orderFieldsList.includes(key))
+      .filter(([key]) => !excludedKeys.has(key) && !orderFieldsList.includes(key) && !fixedLabels.has(key) && !fixedAliasKeys.has(normalize(key)))
       .map(([key, value]) => ({ label: key, value: formatValue(value) }))
 
     const printWindow = window.open('', '_blank')
