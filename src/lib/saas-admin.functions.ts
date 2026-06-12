@@ -10,8 +10,7 @@
  * Nunca exponerlas al cliente sin validación SUPER_ADMIN.
  */
 
-import { createServerFn } from "@tanstack/start";
-import { getWebRequest } from "vinxi/http";
+import { createServerFn } from "@tanstack/react-start";
 import {
   supabaseAdmin,
   getAdminContext,
@@ -42,19 +41,6 @@ async function requireSuperAdmin(userId: string): Promise<void> {
     throw new Error(
       "SUPER_ADMIN role required. Audit logged. Request denied."
     );
-  }
-}
-
-function getClientIp(): string | undefined {
-  try {
-    const req = getWebRequest();
-    return (
-      req?.headers.get("x-forwarded-for")?.split(",")[0] ||
-      req?.headers.get("cf-connecting-ip") ||
-      undefined
-    );
-  } catch {
-    return undefined;
   }
 }
 
@@ -126,7 +112,7 @@ export const listSaasCompanies = createServerFn(
 
     await createAuditLog("LIST_COMPANIES", {
       actorUserId: userId,
-      ip: getClientIp(),
+      ip: undefined,
       metadata: { search: _input.search },
     });
 
@@ -164,7 +150,7 @@ export const updateCompany = createServerFn(
     await createAuditLog("UPDATE_COMPANY", {
       actorUserId: userId,
       orgId: _input.orgId,
-      ip: getClientIp(),
+      ip: undefined,
       metadata: { newStatus: _input.status },
     });
 
@@ -198,7 +184,7 @@ export const startImpersonationFn = createServerFn(
     await createAuditLog("START_IMPERSONATION", {
       actorUserId: userId,
       orgId: _input.orgId,
-      ip: getClientIp(),
+      ip: undefined,
       metadata: { impersonationId: result.id },
     });
 
@@ -227,7 +213,7 @@ export const stopImpersonationFn = createServerFn(
     await createAuditLog("STOP_IMPERSONATION", {
       actorUserId: userId,
       orgId: result.org_id,
-      ip: getClientIp(),
+      ip: undefined,
     });
 
     return result;
@@ -262,7 +248,7 @@ export const listSaasUsers = createServerFn(
 
     await createAuditLog("LIST_SAAS_USERS", {
       actorUserId: userId,
-      ip: getClientIp(),
+      ip: undefined,
     });
 
     return data || [];
@@ -293,7 +279,7 @@ export const updateSaasUser = createServerFn(
 
       await createAuditLog("GRANT_SUPER_ADMIN", {
         actorUserId: currentUserId,
-        ip: getClientIp(),
+        ip: undefined,
         metadata: { targetUserId: _input.userId },
       });
 
@@ -304,7 +290,7 @@ export const updateSaasUser = createServerFn(
 
       await createAuditLog("REVOKE_SUPER_ADMIN", {
         actorUserId: currentUserId,
-        ip: getClientIp(),
+        ip: undefined,
         metadata: { targetUserId: _input.userId },
       });
 
@@ -373,7 +359,7 @@ export const saveSaasPlan = createServerFn(
 
     await createAuditLog("SAVE_SAAS_PLAN", {
       actorUserId: userId,
-      ip: getClientIp(),
+      ip: undefined,
       metadata: { planId: data.id, name: _input.name, price: _input.price },
     });
 
@@ -422,7 +408,7 @@ export const listSubscriptions = createServerFn(
 
     await createAuditLog("LIST_SUBSCRIPTIONS", {
       actorUserId: userId,
-      ip: getClientIp(),
+      ip: undefined,
     });
 
     return data || [];
@@ -474,7 +460,7 @@ export const saveSubscription = createServerFn(
     await createAuditLog("SAVE_SUBSCRIPTION", {
       actorUserId: userId,
       orgId: _input.orgId,
-      ip: getClientIp(),
+      ip: undefined,
       metadata: { planId: _input.planId, status: _input.status },
     });
 
@@ -511,7 +497,7 @@ export const listGlobalSessions = createServerFn(
 
     await createAuditLog("LIST_GLOBAL_SESSIONS", {
       actorUserId: userId,
-      ip: getClientIp(),
+      ip: undefined,
     });
 
     return data || [];
@@ -548,7 +534,7 @@ export const manageGlobalSession = createServerFn(
 
     await createAuditLog("END_GLOBAL_SESSION", {
       actorUserId: userId,
-      ip: getClientIp(),
+      ip: undefined,
       metadata: { impersonationId: _input.impersonationId },
     });
 
@@ -641,10 +627,11 @@ export const saveGlobalSettings = createServerFn(
 
     await createAuditLog("SAVE_GLOBAL_SETTINGS", {
       actorUserId: userId,
-      ip: getClientIp(),
+      ip: undefined,
       metadata: { updates: _input },
     });
 
     return data;
   }
 );
+

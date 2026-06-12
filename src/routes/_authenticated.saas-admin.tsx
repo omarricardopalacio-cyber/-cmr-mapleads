@@ -1,82 +1,19 @@
 /**
- * SaaS Admin Dashboard
- * 
- * 8 Tabs:
- * 1. Dashboard - Métricas y resumen
- * 2. Empresas - CRUD de organizaciones
- * 3. Usuarios - Gestión de roles SUPER_ADMIN
- * 4. Planes - Gestión de planes de suscripción
- * 5. Suscripciones - Asignación de planes a orgs
- * 6. Sesiones - Suplantaciones activas
- * 7. Actividad - Logs de auditoría
- * 8. Configuración - Ajustes globales
+ * SaaS Admin Dashboard - 8 Tabs
  */
 
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-} from 'recharts'
-import {
-  getSaasAccess,
-  listSaasCompanies,
-  updateCompany,
-  listSaasUsers,
-  updateSaasUser,
-  saveSaasPlan,
-  listSubscriptions,
-  saveSubscription,
-  listGlobalSessions,
-  manageGlobalSession,
-  listSaasAudit,
-  getGlobalSettingsFn,
-  saveGlobalSettings,
-} from '@/lib/saas-admin.functions'
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
+import { getSaasAccess, listSaasCompanies, updateCompany, listSaasUsers, updateSaasUser, saveSaasPlan, listSubscriptions, saveSubscription, listGlobalSessions, manageGlobalSession, listSaasAudit, getGlobalSettingsFn, saveGlobalSettings } from '@/lib/saas-admin.functions'
 
 export const Route = createFileRoute('/_authenticated/saas-admin')({
   component: SaasAdminDashboard,
@@ -188,13 +125,13 @@ function DashboardTab() {
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ name, value }) => \`\${name}: \${value}\`}
+                  label={({ name, value }) => `${name}: ${value}`}
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="value"
                 >
                   {planDistribution.map((_, index) => (
-                    <Cell key={\`cell-\${index}\`} fill={COLORS[index % COLORS.length]} />
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip />

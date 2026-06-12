@@ -15,6 +15,7 @@ import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedTransferRulesRouteImport } from './routes/_authenticated.transfer-rules'
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
+import { Route as AuthenticatedSaasAdminRouteImport } from './routes/_authenticated.saas-admin'
 import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated.orders'
@@ -69,6 +70,11 @@ const AuthenticatedTransferRulesRoute =
 const AuthenticatedSessionsRoute = AuthenticatedSessionsRouteImport.update({
   id: '/sessions',
   path: '/sessions',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedSaasAdminRoute = AuthenticatedSaasAdminRouteImport.update({
+  id: '/saas-admin',
+  path: '/saas-admin',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedQuickRepliesRoute =
@@ -226,6 +232,7 @@ export interface FileRoutesByFullPath {
   '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
+  '/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/sessions': typeof AuthenticatedSessionsRoute
   '/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
@@ -257,6 +264,7 @@ export interface FileRoutesByTo {
   '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
+  '/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/sessions': typeof AuthenticatedSessionsRoute
   '/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
@@ -291,6 +299,7 @@ export interface FileRoutesById {
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/quick-replies': typeof AuthenticatedQuickRepliesRoute
+  '/_authenticated/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
   '/_authenticated/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/_authenticated/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
@@ -325,6 +334,7 @@ export interface FileRouteTypes {
     | '/orders'
     | '/pipelines'
     | '/quick-replies'
+    | '/saas-admin'
     | '/sessions'
     | '/transfer-rules'
     | '/conversations/$threadId'
@@ -356,6 +366,7 @@ export interface FileRouteTypes {
     | '/orders'
     | '/pipelines'
     | '/quick-replies'
+    | '/saas-admin'
     | '/sessions'
     | '/transfer-rules'
     | '/conversations/$threadId'
@@ -389,6 +400,7 @@ export interface FileRouteTypes {
     | '/_authenticated/orders'
     | '/_authenticated/pipelines'
     | '/_authenticated/quick-replies'
+    | '/_authenticated/saas-admin'
     | '/_authenticated/sessions'
     | '/_authenticated/transfer-rules'
     | '/_authenticated/conversations/$threadId'
@@ -464,6 +476,13 @@ declare module '@tanstack/react-router' {
       path: '/sessions'
       fullPath: '/sessions'
       preLoaderRoute: typeof AuthenticatedSessionsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/saas-admin': {
+      id: '/_authenticated/saas-admin'
+      path: '/saas-admin'
+      fullPath: '/saas-admin'
+      preLoaderRoute: typeof AuthenticatedSaasAdminRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/quick-replies': {
@@ -675,6 +694,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
   AuthenticatedQuickRepliesRoute: typeof AuthenticatedQuickRepliesRoute
+  AuthenticatedSaasAdminRoute: typeof AuthenticatedSaasAdminRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
   AuthenticatedTransferRulesRoute: typeof AuthenticatedTransferRulesRoute
 }
@@ -693,6 +713,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedQuickRepliesRoute: AuthenticatedQuickRepliesRoute,
+  AuthenticatedSaasAdminRoute: AuthenticatedSaasAdminRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
   AuthenticatedTransferRulesRoute: AuthenticatedTransferRulesRoute,
 }
