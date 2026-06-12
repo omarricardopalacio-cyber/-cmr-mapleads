@@ -1690,6 +1690,56 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   let lastText = "";
   let deliveredProductMedia = false;
 
+  // Cortocircuito determinista para modo Catálogo (sin IA)
+  if (!isCollectingOrder && promptMode === "catalog" && catalogCfg && catalogQuery) {
+    // 1) Frase de espera ANTES de iniciar la búsqueda (no la dice la IA).
+    await queueOutgoingText(ctx, "¡Claro que sí! Permíteme 2 min mientras te busco todos los que tenemos 😉");
+
+    // 2) Búsqueda en cascada: searchCatalog ya expande términos y filtra de forma estricta.
+    const products = await searchCatalog(catalogCfg, catalogQuery, 6);
+    ctx.lastProducts = products;
+
+    if (!products.length) {
+      return {
+        reply: `Por ahora no me aparecen resultados de "${catalogQuery}" en el catálogo. ¿Me das otra referencia o el nombre exacto del producto? 😊`,
+        actions: ["catalog_no_exact_match"],
+      };
+    }
+
+    // 3) Enviar cada producto numerado.
+    for (const product of products.filter((p) => p.image_url)) {
+      const index = products.findIndex((p) => p.id === product.id) + 1;
+      const imageExec = await executeToolCall(
+        {
+          id: `auto_img_${product.id}`,
+          function: {
+            name: "send_product_image",
+            arguments: JSON.stringify({
+              product_id: product.id,
+              caption: `${index}. ${product.name} — $${product.price ?? ""}`,
+            }),
+          },
+        },
+        ctx
+      );
+      actions.push(imageExec.name);
+      if (/enviado al cliente/i.test(imageExec.result)) deliveredProductMedia = true;
+    }
+
+    // 4) Mensaje de cierre con la palabra buscada; luego la IA queda activa.
+    if (deliveredProductMedia) {
+      return {
+        reply: `Mira, estos son los que tenemos de ${catalogQuery}. ¿Te agrada alguno? 😊`,
+        actions,
+      };
+    }
+
+    return {
+      reply: `Encontré ${products.length} opción${products.length === 1 ? "" : "es"} de ${catalogQuery}, pero sin imagen disponible. ¿Quieres que te pase los nombres y precios? 😊`,
+      actions: ["catalog_found_without_media"],
+    };
+  }
+
   if (!isCollectingOrder && promptMode === "product_detail" && selectedProductForDetails) {
     const focusedSystem = [
       (cfg.system_prompt as string)?.trim() || "Eres un asesor comercial por WhatsApp.",
@@ -1726,13 +1776,23 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const sel = lastUser ? parseSelectionNumber(lastUser.content) : null;
     if (sel != null) {
-      const chosen = ctx.lastProducts[sel - 1];
+      let chosen = ctx.lastProducts[sel - 1];
       if (chosen) {
-        const priceTxt =
-          chosen.price != null && String(chosen.price) !== "" ? ` ($${chosen.price})` : "";
+        // Enriquecer con características/beneficios completos del catálogo (la
+        // lista reconstruida puede venir sin descripción ni atributos).
+        if (catalogCfg && (!chosen.description && !(chosen.attributes && Object.keys(chosen.attributes).length))) {
+          try {
+            const full = await getCatalogProduct(catalogCfg, chosen.id);
+            if (full) chosen = full;
+          } catch (err) {
+            console.warn("[runAiAgent] no se pudo enriquecer el producto elegido", err instanceof Error ? err.message : String(err));
+          }
+        }
+
+        const details = formatProductDetailsForCustomer(chosen);
         return {
-          reply: `¡Buena elección! El ${chosen.name}${priceTxt} 🙌 ¿Quieres que lo agendamos? 😊`,
-          actions: ["select_product"],
+          reply: `¡Buena elección! 🙌\n\n${details}\n\n¿Tienes alguna consulta de lo que te acabo de enviar o del producto, o te gustaría agendar el pedido? 😊`,
+          actions: ["seleccionar_detalle_del_producto"],
         };
       }
     }
