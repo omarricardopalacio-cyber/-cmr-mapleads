@@ -484,6 +484,9 @@ async function enrollContactInFlow(contactId: string, orgId: string, sessionId: 
   }
 }
 
+const HISTORY_WINDOW = 16;
+const MAX_MSG_CHARS = 1200;
+
 async function loadThreadHistory(orgId: string, threadId: string, userText: string) {
   const { data: prior } = await supabaseAdmin
     .from('messages')
@@ -491,14 +494,14 @@ async function loadThreadHistory(orgId: string, threadId: string, userText: stri
     .eq('thread_id', threadId)
     .not('text', 'is', null)
     .order('sent_at', { ascending: false })
-    .limit(200)
+    .limit(HISTORY_WINDOW)
 
   const priorMsgs = ((prior ?? []) as any[])
     .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
     .reverse()
     .map((m: any) => ({
       role: (m.direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
-      content: String(m.text).trim(),
+      content: String(m.text).trim().slice(0, MAX_MSG_CHARS),
     }))
 
   const lastPrior = priorMsgs[priorMsgs.length - 1]

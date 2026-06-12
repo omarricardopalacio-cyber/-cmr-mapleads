@@ -1,4 +1,4 @@
-﻿import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect, useRef } from 'react'
 import { useServerFn } from "@tanstack/react-start"
 import { supabase } from '@/integrations/supabase/client'
@@ -400,21 +400,40 @@ function OrdersModule() {
         <head>
           <title>Guía de Pedido</title>
           <style>
-            body { font-family: system-ui, sans-serif; max-width: 420px; margin: 20px auto; padding: 20px; border: 1px dashed #ccc; }
-            .header { text-align: center; margin-bottom: 20px; }
-            .logo { max-height: 80px; max-width: 100%; object-fit: contain; margin-bottom: 12px; }
-            h2 { margin: 0; font-size: 1.6rem; }
-            .subtitle { color: #666; font-size: 0.9rem; margin-top: 4px; }
-            .section { margin-bottom: 18px; }
-            .section-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-            .row { margin-bottom: 8px; }
-            .label { font-weight: 700; color: #444; font-size: 0.85rem; }
-            .val { font-size: 1rem; margin-top: 2px; white-space: pre-wrap; }
-            .item-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-            .item-table th, .item-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            .item-table th { background: #f7f7f7; }
-            .footer { margin-top: 24px; text-align: center; font-size: 0.8rem; color: #666; }
-            @media print { body { border: none; } }
+            @page {
+              size: 80mm auto;
+              margin: 0;
+            }
+            body {
+              font-family: 'Courier New', Courier, monospace, system-ui, sans-serif;
+              width: 72mm;
+              max-width: 72mm;
+              margin: 0 auto;
+              padding: 10px 5px;
+              font-size: 11px;
+              line-height: 1.3;
+              color: #000;
+              background-color: #fff;
+            }
+            .header { text-align: center; margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 8px; }
+            .logo { max-height: 50px; max-width: 100%; object-fit: contain; margin-bottom: 6px; filter: grayscale(100%); }
+            h2 { margin: 0; font-size: 1.1rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; }
+            .subtitle { font-size: 0.75rem; margin-top: 3px; }
+            .section { margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px dashed #000; }
+            .section-title { font-size: 0.8rem; font-weight: bold; text-transform: uppercase; margin-bottom: 6px; }
+            .row { display: flex; justify-content: space-between; margin-bottom: 4px; align-items: flex-start; }
+            .label { font-weight: bold; padding-right: 5px; }
+            .val { text-align: right; word-break: break-word; max-width: 65%; white-space: pre-wrap; }
+            .item-table { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 11px; }
+            .item-table th, .item-table td { padding: 3px 0; text-align: left; border-bottom: 1px dashed #ccc; }
+            .item-table th { font-weight: bold; text-transform: uppercase; border-bottom: 1px dashed #000; }
+            .item-table td.num, .item-table th.num { text-align: right; }
+            .footer { margin-top: 15px; text-align: center; font-size: 0.75rem; border-top: 1px dashed #000; padding-top: 8px; }
+            @media print {
+              @page { margin: 0; }
+              body { margin: 0 auto; padding: 10px 5px; width: 72mm; }
+              .no-print { display: none; }
+            }
           </style>
         </head>
         <body>
@@ -445,13 +464,13 @@ function OrdersModule() {
             <div class="section">
               <div class="section-title">Artículos</div>
               <table class="item-table">
-                <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th></tr></thead>
+                <thead><tr><th>Producto</th><th class="num">Cant</th><th class="num">Precio</th></tr></thead>
                 <tbody>
                   ${itemRows.map((item: any) => `
                     <tr>
                       <td>${escapeHtml(String(item.name || item.product || item.description || 'Artículo'))}</td>
-                      <td>${escapeHtml(String(item.quantity ?? item.qty ?? '-'))}</td>
-                      <td>${escapeHtml(String(item.price ?? item.unit_price ?? '-'))}</td>
+                      <td class="num">${escapeHtml(String(item.quantity ?? item.qty ?? '-'))}</td>
+                      <td class="num">${escapeHtml(String(item.price ?? item.unit_price ?? '-'))}</td>
                     </tr>
                   `).join('')}
                 </tbody>

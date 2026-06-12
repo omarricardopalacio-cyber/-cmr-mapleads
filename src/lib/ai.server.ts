@@ -664,10 +664,41 @@ async function queueOutgoingMedia(
   kind: "image" | "video",
   mediaUrl: string,
   caption?: string,
+  dedupeKey?: string,
 ) {
   if (!ctx.sessionId || !ctx.chatId) {
     return "Falta sessionId/chatId; no se puede enviar media.";
   }
+
+  // Anti-duplicado entre ejecuciones: si ya encolamos este mismo producto a este
+  // mismo chat en los últimos 2 minutos, no lo reenviamos. Esto evita que la IA
+  // mande "dos rondas" de las mismas imágenes cuando hay reintentos o eventos
+  // duplicados de la extensión.
+  const key = dedupeKey || mediaUrl;
+  try {
+    const since = new Date(Date.now() - 120_000).toISOString();
+    const { data: recent } = await (supabaseAdmin as any)
+      .from("engine_commands")
+      .select("id, payload, created_at")
+      .eq("org_id", ctx.orgId)
+      .eq("session_id", ctx.sessionId)
+      .eq("type", "SEND_MEDIA")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(40);
+
+    const dup = (recent ?? []).some((c: any) => {
+      const p = c?.payload ?? {};
+      return p.chatId === ctx.chatId && (p.dedupe_key === key || p.source_media_url === mediaUrl);
+    });
+
+    if (dup) {
+      return `${kind === "video" ? "Video" : "Imagen"} ya fue enviado recientemente; se omite el duplicado.`;
+    }
+  } catch {
+    // Si la verificación falla, continuamos (mejor enviar que bloquear).
+  }
+
   let mimeType = mimeFromProductUrl(mediaUrl, kind);
   let finalUrl = mediaUrl;
 
@@ -701,6 +732,8 @@ async function queueOutgoingMedia(
     mimeType,
     caption: caption || "",
     text: caption || "",
+    dedupe_key: key,
+    source_media_url: mediaUrl,
   };
   const cmdId = (globalThis.crypto?.randomUUID?.() ?? `cmd_${Date.now()}_${Math.random()}`) as string;
   // Echo en la conversación para que el operador lo vea en el CRM
@@ -868,7 +901,7 @@ export async function executeToolCall(
       result = "Datos del pedido inválidos o incompletos: form_data debe contener al menos un campo de pedido válido.";
       details = "form_data inválido o vacío";
     } else {
-      // Evitar duplicados: si ya hay un pedido confirmado en este hilo con los mismos datos.
+      // Evitar duplicados: si ya hay un pedido confirmado en este hilo con los mismos datos o en un corto intervalo.
         const isRecoveryFormData = (data: Record<string, unknown>) => {
         const origin = String(data?.Origen ?? data?._source_message_id ?? data?.origin ?? "");
         return origin.includes("Recuperación automática") || origin.includes("Reparación automática") || Boolean(data?._source_message_id);
@@ -877,7 +910,7 @@ export async function executeToolCall(
       if (threadId) {
         const { data: existingOrders, error: existingError } = await (supabaseAdmin as any)
           .from("orders")
-          .select("id, form_data")
+          .select("id, form_data, created_at")
           .eq("org_id", orgId)
           .eq("thread_id", threadId)
           .eq("status", "confirmed")
@@ -910,34 +943,33 @@ export async function executeToolCall(
           const existingIsRecovery = isRecoveryFormData(existingData);
           const sameData = stableStringify(existingData) === stableStringify(normalizedFormData);
 
-          if (sameData || (newIsRecovery && !existingIsRecovery)) {
-            result = "Ya existe un pedido confirmado para esta conversación. No se creó un duplicado.";
-            details = `Pedido duplicado evitado para hilo ${threadId}`;
+          const existingCreatedAt = new Date(existingOrder.created_at || Date.now()).getTime();
+          const isRecent = Date.now() - existingCreatedAt < 5 * 60 * 1000; // 5 minutes window
+
+          if (sameData || newIsRecovery || isRecent) {
+            const mergedFormData = { ...existingData, ...normalizedFormData };
+            const { error: updateError } = await (supabaseAdmin as any)
+              .from("orders")
+              .update({ form_data: mergedFormData, status: "confirmed" })
+              .eq("id", existingOrder.id)
+              .eq("org_id", orgId);
+
+            if (updateError) {
+              result = `Error actualizando el pedido: ${updateError.message}`;
+              details = `orders update failed: ${updateError.message}`;
+              return { name, result };
+            }
+
+            await (supabaseAdmin as any)
+              .from("threads")
+              .update({ purchase_intent: "compro" })
+              .eq("id", threadId)
+              .eq("org_id", orgId);
+
+            result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+            details = `Pedido existente actualizado/fusionado (id ${existingOrder.id}) para hilo ${threadId}.`;
             return { name, result };
           }
-
-          const mergedFormData = { ...existingData, ...normalizedFormData };
-          const { error: updateError } = await (supabaseAdmin as any)
-            .from("orders")
-            .update({ form_data: mergedFormData, status: "confirmed" })
-            .eq("id", existingOrder.id)
-            .eq("org_id", orgId);
-
-          if (updateError) {
-            result = `Error actualizando el pedido: ${updateError.message}`;
-            details = `orders update failed: ${updateError.message}`;
-            return { name, result };
-          }
-
-          await (supabaseAdmin as any)
-            .from("threads")
-            .update({ purchase_intent: "compro" })
-            .eq("id", threadId)
-            .eq("org_id", orgId);
-
-          result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
-          details = `Pedido existente actualizado (id ${existingOrder.id}) para hilo ${threadId}.`;
-          return { name, result };
         }
       }
 
@@ -1016,13 +1048,27 @@ export async function executeToolCall(
             result = `El producto "${p.name}" no tiene ${kind === "video" ? "video" : "imagen"} disponible.`;
             details = result;
           } else {
-            const caption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
-            await queueOutgoingMedia(ctx, kind, url, caption);
-            // Enriquecer el resultado con contexto útil para el modelo
-            const hasVideo = !!p.video_url;
-            const hasImage = !!p.image_url;
-            const videoNote = kind === "image" && hasVideo ? ` [Este producto TIENE video disponible — si el cliente lo pide, usa send_product_video con product_id="${p.id}"]` : "";
-            result = `${kind === "video" ? "Video" : "Imagen"} enviado al cliente. Producto: "${p.name}" (id: ${p.id})${videoNote}`;
+            // Numeramos el producto según su posición en la última búsqueda para
+            // que el cliente pueda identificarlo ("quiero el 2"). Si no está en la
+            // lista, no anteponemos número.
+            const listIdx = (ctx.lastProducts ?? []).findIndex((x) => x.id === p.id);
+            const numberPrefix = kind === "image" && listIdx >= 0 ? `${listIdx + 1}. ` : "";
+            const baseCaption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
+            // Evitar doble numeración si el modelo ya la incluyó.
+            const caption = /^\s*\d+[\.\)]/.test(baseCaption) ? baseCaption : `${numberPrefix}${baseCaption}`;
+
+            const dedupeKey = `${kind}:${p.id}`;
+            const sendResult = await queueOutgoingMedia(ctx, kind, url, caption, dedupeKey);
+
+            if (sendResult.includes("se omite el duplicado")) {
+              result = sendResult;
+            } else {
+              // Enriquecer el resultado con contexto útil para el modelo
+              const hasVideo = !!p.video_url;
+              const hasImage = !!p.image_url;
+              const videoNote = kind === "image" && hasVideo ? ` [Este producto TIENE video disponible — si el cliente lo pide, usa send_product_video con product_id="${p.id}"]` : "";
+              result = `${kind === "video" ? "Video" : "Imagen"} enviado al cliente. Producto #${listIdx >= 0 ? listIdx + 1 : "?"}: "${p.name}" (id: ${p.id})${videoNote}`;
+            }
             details = `${name}: ${p.id} (${p.name}) a ${chatId}`;
           }
         }
@@ -1113,8 +1159,8 @@ MODO A — RECOPILANDO DATOS DEL PEDIDO:
 
 MODO B — DESCUBRIENDO PRODUCTOS:
 1. Cuando el cliente pregunta por catálogo, modelos, fotos, videos, precios, stock o referencias, llama primero a search_products con la palabra clave.
-2. Si hay resultados, responde enviando imágenes de los mejores 6 productos usando send_product_image una vez por producto.
-3. El caption de cada imagen debe ser corto y contener nombre y precio: "<nombre> — $<precio>".
+2. Si hay resultados, responde enviando imágenes de los mejores 6 productos usando send_product_image una vez por producto. NUNCA envíes el mismo producto dos veces ni repitas la búsqueda.
+3. El caption de cada imagen debe ser corto, EMPEZAR con el número de la lista, y contener nombre y precio: "<n>. <nombre> — $<precio>" (ej. "1. Zapatero 6 niveles — $32200"). El número permite que el cliente elija diciendo "quiero el 2".
 4. Después de enviar las imágenes, escribe un mensaje corto y natural invitando al cliente a elegir o preguntar más. Evita listados de texto.
 5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), usa send_product_image con product_reference exactamente como lo dijo.
 6. SI TIENES INFORMACIÓN DE UN VIDEO DISPONIBLE para el producto actual:
@@ -1189,11 +1235,27 @@ REGLAS GENERALES:
     knowledgeSourcesData = null;
   }
 
-  const knowledgeSourcesText = knowledgeSourcesData?.length
-    ? `\n\n=== FUENTES DE CONOCIMIENTO ADICIONALES ===\n${knowledgeSourcesData
-        .map((ks: any) => `[Tipo: ${ks.source_type} | Nombre: ${ks.name}]\n${ks.content}`)
-        .join('\n\n')}`
-    : "";
+  // Cap knowledge sources so the system prompt stays compact. Sending every
+  // source in full on every turn was a major driver of oversized prompts
+  // (Vertex "out of balance"/RESOURCE_EXHAUSTED) and truncated responses.
+  const KS_PER_SOURCE = 1500;
+  const KS_TOTAL = 6000;
+  const knowledgeSourcesText = (() => {
+    if (!knowledgeSourcesData?.length) return "";
+    let used = 0;
+    const blocks: string[] = [];
+    for (const ks of knowledgeSourcesData as any[]) {
+      if (used >= KS_TOTAL) break;
+      const remaining = KS_TOTAL - used;
+      const body = String(ks.content ?? "").slice(0, Math.min(KS_PER_SOURCE, remaining));
+      if (!body.trim()) continue;
+      blocks.push(`[Tipo: ${ks.source_type} | Nombre: ${ks.name}]\n${body}`);
+      used += body.length;
+    }
+    return blocks.length
+      ? `\n\n=== FUENTES DE CONOCIMIENTO ADICIONALES ===\n${blocks.join("\n\n")}`
+      : "";
+  })();
 
   // Dynamic context variables
   const now = new Date();
@@ -1226,11 +1288,17 @@ REGLAS GENERALES:
 - Si el cliente ya mostró interés en algo, continúa desde ahí sin empezar de cero.
 - Si el cliente confirma la información del pedido, llama obligatoriamente la herramienta \`confirm_order\` y no digas "pedido registrado" hasta que esa herramienta se ejecute.`;
 
+  const KB_MAX = 8000;
+  const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
+  const knowledgeBase = knowledgeBaseRaw.length > KB_MAX
+    ? knowledgeBaseRaw.slice(0, KB_MAX) + "\n…(base de conocimiento truncada; usa las herramientas de catálogo para detalles)"
+    : knowledgeBaseRaw;
+
   const system = [
     (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     conversationRulesText,
-    (cfg.knowledge_base as string)?.trim()
-      ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${(cfg.knowledge_base as string).trim()}`
+    knowledgeBase
+      ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}`
       : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
     "\n\n" + PRODUCT_FLOW_GUIDE,
@@ -1239,6 +1307,16 @@ REGLAS GENERALES:
     knowledgeSourcesText,
     dynamicContextText,
   ].join("");
+
+  const approxPromptChars = system.length + messages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+  console.info("[runAiAgent] prompt size", {
+    orgId,
+    threadId,
+    systemChars: system.length,
+    historyMsgs: messages.length,
+    approxPromptChars,
+    approxTokens: Math.round(approxPromptChars / 4),
+  });
 
   const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
 
@@ -1276,6 +1354,67 @@ REGLAS GENERALES:
   const toolCallSignature = (tc: { function: { name: string; arguments: string | Record<string, unknown> } }) =>
     `${tc.function.name}:${normalizeToolArgs(tc.function.arguments)}`;
 
+  const FIELD_ALIASES: Record<string, string[]> = {
+    nombre: ["nombre", "cliente", "name"],
+    telefono: ["telefono", "teléfono", "celular", "movil", "móvil", "whatsapp", "tel"],
+    ciudad: ["ciudad", "municipio", "localidad"],
+    barrio: ["barrio", "sector"],
+    direccion: ["direccion", "dirección", "domicilio", "dir"],
+    cantidad: ["cantidad", "unidades", "qty", "cant"],
+  };
+  const normKey = (s: string) =>
+    s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").trim();
+
+  // Intenta estructurar un mensaje libre del cliente en los campos del pedido.
+  const extractStructuredOrderData = (text: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    if (!text?.trim()) return out;
+    const fieldNames = orderFields.map((f: any) => String(f.name));
+    // 1) Líneas tipo "Campo: valor"
+    for (const raw of text.split(/\r?\n|•|·|\*/)) {
+      const m = raw.match(/^\s*([A-Za-zÁÉÍÓÚÑáéíóúñ ]{2,40})\s*[:\-]\s*(.+)$/);
+      if (!m) continue;
+      const key = normKey(m[1]);
+      const value = m[2].trim();
+      if (!value) continue;
+      const field = fieldNames.find((fn) => {
+        const nk = normKey(fn);
+        return nk === key || (FIELD_ALIASES[nk] ?? [nk]).some((a) => normKey(a) === key);
+      });
+      if (field && !out[field]) out[field] = value;
+    }
+    // 2) Volcado separado por "/" mapeado posicionalmente a los campos requeridos.
+    if (Object.keys(out).length < Math.min(2, fieldNames.length) && text.includes("/")) {
+      const parts = text.split("/").map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        fieldNames.forEach((fn, i) => {
+          if (parts[i] && !out[fn]) out[fn] = parts[i].replace(/^enviame\s*/i, "").trim();
+        });
+      }
+    }
+    return out;
+  };
+
+  const hasAllRequiredFields = (data: Record<string, string>) => {
+    const requiredFields = orderFields.filter((f: any) => f.is_required);
+    if (!requiredFields.length) return false;
+    return requiredFields.every((f: any) => {
+      const val = data[f.name];
+      return val && val.trim().length > 0 && val !== "-";
+    });
+  };
+
+  const isDataDump = () => {
+    const visibleHistory = messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
+      .filter((m) => !m.content.trim().startsWith("[INSTRUCCIÓN DEL SISTEMA"));
+    const lastUserIndex = visibleHistory.map((m) => m.role).lastIndexOf("user");
+    if (lastUserIndex < 0) return false;
+    const lastUser = visibleHistory[lastUserIndex]?.content ?? "";
+    const extracted = extractStructuredOrderData(lastUser);
+    return hasAllRequiredFields(extracted);
+  };
+
   const isOrderClaimWithoutConfirmation = (replyText: string) => {
     const lower = String(replyText).toLowerCase();
     const patterns: RegExp[] = [
@@ -1293,7 +1432,7 @@ REGLAS GENERALES:
   const buildSafeReply = (replyText: string) => {
     if (isOrderClaimWithoutConfirmation(replyText) && !orderConfirmed) {
       return {
-        reply: "Aún no he registrado tu pedido. Estoy verificando los datos para confirmarlo correctamente.",
+        reply: "Permítame un momento, estoy confirmando su pedido. Ya casi terminamos... 😊",
         actions,
       };
     }
@@ -1308,6 +1447,8 @@ REGLAS GENERALES:
     const lastUser = [...visibleHistory].reverse().find((m) => m.role === "user")?.content?.trim() ?? "";
     const lastAssistant = [...visibleHistory].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
 
+    const structured = extractStructuredOrderData(lastUser);
+
     return {
       Origen: "Recuperación automática: la IA confirmó el pedido sin ejecutar la herramienta confirm_order",
       "Confirmación cliente": lastUser,
@@ -1317,6 +1458,7 @@ REGLAS GENERALES:
         .map((m) => `${m.role === "assistant" ? "Asistente" : "Cliente"}: ${m.content.trim()}`)
         .join("\n"),
       "Registrado en": new Date().toISOString(),
+      ...structured,
     } as Record<string, unknown>;
   };
 
@@ -1344,7 +1486,11 @@ REGLAS GENERALES:
 
     const confirmationPrompt = /\b(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa]|pedido.*bien|confirmar.*pedido|confirmaci[oó]n.*pedido|¿.*correct[oa].*pedido|¿.*informaci[oó]n.*correcta|¿.*quieres que registre|¿.*quieres que lo registre|registralo|reg[íi]stralo|guardalo|confirmalo)\b/i;
     const orderContextPrompt = /\b(pedido|resumen|confirmaci[oó]n|datos.*pedido|guardar|registrar|confirmar)\b/i;
-    return isExplicitCustomerConfirmation(lastUser) && (confirmationPrompt.test(recentAssistantPrompts) || orderContextPrompt.test(recentAssistantPrompts));
+    
+    const isExplicitConf = isExplicitCustomerConfirmation(lastUser);
+    const isDump = isCollectingOrder && isDataDump();
+
+    return (isExplicitConf && (confirmationPrompt.test(recentAssistantPrompts) || orderContextPrompt.test(recentAssistantPrompts))) || isDump;
   };
 
   const markCollectingOrderDataIfNeeded = async (replyText: string) => {
@@ -1359,9 +1505,6 @@ REGLAS GENERALES:
 
   const recoverMissingOrderConfirmation = async (replyText: string) => {
     if (!isOrderClaimWithoutConfirmation(replyText) || actions.includes("confirm_order") || orderConfirmed) {
-      return false;
-    }
-    if (!shouldConfirmOrderFromHistory()) {
       return false;
     }
 
@@ -1531,11 +1674,11 @@ REGLAS GENERALES:
               .join('\n');
             if (ids.length > 0) {
               const calls = top
-                .map((p: any) => `- send_product_image(product_id="${p.id}", caption="${p.name} — $${p.price ?? ""}")`)
+                .map((p: any, i: number) => `- send_product_image(product_id="${p.id}", caption="${i + 1}. ${p.name} — $${p.price ?? ""}")`)
                 .join('\n');
               msgs.push({
                 role: "system",
-                content: `Resultados de catálogo listos (${productsFromTool.length}). EN ESTE MISMO TURNO, emite hasta ${top.length} llamadas tool_calls en paralelo, UNA por producto, exactamente como sigue:\n${calls}\n\nNO envíes texto adicional en este mismo turno. Después de que las imágenes se entreguen, en el SIGUIENTE turno emite un mensaje corto de cierre OBLIGATORIO invitando al cliente a elegir (por ejemplo: "¿Cuál te llama la atención?" o "¿Quieres más detalles de alguno?"). Nunca dejes la conversación solo con imágenes — el mensaje de cierre en el turno siguiente es obligatorio. Si el cliente muestra interés en comprar, ofrece preguntar "¿Deseas agendar tu pedido?" para pasar a la recolección de datos.`,
+                content: `Resultados de catálogo listos (${productsFromTool.length}). EN ESTE MISMO TURNO, emite hasta ${top.length} llamadas tool_calls en paralelo, UNA por producto, exactamente como sigue (el caption DEBE empezar con el número de la lista para que el cliente pueda decir "quiero el 2"):\n${calls}\n\nNO repitas un producto que ya enviaste y NO vuelvas a llamar search_products para la misma búsqueda. NO envíes texto adicional en este mismo turno. Después de que las imágenes se entreguen, en el SIGUIENTE turno emite un mensaje corto de cierre OBLIGATORIO invitando al cliente a elegir por número (por ejemplo: "¿Cuál te llama la atención? Dime el número 😊"). Nunca dejes la conversación solo con imágenes — el mensaje de cierre en el turno siguiente es obligatorio. Si el cliente muestra interés en comprar, ofrece preguntar "¿Deseas agendar tu pedido?" para pasar a la recolección de datos.`,
               });
             }
           }
