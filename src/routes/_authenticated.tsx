@@ -44,6 +44,7 @@ function AppSidebar() {
   const { data: saasAccess } = useQuery({
     queryKey: ["saasAccess"],
     queryFn: () => saasAccessFn({}),
+    retry: false,
   });
 
   const main = [

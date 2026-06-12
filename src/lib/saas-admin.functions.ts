@@ -51,15 +51,30 @@ async function requireSuperAdmin(userId: string): Promise<void> {
 export const getSaasAccess = createServerFn(
   { method: "GET" },
   async (_input, { context }) => {
-    const userId = context?.userId;
-    if (!userId) throw new Error("Unauthorized");
+    try {
+      const userId = context.userId;
+      if (!userId) {
+        // Usuario no logueado, devolver acceso negado sin error
+        return {
+          isSuperAdmin: false,
+          userId: null,
+        };
+      }
 
-    const adminContext = await getAdminContext(userId);
+      const adminContext = await getAdminContext(userId);
 
-    return {
-      isSuperAdmin: adminContext.isSuperAdmin,
-      userId,
-    };
+      return {
+        isSuperAdmin: adminContext.isSuperAdmin,
+        userId,
+      };
+    } catch (error) {
+      // Si hay error accediendo a tablas SaaS, devolver acceso negado
+      console.error("[getSaasAccess] Error:", error);
+      return {
+        isSuperAdmin: false,
+        userId: null,
+      };
+    }
   }
 );
 
