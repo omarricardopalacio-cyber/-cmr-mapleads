@@ -101,11 +101,14 @@ export const deleteSession = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ sessionId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await getUserOrg(context.userId);
-    const { error } = await supabaseAdmin
+    const { data: deleted, error } = await supabaseAdmin
       .from("wa_sessions")
-      .delete()
+      .delete({ returning: "minimal" })
       .eq("id", data.sessionId)
       .eq("org_id", orgId);
     if (error) throw new Error(error.message);
+    if (!deleted || deleted.length === 0) {
+      throw new Error("No se pudo eliminar la sesión. Verifica que exista y que pertenezca a tu organización.");
+    }
     return { ok: true };
   });
