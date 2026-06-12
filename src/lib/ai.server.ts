@@ -404,7 +404,7 @@ export async function callVertexAI(opts: {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     try {
       const res = await fetch(url, {
@@ -573,12 +573,17 @@ export async function callAiProvider(
         tools,
         vertexServiceAccountJson: cfg.vertex_service_account_json as string | undefined,
         onRetry,
-        maxAttempts: 3,
+        maxAttempts: 1,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       if (
-        (errMsg.includes("Vertex 429") || errMsg.includes("Vertex 503") || errMsg.includes("RESOURCE_EXHAUSTED")) &&
+        (errMsg.includes("Vertex 429") ||
+          errMsg.includes("Vertex 503") ||
+          errMsg.includes("RESOURCE_EXHAUSTED") ||
+          errMsg.includes("AbortError") ||
+          errMsg.includes("timeout") ||
+          errMsg.includes("aborted")) &&
         (hasOpenAICredentials(cfg) || hasLovableCredentials() || hasGrokCredentials(cfg))
       ) {
         console.warn("[callAiProvider] Vertex failed with transient error, falling back to another provider", {
@@ -1751,7 +1756,7 @@ REGLAS GENERALES:
     }
   };
 
-  for (let round = 0; round < 6; round++) {
+  for (let round = 0; round < 4; round++) {
     let result;
     try {
       result = await callAiProvider(cfg, msgs, tools, notifyRetryMessage);
@@ -1766,7 +1771,12 @@ REGLAS GENERALES:
       
       // Si es Vertex y hay proveedor alternativo, intentar fallback
       if ((cfg.selected_provider === 'vertex' || cfg.provider === 'vertex') &&
-          (errMsg.includes('Vertex 429') || errMsg.includes('Vertex 503') || errMsg.includes('RESOURCE_EXHAUSTED'))) {
+          (errMsg.includes('Vertex 429') ||
+            errMsg.includes('Vertex 503') ||
+            errMsg.includes('RESOURCE_EXHAUSTED') ||
+            errMsg.includes('AbortError') ||
+            errMsg.includes('timeout') ||
+            errMsg.includes('aborted'))) {
         try {
           console.info('[runAiAgent] Vertex failed in loop, attempting fallback provider');
           result = await fallbackVertexProvider(cfg, msgs, tools);
@@ -1797,7 +1807,7 @@ REGLAS GENERALES:
         isOrderClaimWithoutConfirmation(finalText) &&
         !actions.includes("confirm_order") &&
         !orderConfirmed &&
-        round < 5
+        round < 3
       ) {
         msgs.push({
           role: "system",
