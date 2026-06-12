@@ -5,7 +5,7 @@
 // accesibles con la publishable (anon) key vía PostgREST.
 // ============================================================
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { expandSearchTerms } from "./catalog-search";
+import { expandSearchTerms, singularizeSpanish, correctSpelling, buildSearchVocabulary } from "./catalog-search";
 
 export type CatalogConfig = {
   id: string;
@@ -205,27 +205,17 @@ export async function searchCatalog(
   query: string,
   limit = 6,
 ): Promise<CatalogProduct[]> {
-  let builder = (supabaseAdmin as any)
+  const { data: rows, error } = await (supabaseAdmin as any)
     .from("products")
     .select("*")
     .eq("org_id", cfg.org_id)
-    .eq("is_active", true)
-    .limit(Math.min(limit, 10));
-
-  const q = query.trim();
-  if (q) {
-    builder = builder.or(`name.ilike.%${q}%,description.ilike.%${q}%,sku.ilike.%${q}%`).order("name", { ascending: true });
-  } else {
-    builder = builder.order("created_at", { ascending: false });
-  }
-
-  const { data: rows, error } = await builder;
+    .eq("is_active", true);
 
   if (error || !rows) {
     return [];
   }
 
-  return rows.map((r: any) => {
+  const products: CatalogProduct[] = rows.map((r: any) => {
     const raw = r.raw || {};
     return {
       id: String(r.id),
@@ -241,6 +231,60 @@ export async function searchCatalog(
       attributes: extractProductAttributes(raw),
     };
   });
+
+  const q = query.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (!q) {
+    return products.slice(0, limit);
+  }
+
+  const queryTokens = q.split(/\s+/).filter(Boolean);
+  const vocab = buildSearchVocabulary(products);
+
+  const scoredProducts = products.map((p) => {
+    let score = 0;
+    const nameClean = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const descClean = (p.description || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const skuClean = (p.sku || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    // 1. Coincidencia exacta de la frase
+    if (nameClean.includes(q)) score += 50;
+    else if (descClean.includes(q)) score += 20;
+
+    if (p.sku && skuClean.includes(q)) score += 60;
+
+    // 2. Coincidencia por tokens
+    for (const token of queryTokens) {
+      if (token.length < 2) continue;
+      const sing = singularizeSpanish(token);
+      const corr = correctSpelling(token, vocab);
+
+      if (nameClean.includes(token)) score += 10;
+      else if (descClean.includes(token)) score += 5;
+
+      if (p.sku && skuClean.includes(token)) score += 15;
+
+      // Coincidencia con el término singularizado (plurales -> singular)
+      if (sing !== token) {
+        if (nameClean.includes(sing)) score += 8;
+        else if (descClean.includes(sing)) score += 4;
+      }
+
+      // Coincidencia con corrección de typos
+      if (corr !== token && corr !== sing) {
+        if (nameClean.includes(corr)) score += 6;
+        else if (descClean.includes(corr)) score += 3;
+      }
+    }
+
+    return { product: p, score };
+  });
+
+  // Filtro estricto: score > 0 (garantiza que contenga algún término relacionado con la búsqueda)
+  return scoredProducts
+    .filter((sp) => sp.score > 0)
+    .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
+    .map((sp) => sp.product)
+    .slice(0, limit);
 }
 
 /**

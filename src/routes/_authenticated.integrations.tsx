@@ -71,18 +71,32 @@ function IntegrationsPage() {
   const [testOut, setTestOut] = useState("");
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("lovable");
 
   useEffect(() => {
-    if (data?.config && !form) setForm(data.config);
+    if (data?.config && !form) {
+      setForm(data.config);
+      setActiveTab(data.config.selected_provider || data.config.provider || "lovable");
+    }
   }, [data, form]);
 
   if (isLoading || !form) {
     return <div className="p-8 text-muted-foreground">Cargando…</div>;
   }
 
-  const update = (patch: any) => setForm({ ...form, ...patch });
+  const update = (patch: any) => {
+    const nextForm = { ...form, ...patch };
+    setForm(nextForm);
+    if (patch.selected_provider) {
+      setActiveTab(patch.selected_provider);
+    }
+  };
 
   const handleSave = async () => {
+    if (form.selected_provider === form.fallback_provider && form.fallback_provider !== "none") {
+      toast.error("La IA principal y de respaldo no pueden ser el mismo proveedor.");
+      return;
+    }
     setSaving(true);
     try {
       await save({
@@ -90,6 +104,7 @@ function IntegrationsPage() {
           enabled: !!form.enabled,
           provider: form.provider,
           selected_provider: form.selected_provider || form.provider,
+          fallback_provider: form.fallback_provider ?? "lovable",
           model: form.model,
           system_prompt: form.system_prompt ?? "",
           knowledge_base: form.knowledge_base ?? "",
@@ -125,7 +140,6 @@ function IntegrationsPage() {
   };
 
   const vertexReady = !!(form.vertex_service_account_json || data?.hasVertexSecret);
-  const selectedProvider = form.selected_provider || form.provider || "lovable";
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -149,9 +163,84 @@ function IntegrationsPage() {
         <Switch checked={form.enabled} onCheckedChange={(v) => update({ enabled: v })} />
       </Card>
 
+      <Card className="p-5 space-y-4">
+        <div className="font-semibold text-lg">Configuración de Proveedores y Respaldo</div>
+        <p className="text-sm text-muted-foreground">
+          Define el motor de IA principal para atender tus chats y el de respaldo en caso de que ocurra un error o límite de cuota.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="primary-provider">IA Principal (responde primero)</Label>
+            <Select
+              value={form.selected_provider || form.provider || "lovable"}
+              onValueChange={(v) => update({ selected_provider: v, provider: v })}
+            >
+              <SelectTrigger id="primary-provider">
+                <SelectValue placeholder="Selecciona el proveedor principal" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="lovable">Lovable AI</SelectItem>
+                <SelectItem value="openai">OpenAI</SelectItem>
+                <SelectItem value="grok">Groq</SelectItem>
+                <SelectItem value="vertex">Vertex AI</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="fallback-provider">IA de Respaldo (si falla la principal)</Label>
+            <Select
+              value={form.fallback_provider || "none"}
+              onValueChange={(v) => update({ fallback_provider: v })}
+            >
+              <SelectTrigger id="fallback-provider">
+                <SelectValue placeholder="Selecciona el proveedor de respaldo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Ninguno (Sin respaldo)</SelectItem>
+                <SelectItem value="lovable">Lovable AI</SelectItem>
+                <SelectItem value="openai">OpenAI</SelectItem>
+                <SelectItem value="grok">Groq</SelectItem>
+                <SelectItem value="vertex">Vertex AI</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {form.selected_provider === form.fallback_provider && form.fallback_provider !== "none" && (
+          <div className="text-sm text-red-500 flex items-center gap-1.5 mt-2">
+            <AlertCircle className="h-4 w-4" />
+            La IA principal y de respaldo no pueden ser el mismo proveedor.
+          </div>
+        )}
+
+        {form.fallback_provider === "openai" && !form.openai_api_key && (
+          <div className="text-sm text-amber-500 flex items-center gap-1.5 mt-2">
+            <AlertCircle className="h-4 w-4" />
+            Recuerda configurar la API Key de OpenAI para que funcione el respaldo.
+          </div>
+        )}
+
+        {form.fallback_provider === "grok" && !form.grok_api_key && (
+          <div className="text-sm text-amber-500 flex items-center gap-1.5 mt-2">
+            <AlertCircle className="h-4 w-4" />
+            Recuerda configurar la API Key de Groq para que funcione el respaldo.
+          </div>
+        )}
+
+        {form.fallback_provider === "vertex" && !vertexReady && (
+          <div className="text-sm text-amber-500 flex items-center gap-1.5 mt-2">
+            <AlertCircle className="h-4 w-4" />
+            Recuerda configurar la cuenta de servicio de Vertex AI para que funcione el respaldo.
+          </div>
+        )}
+      </Card>
+
+      <div className="text-sm font-medium text-muted-foreground mt-4 mb-2">Configuración de credenciales y modelos del proveedor:</div>
+
       <Tabs
-        value={selectedProvider}
-        onValueChange={(v) => update({ selected_provider: v, provider: v })}
+        value={activeTab}
+        onValueChange={setActiveTab}
       >
         <TabsList className="grid grid-cols-4 w-full max-w-xl">
           <TabsTrigger value="lovable">

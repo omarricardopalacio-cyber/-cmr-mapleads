@@ -2,6 +2,7 @@ import { SignJWT, importPKCS8 } from "jose";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getCatalogConfig, searchCatalog, getCatalogProduct, type CatalogConfig, type CatalogProduct } from "./catalog.server";
 import { resolveProductFromReference } from "./catalog-search";
+import { selectRelevantKnowledgeSources } from "./intent-classifier";
 
 export type Msg = { 
   role: "system" | "user" | "assistant" | "tool"; 
@@ -507,39 +508,57 @@ const normalizeOpenAIModel = (model?: string) => model?.startsWith("gpt-") ? mod
 const normalizeGrokModel = (model?: string) => /^(llama|gemma|mixtral|compound)/i.test(model ?? "") ? model! : "llama-3.1-8b-instant";
 const normalizeLovableModel = (model?: string) => model?.includes("/") ? model : "google/gemini-3-flash-preview";
 
+const validateCredentials = (provider: string, cfg: Record<string, unknown>) => {
+  if (provider === "openai" && !cfg.openai_api_key) throw new Error("Falta openai_api_key");
+  if (provider === "grok" && !cfg.grok_api_key) throw new Error("Falta grok_api_key");
+  if (provider === "vertex" && !cfg.vertex_project) throw new Error("Falta vertex_project");
+};
+
+const callProviderByName = async (
+  provider: string,
+  cfg: Record<string, unknown>,
+  messages: Msg[],
+  tools?: any[],
+  onRetry?: (attempt: number) => Promise<void>
+): Promise<{ text: string; toolCalls?: any[]; retryAttempt?: number }> => {
+  const model = (cfg.model as string) || "gpt-4o";
+  if (provider === "openai") {
+    return callOpenAI({ apiKey: cfg.openai_api_key as string, model: normalizeOpenAIModel(model), messages, tools });
+  }
+  if (provider === "grok") {
+    return callGrok({ apiKey: cfg.grok_api_key as string, model: normalizeGrokModel(model), messages, tools });
+  }
+  if (provider === "vertex") {
+    return callVertexAI({
+      project: (cfg.vertex_project as string) || "",
+      location: (cfg.vertex_location as string) || "us-central1",
+      model: (cfg.vertex_model as string) || "gemini-2.5-flash",
+      messages,
+      tools,
+      vertexServiceAccountJson: cfg.vertex_service_account_json as string | undefined,
+      onRetry,
+      maxAttempts: 1,
+    });
+  }
+  return callLovableAI({ model: normalizeLovableModel(model), messages, tools });
+};
+
 const fallbackVertexProvider = async (
   cfg: Record<string, unknown>,
   messages: Msg[],
   tools?: any[],
 ) => {
-  if (hasGrokCredentials(cfg)) {
-    return callGrok({
-      apiKey: cfg.grok_api_key as string,
-      model: normalizeGrokModel(cfg.model as string),
-      messages,
-      tools,
-    });
+  const fallback = (cfg.fallback_provider as string) || "lovable";
+  if (fallback === "none" || fallback === "vertex") {
+    return callLovableAI({ model: normalizeLovableModel(cfg.model as string), messages, tools });
   }
-  if (hasOpenAICredentials(cfg)) {
-    return callOpenAI({
-      apiKey: cfg.openai_api_key as string,
-      model: normalizeOpenAIModel(cfg.model as string),
-      messages,
-      tools,
-    });
+  try {
+    validateCredentials(fallback, cfg);
+    return await callProviderByName(fallback, cfg, messages, tools);
+  } catch (err) {
+    console.warn(`[fallbackVertexProvider] Fallback provider ${fallback} failed or lacks credentials:`, err);
+    return callLovableAI({ model: normalizeLovableModel(cfg.model as string), messages, tools });
   }
-  if (hasLovableCredentials()) {
-    return callLovableAI({
-      model: normalizeLovableModel(cfg.model as string),
-      messages,
-      tools,
-    });
-  }
-  return callLovableAI({
-    model: normalizeLovableModel(cfg.model as string),
-    messages,
-    tools,
-  });
 };
 
 export async function callAiProvider(
@@ -549,58 +568,26 @@ export async function callAiProvider(
   onRetry?: (attempt: number) => Promise<void>
 ): Promise<{ text: string; toolCalls?: any[]; retryAttempt?: number }> {
   const provider = (cfg.selected_provider as string) || (cfg.provider as string) || "lovable";
-  const model = (cfg.model as string) || "gpt-4o";
+  const fallback = (cfg.fallback_provider as string) || "lovable";
 
-  if (provider === "openai") {
-    const key = cfg.openai_api_key as string;
-    if (!key) throw new Error("Falta openai_api_key");
-    return callOpenAI({ apiKey: key, model: normalizeOpenAIModel(model), messages, tools });
-  }
+  try {
+    validateCredentials(provider, cfg);
+    return await callProviderByName(provider, cfg, messages, tools, onRetry);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.warn(`[callAiProvider] Primary provider ${provider} failed, trying fallback ${fallback}. Error:`, errMsg);
 
-  if (provider === "grok") {
-    const key = cfg.grok_api_key as string;
-    if (!key) throw new Error("Falta grok_api_key");
-    return callGrok({ apiKey: key, model: normalizeGrokModel(model), messages, tools });
-  }
-
-  if (provider === "vertex") {
-    const project = (cfg.vertex_project as string) || "";
-    if (!project) throw new Error("Falta vertex_project");
-    try {
-      return await callVertexAI({
-        project,
-        location: (cfg.vertex_location as string) || "us-central1",
-        model: (cfg.vertex_model as string) || "gemini-2.5-flash",
-        messages,
-        tools,
-        vertexServiceAccountJson: cfg.vertex_service_account_json as string | undefined,
-        onRetry,
-        maxAttempts: 1,
-      });
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      if (
-        (errMsg.includes("Vertex 429") ||
-          errMsg.includes("Vertex 503") ||
-          errMsg.includes("RESOURCE_EXHAUSTED") ||
-          errMsg.includes("AbortError") ||
-          errMsg.includes("timeout") ||
-          errMsg.includes("aborted")) &&
-        (hasOpenAICredentials(cfg) || hasLovableCredentials() || hasGrokCredentials(cfg))
-      ) {
-        console.warn("[callAiProvider] Vertex failed with transient error, falling back to another provider", {
-          error: errMsg,
-          provider,
-          model,
-        });
-        return fallbackVertexProvider(cfg, messages, tools);
+    if (fallback && fallback !== "none" && fallback !== provider) {
+      try {
+        validateCredentials(fallback, cfg);
+        return await callProviderByName(fallback, cfg, messages, tools, onRetry);
+      } catch (fallbackErr) {
+        console.warn(`[callAiProvider] Fallback provider ${fallback} also failed, falling back to lovable. Error:`, fallbackErr);
       }
-      throw err;
     }
-  }
 
-  // Default: Lovable
-  return callLovableAI({ model: normalizeLovableModel(model), messages, tools });
+    return callLovableAI({ model: normalizeLovableModel(cfg.model as string), messages, tools });
+  }
 }
 
 /* ============================================================
@@ -1392,6 +1379,39 @@ export async function executeToolCall(
   return { name, result };
 }
 
+function normalizeCatalogQuery(text: string): string {
+  let t = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  t = t.replace(/[.?¡¿!,;:]/g, " ").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ");
+  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|hola|buenas|tardes|dias|noches)\b/gi, " ");
+  t = t.replace(/\b(un|uno|una|unos|unas|el|la|los|las|de|para|con|en|sobre|y)\b/gi, " ");
+  return t.replace(/\s+/g, " ").trim();
+}
+
+async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
+  if (!ctx.sessionId || !ctx.chatId || !text.trim()) return;
+  const cmdId = (globalThis.crypto?.randomUUID?.() ?? `cmd_${Date.now()}_${Math.random()}`) as string;
+  try {
+    await (supabaseAdmin as any).from("messages").insert({
+      org_id: ctx.orgId,
+      thread_id: ctx.threadId,
+      direction: "out",
+      text,
+      wa_message_id: `pending-${cmdId}`,
+      sent_at: new Date().toISOString(),
+    });
+    await (supabaseAdmin as any).from("engine_commands").insert({
+      id: cmdId,
+      org_id: ctx.orgId,
+      session_id: ctx.sessionId,
+      type: "SEND_MESSAGE",
+      payload: { chatId: ctx.chatId, text },
+      status: "pending",
+    });
+  } catch (err) {
+    console.error("[queueOutgoingText] no se pudo encolar texto", err instanceof Error ? err.message : String(err));
+  }
+}
+
 /* ============================================================
    6. MAIN AGENT ORCHESTRATOR
    ============================================================ */
@@ -1480,7 +1500,10 @@ export async function runAiAgent({
   };
 
   const selectedProductForDetails = await resolveCurrentProductForDetails();
-  const isCatalogQuestion = /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(lastUserText);
+  const catalogQuery = normalizeCatalogQuery(lastUserText);
+  const hasCatalogKeyword = /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(lastUserText);
+  const hasSearchIntent = /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|mu[eé]strame|mostrar|ver|vende[ns]?|venden|consigo|tendr[aá]s|tendr[ií]an|manejan|maneja)\b/i.test(lastUserText);
+  const isCatalogQuestion = hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword) && !isProductDetailQuestion(lastUserText));
   const promptMode = isCollectingOrder ? "pedido" : selectedProductForDetails ? "product_detail" : isCatalogQuestion ? "catalog" : "general";
 
   const tools = promptMode === "pedido" || promptMode === "product_detail"
@@ -1566,13 +1589,17 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     knowledgeSourcesData = null;
   }
 
-  const KS_PER_SOURCE = promptMode === "general" ? 900 : 500;
-  const KS_TOTAL = promptMode === "general" ? 3000 : promptMode === "pedido" ? 800 : 1500;
+  const intentSelection = selectRelevantKnowledgeSources(lastUserText, (knowledgeSourcesData as any[]) ?? []);
+  const sourcesToUse = intentSelection?.matched ?? ((knowledgeSourcesData as any[]) ?? []);
+  const hasIntentMatch = !!intentSelection;
+
+  const KS_PER_SOURCE = hasIntentMatch ? 1400 : promptMode === "general" ? 900 : 500;
+  const KS_TOTAL = hasIntentMatch ? 2000 : promptMode === "general" ? 3000 : promptMode === "pedido" ? 800 : 1500;
   const knowledgeSourcesText = (() => {
-    if (!knowledgeSourcesData?.length) return "";
+    if (!sourcesToUse.length) return "";
     let used = 0;
     const blocks: string[] = [];
-    for (const ks of knowledgeSourcesData as any[]) {
+    for (const ks of sourcesToUse as any[]) {
       if (used >= KS_TOTAL) break;
       const remaining = KS_TOTAL - used;
       const body = selectRelevantText(String(ks.content ?? ""), lastUserText, Math.min(KS_PER_SOURCE, remaining));
@@ -1580,9 +1607,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       blocks.push(`[Tipo: ${ks.source_type} | Nombre: ${ks.name}]\n${body}`);
       used += body.length;
     }
-    return blocks.length
-      ? `\n\n=== FUENTES DE CONOCIMIENTO ADICIONALES ===\n${blocks.join("\n\n")}`
-      : "";
+    if (!blocks.length) return "";
+    const header = hasIntentMatch
+      ? `\n\n=== CONOCIMIENTO RELEVANTE (intención: ${intentSelection!.intent}) ===\n`
+      : "\n\n=== FUENTES DE CONOCIMIENTO ADICIONALES ===\n";
+    return header + blocks.join("\n\n");
   })();
 
   // Dynamic context variables
@@ -1616,7 +1645,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 - Si el cliente ya mostró interés en algo, continúa desde ahí sin empezar de cero.
 - Si el cliente confirma la información del pedido, llama obligatoriamente la herramienta \`confirm_order\` y no digas "pedido registrado" hasta que esa herramienta se ejecute.`;
 
-  const KB_MAX = promptMode === "general" ? 4000 : promptMode === "catalog" ? 1800 : promptMode === "product_detail" ? 2500 : 1200;
+  const intentIsProduct = intentSelection?.intent.includes("product") ?? false;
+  const KB_MAX = hasIntentMatch && !intentIsProduct
+    ? 600
+    : promptMode === "general" ? 4000 : promptMode === "catalog" ? 1800 : promptMode === "product_detail" ? 2500 : 1200;
   const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
   const knowledgeBase = selectRelevantText(knowledgeBaseRaw, `${detailQuestionText}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`, KB_MAX);
 
