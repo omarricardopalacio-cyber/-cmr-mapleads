@@ -253,7 +253,7 @@ async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[
   }
 }
 
-function rankProductsMeta(
+export function rankProductsMeta(
   products: CatalogProduct[],
   query: string,
   limit: number,
@@ -338,10 +338,20 @@ function rankProductsMeta(
   return { results, hasNameMatch: nameMatches.length > 0 };
 }
 
+function mergeCatalogProduct(primary: CatalogProduct, secondary: CatalogProduct): CatalogProduct {
+  const merged: CatalogProduct = { ...primary };
+  for (const key of Object.keys(secondary) as Array<keyof CatalogProduct>) {
+    const value = secondary[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    merged[key] = value;
+  }
+  return merged;
+}
+
 /**
- * Busca productos. Primero usa la copia local sincronizada y, si está vacía o
- * desactualizada, consulta directamente el catálogo externo para no dejar al
- * cliente esperando sin productos.
+ * Busca productos usando el catálogo local y el catálogo externo en conjunto,
+ * unificando resultados por ID y ordenando sobre el conjunto completo.
  */
 export async function searchCatalog(
   cfg: CatalogConfig,
@@ -350,23 +360,28 @@ export async function searchCatalog(
 ): Promise<CatalogProduct[]> {
   const q = query.trim();
   const localProducts = await loadLocalProducts(cfg);
-  const local = rankProductsMeta(localProducts, query, limit);
+  const externalProducts = q ? await loadExternalProducts(cfg) : [];
 
-  // Consulta sin término: devolver lo local si existe (más rápido).
   if (!q) {
-    if (local.results.length) return local.results;
-    return rankProductsMeta(await loadExternalProducts(cfg), query, limit).results;
+    if (localProducts.length) return rankProductsMeta(localProducts, query, limit).results;
+    return rankProductsMeta(externalProducts, query, limit).results;
   }
 
-  // Si lo local coincide por NOMBRE, es confiable: úsalo.
-  if (local.hasNameMatch) return local.results;
+  const byId = new Map<string, CatalogProduct>();
+  for (const product of externalProducts) {
+    byId.set(product.id, product);
+  }
+  for (const product of localProducts) {
+    const existing = byId.get(product.id);
+    if (existing) {
+      byId.set(product.id, mergeCatalogProduct(existing, product));
+    } else {
+      byId.set(product.id, product);
+    }
+  }
 
-  // Lo local está vacío o solo coincide por descripción: revisar el externo.
-  const external = rankProductsMeta(await loadExternalProducts(cfg), query, limit);
-  if (external.results.length) return external.results;
-
-  // Último recurso: devolver lo local débil si no hubo nada mejor.
-  return local.results;
+  const unifiedProducts = Array.from(byId.values());
+  return rankProductsMeta(unifiedProducts, query, limit).results;
 }
 
 /**

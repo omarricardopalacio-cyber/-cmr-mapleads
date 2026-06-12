@@ -602,6 +602,8 @@ export type ToolExecCtx = {
   catalogCfg?: CatalogConfig | null;
   /** Últimos productos devueltos por search_products (para resolver "el 6 niveles"). */
   lastProducts?: CatalogProduct[];
+  /** Consulta actual de catálogo que debe persistirse entre turnos. */
+  catalogSearchQuery?: string | null;
 };
 
 function mapProductsForTool(products: CatalogProduct[]) {
@@ -822,7 +824,16 @@ async function loadLastSentProduct(ctx: ToolExecCtx): Promise<CatalogProduct | n
 async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): Promise<void> {
   if (!p?.id || !ctx.threadId) return;
   try {
+    const { data: thread } = await (supabaseAdmin as any)
+      .from("threads")
+      .select("focused_product_snapshot")
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle();
+
+    const existingSnapshot = (thread?.focused_product_snapshot as Record<string, unknown> | null) ?? {};
     const snapshot = {
+      ...existingSnapshot,
       id: p.id,
       name: p.name,
       price: p.price ?? null,
@@ -916,6 +927,103 @@ function hasOrderValue(data: Record<string, unknown>): boolean {
     const nk = normFieldKey(k);
     return /(valor|precio|total|monto)/.test(nk) && String(v ?? "").trim().length > 0;
   });
+}
+
+function genericMediaReference(text: string): boolean {
+  const normalized = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const words = normalized.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  const genericWords = [
+    "producto",
+    "articulo",
+    "item",
+    "ese",
+    "esa",
+    "esto",
+    "eso",
+    "aqui",
+    "ahi",
+    "alli",
+    "otro",
+    "otra",
+    "mas",
+    "ver",
+    "muestra",
+    "muestrame",
+    "mostrar",
+    "foto",
+    "fotos",
+    "imagen",
+    "imagenes",
+    "video",
+    "videos",
+    "me",
+    "te",
+    "lo",
+    "la",
+    "los",
+    "las",
+    "por",
+    "favor",
+    "porfa",
+    "queria",
+    "quiero",
+    "dame",
+    "trae",
+    "quieres",
+    "poder",
+  ];
+  return words.every((word) => genericWords.includes(word));
+}
+
+function isMoreProductsRequest(text: string): boolean {
+  const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return /\b(mas opciones|más opciones|otra opcion|otra opcion|otras opciones|otra cosa|otra lista|ver otros|ver otras|mostrar mas|mostrar más|seguir mostrando|quiero mas|quiero más)\b/.test(t);
+}
+
+async function loadCatalogSearchState(ctx: ToolExecCtx): Promise<string | null> {
+  if (!ctx.threadId) return null;
+  try {
+    const { data: thread } = await (supabaseAdmin as any)
+      .from("threads")
+      .select("focused_product_snapshot")
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle();
+
+    const snapshot = thread?.focused_product_snapshot as Record<string, unknown> | null;
+    return snapshot?._catalog_search ? String(snapshot._catalog_search) : null;
+  } catch (err) {
+    console.warn("[loadCatalogSearchState] falló", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+async function saveCatalogSearchState(ctx: ToolExecCtx, query: string | null): Promise<void> {
+  if (!ctx.threadId) return;
+  try {
+    const { data: thread } = await (supabaseAdmin as any)
+      .from("threads")
+      .select("focused_product_snapshot")
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle();
+
+    const snapshot = (thread?.focused_product_snapshot as Record<string, unknown> | null) ?? {};
+    if (query) {
+      snapshot._catalog_search = query;
+    } else {
+      delete snapshot._catalog_search;
+    }
+
+    await (supabaseAdmin as any)
+      .from("threads")
+      .update({ focused_product_snapshot: snapshot })
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId);
+  } catch (err) {
+    console.warn("[saveCatalogSearchState] falló", err instanceof Error ? err.message : String(err));
+  }
 }
 
 /**
@@ -1429,6 +1537,7 @@ export async function executeToolCall(
         const limit = Math.min(Math.max(Number(args.limit) || 6, 1), 6);
         const products = await searchCatalog(catalogCfg, q, limit);
         ctx.lastProducts = products;
+        if (q) await saveCatalogSearchState(ctx, q);
 
         if (!products.length) {
           const fallback = await searchCatalog(catalogCfg, "", limit);
@@ -1688,18 +1797,23 @@ export async function runAiAgent({
   };
 
   const selectedProductForDetails = await resolveCurrentProductForDetails();
-  const catalogQuery = normalizeCatalogQuery(lastUserText);
+  const storedCatalogQuery = await loadCatalogSearchState(ctx);
+  const currentCatalogQuery = normalizeCatalogQuery(lastUserText);
+  const wantsMoreProducts = isMoreProductsRequest(lastUserText);
+  const catalogQuery = currentCatalogQuery || (wantsMoreProducts ? storedCatalogQuery : "");
   const hasCatalogKeyword = /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(lastUserText);
   const hasSearchIntent = /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|mu[eé]strame|mostrar|ver|vende[ns]?|venden|consigo|tendr[aá]s|tendr[ií]an|manejan|maneja)\b/i.test(lastUserText);
-  const looksLikeDirectProductSearch = !!catalogCfg && !!catalogQuery && catalogQuery.length >= 4 && visibleChat.length <= 4;
+  const looksLikeDirectProductSearch = !!catalogCfg && !!catalogQuery && catalogQuery.length >= 4;
   
+  ctx.catalogSearchQuery = catalogQuery || null;
+
   // Intención de COMPRA/PEDIDO sobre el producto que ya se venía conversando.
   // Estas frases NO deben disparar una búsqueda de catálogo (ej. "quiero hacer el
   // pedido" no debe buscar "hacer" y traer máquinas de ejercicio). Debe entrar al
   // flujo de pedido manteniendo el contexto del producto elegido.
   const isOrderIntent = /\b(hacer (el |un |mi )?pedido|el pedido|mi pedido|agendar(lo| el pedido| mi pedido)?|como lo (pido|compro|adquiero|ordeno)|lo (quiero|deseo) (comprar|pedir|llevar)|quiero (comprar|pedir|ordenar|agendar)|deseo (comprar|pedir|hacer (el |un )?pedido|agendar)|me lo llevo|lo llevo|lo compro|finalizar (la )?compra|proceder con (el |la )?(pedido|compra))\b/i.test(lastUserText);
   
-  const isCatalogQuestion = !isOrderIntent && (hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword || looksLikeDirectProductSearch) && !isProductDetailQuestion(lastUserText)));
+  const isCatalogQuestion = !isOrderIntent && (hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword || looksLikeDirectProductSearch || wantsMoreProducts) && !isProductDetailQuestion(lastUserText)));
   
   // Producto de contexto para el flujo de pedido: prioriza foco, luego elegido, luego último mostrado.
   const orderContextProduct = isOrderIntent && !selectedProductForDetails && catalogCfg
@@ -1919,7 +2033,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       (await resolveProductFromConversation());
 
     // Ruteo inteligente: ¿la consulta nombra un producto NUEVO o se refiere al que está en foco?
-    const namesNewProduct = !!catalogQuery && catalogQuery.length >= 3 && !mentionsFocusedProduct(catalogQuery, mediaProduct);
+    const namesNewProduct = !!catalogQuery && catalogQuery.length >= 3 && !genericMediaReference(catalogQuery) && !mentionsFocusedProduct(catalogQuery, mediaProduct);
 
     if (mediaProduct && !namesNewProduct) {
       await saveFocusedProduct(ctx, mediaProduct); // Guardar foco para próximos turnos
@@ -1968,12 +2082,28 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   // Cortocircuito determinista para modo Catálogo (sin IA)
   if (!isCollectingOrder && promptMode === "catalog" && catalogCfg && catalogQuery) {
+    await saveCatalogSearchState(ctx, catalogQuery);
+
     // 1) Frase de espera ANTES de iniciar la búsqueda (no la dice la IA).
     await queueOutgoingText(ctx, "¡Claro que sí! Permíteme 2 min mientras te busco todos los que tenemos 😉");
 
     // 2) Búsqueda en cascada: searchCatalog ya expande términos y filtra de forma estricta.
-    const products = await searchCatalog(catalogCfg, catalogQuery, 6);
+    const limit = wantsMoreProducts ? 12 : 6;
+    const resultProducts = await searchCatalog(catalogCfg, catalogQuery, limit);
+    const previousIds = new Set((ctx.lastProducts ?? []).filter(Boolean).map((p) => p.id));
+    const freshProducts = wantsMoreProducts
+      ? resultProducts.filter((p) => !previousIds.has(p.id)).slice(0, 6)
+      : resultProducts;
+
+    const products = wantsMoreProducts ? freshProducts : resultProducts;
     ctx.lastProducts = products;
+
+    if (wantsMoreProducts && !products.length) {
+      return {
+        reply: `Ya te mostré las mejores opciones de ${catalogQuery}. ¿Quieres buscar otra referencia o modelo? 😊`,
+        actions: ["catalog_no_more_options"],
+      };
+    }
 
     if (!products.length) {
       return {
