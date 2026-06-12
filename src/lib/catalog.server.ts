@@ -341,7 +341,7 @@ export function rankProductsMeta(
 function mergeCatalogProduct(primary: CatalogProduct, secondary: CatalogProduct): CatalogProduct {
   const merged: CatalogProduct = { ...primary };
   for (const key of Object.keys(secondary) as Array<keyof CatalogProduct>) {
-    const value = secondary[key];
+    const value = secondary[key] as CatalogProduct[typeof key];
     if (value === undefined || value === null) continue;
     if (typeof value === "string" && value.trim() === "") continue;
     merged[key] = value;

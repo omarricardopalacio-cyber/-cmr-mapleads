@@ -1655,6 +1655,9 @@ export type Database = {
           assigned_to_user_id: string | null
           contact_id: string
           created_at: string
+          focused_product_id: string | null
+          focused_product_snapshot: Json | null
+          focused_updated_at: string | null
           id: string
           last_message_at: string | null
           org_id: string
@@ -1667,6 +1670,9 @@ export type Database = {
           assigned_to_user_id?: string | null
           contact_id: string
           created_at?: string
+          focused_product_id?: string | null
+          focused_product_snapshot?: Json | null
+          focused_updated_at?: string | null
           id?: string
           last_message_at?: string | null
           org_id: string
@@ -1679,6 +1685,9 @@ export type Database = {
           assigned_to_user_id?: string | null
           contact_id?: string
           created_at?: string
+          focused_product_id?: string | null
+          focused_product_snapshot?: Json | null
+          focused_updated_at?: string | null
           id?: string
           last_message_at?: string | null
           org_id?: string
