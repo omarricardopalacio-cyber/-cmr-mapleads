@@ -196,15 +196,25 @@ export async function pingCatalog(cfg: CatalogConfig): Promise<{
   }
 }
 
-/**
- * Busca productos en el catálogo sincronizado local.
- * Usa ilike sobre name, description y sku.
- */
-export async function searchCatalog(
-  cfg: CatalogConfig,
-  query: string,
-  limit = 6,
-): Promise<CatalogProduct[]> {
+function mapProductRow(r: any, cfg: CatalogConfig): CatalogProduct {
+  const raw = r.raw || r;
+  const imageFromRaw = raw.main_image_url || raw.image_url || (Array.isArray(raw.images) && (raw.images[0]?.url || raw.images[0]));
+  return {
+    id: String(r.id ?? r.external_id),
+    name: String(r.name || r.title || ""),
+    description: r.description || raw.long_description || raw.description || undefined,
+    price: r.price ?? raw.base_price ?? undefined,
+    stock: r.stock ?? raw.warehouse_stock ?? null,
+    image_url: r.image_url || imageFromRaw || undefined,
+    video_url: r.video_url || raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
+    url: r.slug ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}` : undefined,
+    sku: r.sku || raw.sku || undefined,
+    badge: r.badge || raw.badge || undefined,
+    attributes: extractProductAttributes(raw),
+  };
+}
+
+async function loadLocalProducts(cfg: CatalogConfig): Promise<CatalogProduct[]> {
   const { data: rows, error } = await (supabaseAdmin as any)
     .from("products")
     .select("*")
@@ -215,27 +225,37 @@ export async function searchCatalog(
     return [];
   }
 
-  const products: CatalogProduct[] = rows.map((r: any) => {
-    const raw = r.raw || {};
-    return {
-      id: String(r.id),
-      name: String(r.name || ""),
-      description: r.description || undefined,
-      price: r.price ?? undefined,
-      stock: r.stock ?? null,
-      image_url: r.image_url || undefined,
-      video_url: r.video_url || raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
-      url: r.slug ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}` : undefined,
-      sku: r.sku || undefined,
-      badge: r.badge || undefined,
-      attributes: extractProductAttributes(raw),
-    };
-  });
+  return rows.map((r: any) => mapProductRow(r, cfg));
+}
 
-  const q = query.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  if (!q) {
-    return products.slice(0, limit);
+async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[]> {
+  try {
+    const tenantId = await resolveTenantId(cfg);
+    if (!tenantId) return [];
+    const table = cfg.products_table || "master_products";
+    const url = new URL(pgRestUrl(cfg, table));
+    url.searchParams.set("tenant_id", `eq.${tenantId}`);
+    url.searchParams.set("is_active", "eq.true");
+    url.searchParams.set("select", "*");
+    const res = await fetch(url.toString(), {
+      headers: { ...anonHeaders(cfg), "Range-Unit": "items", Range: "0-999" },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(`[catalog.search] catálogo externo respondió ${res.status}: ${body.slice(0, 180)}`);
+      return [];
+    }
+    const rows: any[] = await res.json();
+    return rows.map((r) => mapProductRow(r, cfg));
+  } catch (err) {
+    console.warn("[catalog.search] fallback externo falló", err instanceof Error ? err.message : String(err));
+    return [];
   }
+}
+
+function rankProducts(products: CatalogProduct[], query: string, limit: number): CatalogProduct[] {
+  const q = query.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (!q) return products.slice(0, limit);
 
   const queryTokens = q.split(/\s+/).filter(Boolean);
   const vocab = buildSearchVocabulary(products);
@@ -310,6 +330,24 @@ export async function searchCatalog(
     .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
     .map((sp) => sp.product)
     .slice(0, limit);
+}
+
+/**
+ * Busca productos. Primero usa la copia local sincronizada y, si está vacía o
+ * desactualizada, consulta directamente el catálogo externo para no dejar al
+ * cliente esperando sin productos.
+ */
+export async function searchCatalog(
+  cfg: CatalogConfig,
+  query: string,
+  limit = 6,
+): Promise<CatalogProduct[]> {
+  const localProducts = await loadLocalProducts(cfg);
+  const localHits = rankProducts(localProducts, query, limit);
+  if (localHits.length) return localHits;
+
+  const externalProducts = await loadExternalProducts(cfg);
+  return rankProducts(externalProducts, query, limit);
 }
 
 /**

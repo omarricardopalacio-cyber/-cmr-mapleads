@@ -763,7 +763,13 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
     const sorted: CatalogProduct[] = [];
     for (let i = 1; i <= maxPos; i++) {
       const id = byPosition.get(i);
-      const prod = id ? await getCatalogProduct(ctx.catalogCfg, id) : null;
+      const cmdForPos = data.find((cmd: any) => {
+        const p = cmd?.payload ?? {};
+        const cap = String(p.caption ?? p.text ?? "");
+        return p.chatId === ctx.chatId && String(p.dedupe_key ?? "") === `image:${id}` && cap.match(new RegExp(`^\\s*${i}[.)]`));
+      });
+      const snapshot = cmdForPos?.payload?.product as CatalogProduct | undefined;
+      const prod = id ? ((await getCatalogProduct(ctx.catalogCfg, id)) ?? snapshot ?? null) : null;
       sorted[i - 1] = prod as CatalogProduct;
     }
     return sorted;
@@ -799,7 +805,8 @@ async function loadLastSentProduct(ctx: ToolExecCtx): Promise<CatalogProduct | n
       if (p.chatId !== ctx.chatId) continue;
       const idMatch = String(p.dedupe_key ?? "").match(/^image:(.+)$/);
       if (!idMatch) continue;
-      const prod = await getCatalogProduct(ctx.catalogCfg, idMatch[1]);
+      const snapshot = p.product as CatalogProduct | undefined;
+      const prod = (await getCatalogProduct(ctx.catalogCfg, idMatch[1])) ?? snapshot ?? null;
       if (prod) return prod;
     }
     return null;
@@ -865,6 +872,9 @@ async function resolveProductForSend(
   const ref = String(args.product_reference || args.product_id || "").trim();
   if (!ref) return null;
 
+  const directFromList = (ctx.lastProducts ?? []).find((p) => String(p?.id) === ref);
+  if (directFromList) return directFromList;
+
   // Selección por número/posición contra la última lista mostrada (determinístico).
   const posSel = parseSelectionNumber(ref);
   if (posSel != null && ctx.lastProducts && ctx.lastProducts[posSel - 1]) {
@@ -903,6 +913,7 @@ async function queueOutgoingMedia(
   mediaUrl: string,
   caption?: string,
   dedupeKey?: string,
+  productSnapshot?: CatalogProduct,
 ) {
   if (!ctx.sessionId || !ctx.chatId) {
     return "Falta sessionId/chatId; no se puede enviar media.";
@@ -959,8 +970,8 @@ async function queueOutgoingMedia(
       finalUrl = pub.publicUrl;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[ai.queueOutgoingMedia] No se pudo proxyfear ${kind}:`, msg);
-      return `No se pudo enviar el ${kind}: ${msg}`;
+      console.warn(`[ai.queueOutgoingMedia] No se pudo copiar ${kind}; se enviará URL original:`, msg);
+      finalUrl = mediaUrl;
     }
   }
 
@@ -972,6 +983,20 @@ async function queueOutgoingMedia(
     text: caption || "",
     dedupe_key: key,
     source_media_url: mediaUrl,
+    product: productSnapshot
+      ? {
+          id: productSnapshot.id,
+          name: productSnapshot.name,
+          price: productSnapshot.price,
+          sku: productSnapshot.sku,
+          image_url: productSnapshot.image_url,
+          video_url: productSnapshot.video_url,
+          description: productSnapshot.description,
+          stock: productSnapshot.stock,
+          badge: productSnapshot.badge,
+          attributes: productSnapshot.attributes,
+        }
+      : undefined,
   };
   const cmdId = (globalThis.crypto?.randomUUID?.() ?? `cmd_${Date.now()}_${Math.random()}`) as string;
   // Echo en la conversación para que el operador lo vea en el CRM
@@ -992,7 +1017,10 @@ async function queueOutgoingMedia(
     payload,
     status: "pending",
   });
-  if (error) return `Error encolando ${kind}: ${error.message}`;
+  if (error) {
+    console.error(`[ai.queueOutgoingMedia] Error encolando ${kind}`, error.message);
+    return `Error encolando ${kind}: ${error.message}`;
+  }
   return `${kind === "video" ? "Video" : "Imagen"} enviado al cliente.`;
 }
 
@@ -1349,9 +1377,11 @@ export async function executeToolCall(
             const caption = /^\s*\d+[\.\)]/.test(baseCaption) ? baseCaption : `${numberPrefix}${baseCaption}`;
 
             const dedupeKey = `${kind}:${p.id}`;
-            const sendResult = await queueOutgoingMedia(ctx, kind, url, caption, dedupeKey);
+            const sendResult = await queueOutgoingMedia(ctx, kind, url, caption, dedupeKey, p);
 
             if (sendResult.includes("se omite el duplicado")) {
+              result = sendResult;
+            } else if (!/enviado al cliente/i.test(sendResult)) {
               result = sendResult;
             } else {
               // Enriquecer el resultado con contexto útil para el modelo
@@ -1387,7 +1417,7 @@ export async function executeToolCall(
 function normalizeCatalogQuery(text: string): string {
   let t = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   t = t.replace(/[.?¡¿!,;:]/g, " ").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ");
-  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|hola|buenas|tardes|dias|noches)\b/gi, " ");
+  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi, " ");
   t = t.replace(/\b(un|uno|una|unos|unas|el|la|los|las|de|para|con|en|sobre|y)\b/gi, " ");
   return t.replace(/\s+/g, " ").trim();
 }
@@ -1508,6 +1538,7 @@ export async function runAiAgent({
   const catalogQuery = normalizeCatalogQuery(lastUserText);
   const hasCatalogKeyword = /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(lastUserText);
   const hasSearchIntent = /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|mu[eé]strame|mostrar|ver|vende[ns]?|venden|consigo|tendr[aá]s|tendr[ií]an|manejan|maneja)\b/i.test(lastUserText);
+  const looksLikeDirectProductSearch = !!catalogCfg && !!catalogQuery && catalogQuery.length >= 4 && visibleChat.length <= 4;
   
   // Intención de COMPRA/PEDIDO sobre el producto que ya se venía conversando.
   // Estas frases NO deben disparar una búsqueda de catálogo (ej. "quiero hacer el
@@ -1515,7 +1546,7 @@ export async function runAiAgent({
   // flujo de pedido manteniendo el contexto del producto elegido.
   const isOrderIntent = /\b(hacer (el |un |mi )?pedido|el pedido|mi pedido|agendar(lo| el pedido| mi pedido)?|como lo (pido|compro|adquiero|ordeno)|lo (quiero|deseo) (comprar|pedir|llevar)|quiero (comprar|pedir|ordenar|agendar)|deseo (comprar|pedir|hacer (el |un )?pedido|agendar)|me lo llevo|lo llevo|lo compro|finalizar (la )?compra|proceder con (el |la )?(pedido|compra))\b/i.test(lastUserText);
   
-  const isCatalogQuestion = !isOrderIntent && (hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword) && !isProductDetailQuestion(lastUserText)));
+  const isCatalogQuestion = !isOrderIntent && (hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword || looksLikeDirectProductSearch) && !isProductDetailQuestion(lastUserText)));
   
   // Producto de contexto para el flujo de pedido: el elegido o el último mostrado.
   const orderContextProduct = isOrderIntent && !selectedProductForDetails && catalogCfg
@@ -1766,8 +1797,12 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       };
     }
 
+    const textList = products
+      .slice(0, 6)
+      .map((p, idx) => `${idx + 1}. ${p.name}${p.price != null ? ` — $${p.price}` : ""}`)
+      .join("\n");
     return {
-      reply: `Encontré ${products.length} opción${products.length === 1 ? "" : "es"} de ${catalogQuery}, pero sin imagen disponible. ¿Quieres que te pase los nombres y precios? 😊`,
+      reply: `Encontré estas opciones de ${catalogQuery}:\n${textList}\n\n¿Cuál te interesa? Dime el número 😊`,
       actions: ["catalog_found_without_media"],
     };
   }
@@ -2202,25 +2237,15 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       }
       msgs.push({ role: "tool", tool_call_id: tc.id, name: exec.name, content: exec.result });
 
-      // Si la herramienta fue `search_products` y devolvió una lista de productos,
-      // empujamos una nota de sistema indicando los 3 mejores product_id para forzar
-      // que el agente envíe send_product_image para cada uno antes de emitir texto.
+      // Si la herramienta fue `search_products` y devolvió una lista, el backend
+      // envía las imágenes de forma determinística. No agregamos una nota para que
+      // la IA repita send_product_image, porque eso causa duplicados/dedupe y deja
+      // el flujo en estado inconsistente.
       if (exec.name === "search_products") {
         try {
           const parsed = JSON.parse(exec.result || "{}");
           const productsFromTool = parsed?.products ?? [];
           if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
-            const top = productsFromTool.slice(0, 6);
-            const ids = top.map((p: any) => p.id).filter(Boolean);
-            if (ids.length > 0) {
-              const calls = top
-                .map((p: any, i: number) => `- send_product_image(product_id="${p.id}", caption="${i + 1}. ${p.name} — $${p.price ?? ""}")`)
-                .join('\n');
-              msgs.push({
-                role: "system",
-                content: `Resultados de catálogo listos (${productsFromTool.length}). EN ESTE MISMO TURNO, emite hasta ${top.length} llamadas tool_calls en paralelo, UNA por producto, exactamente como sigue (el caption DEBE empezar con el número de la lista para que el cliente pueda decir "quiero el 2"):\n${calls}\n\nNO repitas un producto que ya enviaste y NO vuelvas a llamar search_products para la misma búsqueda. NO envíes texto adicional en este mismo turno. Después de que las imágenes se entreguen, en el SIGUIENTE turno emite un mensaje corto de cierre OBLIGATORIO invitando al cliente a elegir por número (por ejemplo: "¿Cuál te llama la atención? Dime el número 😊"). Nunca dejes la conversación solo con imágenes — el mensaje de cierre en el turno siguiente es obligatorio. Si el cliente muestra interés en comprar, ofrece preguntar "¿Deseas agendar tu pedido?" para pasar a la recolección de datos.`,
-              });
-            }
             const topImages = productsFromTool.slice(0, 6).filter((p: any) => p?.id && p?.has_image !== false);
             for (const p of topImages) {
               const imageExec = await executeToolCall(
