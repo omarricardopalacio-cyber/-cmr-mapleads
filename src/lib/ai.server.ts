@@ -625,6 +625,96 @@ function mapProductsForTool(products: CatalogProduct[]) {
   }));
 }
 
+/**
+ * Detecta cuando el mensaje (o referencia) es una SELECCIÓN PURA por número o
+ * posición: "3", "la 3", "el 2", "quiero el 4", "opción 5", "el segundo".
+ * Devuelve el número (1..12) o null. Es estricto a propósito para NO confundir
+ * como descripciones "el de 6 niveles".
+ */
+export function parseSelectionNumber(text: string): number | null {
+  let t = (text || "").toLowerCase().trim();
+  if (!t) return null;
+  // Quitar puntuación/emojis finales comunes.
+  t = t
+    .replace(/[.!¡¿?\s]+$/g, "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/gu, "")
+    .trim();
+  const numPat = /^(?:(?:quiero|dame|me\s+gusta|me\s+interesa|me\s+quedo\s+con|prefiero|env[ií]ame|mu[eé]strame|ll[eé]vame)\s+)?(?:el|la|los|las|opci[oó]n|n[uú]mero|numero|nro|#)?\s*(\d{1,2})$/;
+  const m = t.match(numPat);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1 && n <= 12) return n;
+  }
+  const ordinals: Record<string, number> = {
+    primero: 1,
+    primera: 1,
+    segundo: 2,
+    segunda: 2,
+    tercero: 3,
+    tercera: 3,
+    cuarto: 4,
+    cuarta: 4,
+    quinto: 5,
+    quinta: 5,
+    sexto: 6,
+    sexta: 6,
+  };
+  const stripped = t
+    .replace(/^(?:quiero|dame|me\s+gusta|prefiero)\s+(?:el|la)\s+/, "")
+    .replace(/^(el|la)\s+/, "");
+  if (ordinals[stripped] != null) return ordinals[stripped];
+  return null;
+}
+
+/**
+ * Reconstruye, en orden, los productos mostrados recientemente al cliente a
+ * partir de los comandos SEND_MEDIA conectados (cada uno guarda dedupe_key
+ * "image:<id>" y un caption que empieza con el número de la lista). Permite
+ * resolver "la 3" entre turnos sin volver a llamar a la IA.
+ */
+async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProduct[]> {
+  if (!ctx.catalogCfg || !ctx.sessionId || !ctx.chatId) return [];
+  try {
+    const since = new Date(Date.now() - 30 * 60_000).toISOString();
+    const { data } = await (supabaseAdmin as any)
+      .from("engine_commands")
+      .select("payload, created_at")
+      .eq("org_id", ctx.orgId)
+      .eq("session_id", ctx.sessionId)
+      .eq("type", "SEND_MEDIA")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(40);
+
+    if (!data?.length) return [];
+    // De más reciente a más antiguo: la primera posición vista pertenece a la última ronda de imágenes.
+    const byPosition = new Map<number, string>();
+    for (const cmd of data) {
+      const p = cmd?.payload ?? {};
+      if (p.chatId !== ctx.chatId) continue;
+      const idMatch = String(p.dedupe_key ?? "").match(/^image:(.+)$/);
+      if (!idMatch) continue;
+      const cap = String(p.caption ?? p.text ?? "");
+      const numMatch = cap.match(/^\s*(\d{1,2})[.)]/);
+      if (!numMatch) continue;
+      const pos = parseInt(numMatch[1], 10);
+      if (!byPosition.has(pos)) byPosition.set(pos, idMatch[1]);
+    }
+    if (!byPosition.size) return [];
+    const maxPos = Math.max(...byPosition.keys());
+    const sorted: CatalogProduct[] = [];
+    for (let i = 1; i <= maxPos; i++) {
+      const id = byPosition.get(i);
+      const prod = id ? await getCatalogProduct(ctx.catalogCfg, id) : null;
+      sorted[i - 1] = prod as CatalogProduct;
+    }
+    return sorted;
+  } catch (err) {
+    console.warn("[loadRecentlyShownProducts] falló", err);
+    return [];
+  }
+}
+
 async function resolveProductForSend(
   args: Record<string, unknown>,
   ctx: ToolExecCtx,
@@ -632,6 +722,12 @@ async function resolveProductForSend(
   if (!ctx.catalogCfg) return null;
   const ref = String(args.product_reference || args.product_id || "").trim();
   if (!ref) return null;
+
+  // Selección por número/posición contra la última lista mostrada (determinístico).
+  const posSel = parseSelectionNumber(ref);
+  if (posSel != null && ctx.lastProducts && ctx.lastProducts[posSel - 1]) {
+    return ctx.lastProducts[posSel - 1];
+  }
 
   const fromList = resolveProductFromReference(ref, ctx.lastProducts ?? []);
   if (fromList) return fromList;
@@ -1101,7 +1197,7 @@ export async function executeToolCall(
             // Numeramos el producto según su posición en la última búsqueda para
             // que el cliente pueda identificarlo ("quiero el 2"). Si no está en la
             // lista, no anteponemos número.
-            const listIdx = (ctx.lastProducts ?? []).findIndex((x) => x.id === p.id);
+            const listIdx = (ctx.lastProducts ?? []).findIndex((x) => x?.id === p.id);
             const numberPrefix = kind === "image" && listIdx >= 0 ? `${listIdx + 1}. ` : "";
             const baseCaption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
             // Evitar doble numeración si el modelo ya la incluyó.
@@ -1376,6 +1472,32 @@ REGLAS GENERALES:
   let orderConfirmed = false;
   let lastText = "";
   let deliveredProductMedia = false;
+
+  // Reconstruir los productos mostrados recientemente para poder resolver
+  // selecciones por número ("la 3") entre turnos.
+  ctx.lastProducts = await loadRecentlyShownProducts(ctx);
+
+  // DETERMINÍSTICO DE CORTOCIRCUITO: si el cliente eligió por número y no estamos
+  // recopilando datos del pedido, confirmamos el producto correcto SIN llamar a
+  // Vertex. Esto corrige dos fallas: (a) la IA enviaba un producto equivocado al
+  // hacer fuzzy-match del número contra nombres/SKU, y (b) el timeout/429 de
+  // Vertex que terminaba mostrando el fallback "dame un ratito ya te envío 😉".
+  if (!isCollectingOrder && ctx.lastProducts.some(Boolean)) {
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const sel = lastUser ? parseSelectionNumber(lastUser.content) : null;
+    if (sel != null) {
+      const chosen = ctx.lastProducts[sel - 1];
+      if (chosen) {
+        const priceTxt =
+          chosen.price != null && String(chosen.price) !== "" ? ` ($${chosen.price})` : "";
+        return {
+          reply: `¡Buena elección! El ${chosen.name}${priceTxt} 🙌 ¿Quieres que lo agendamos? 😊`,
+          actions: ["select_product"],
+        };
+      }
+    }
+  }
+
   const buildProductMediaFollowUp = () => {
     const imageCount = actions.filter((a) => a === "send_product_image").length;
     const videoCount = actions.filter((a) => a === "send_product_video").length;
