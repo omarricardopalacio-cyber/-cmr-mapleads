@@ -1375,6 +1375,14 @@ REGLAS GENERALES:
   const executedToolCalls = new Set<string>();
   let orderConfirmed = false;
   let lastText = "";
+  let deliveredProductMedia = false;
+  const buildProductMediaFollowUp = () => {
+    const imageCount = actions.filter((a) => a === "send_product_image").length;
+    const videoCount = actions.filter((a) => a === "send_product_video").length;
+    if (videoCount > 0) return "¿Te sirve? Si quieres lo agendamos 😊";
+    if (imageCount > 1) return "¿Cuál te llama la atención? Dime el número 😊";
+    return "¿Ese te sirve? Si quieres lo agendamos 😊";
+  };
 
   const stableStringify = (value: unknown): string => {
     if (Array.isArray(value)) {
@@ -1707,6 +1715,12 @@ REGLAS GENERALES:
       if (exec.name === "confirm_order" && exec.result.toLowerCase().includes("pedido guardado exitosamente")) {
         orderConfirmed = true;
       }
+      if (
+        (exec.name === "send_product_image" || exec.name === "send_product_video") &&
+        /enviado al cliente/i.test(exec.result)
+      ) {
+        deliveredProductMedia = true;
+      }
       msgs.push({ role: "tool", tool_call_id: tc.id, name: exec.name, content: exec.result });
 
       // Si la herramienta fue `search_products` y devolvió una lista de productos,
@@ -1719,9 +1733,6 @@ REGLAS GENERALES:
           if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
             const top = productsFromTool.slice(0, 6);
             const ids = top.map((p: any) => p.id).filter(Boolean);
-            const listText = top
-              .map((p: any, i: number) => `${i + 1}. ${p.name} — $${p.price ?? ""} (id: ${p.id})`)
-              .join('\n');
             if (ids.length > 0) {
               const calls = top
                 .map((p: any, i: number) => `- send_product_image(product_id="${p.id}", caption="${i + 1}. ${p.name} — $${p.price ?? ""}")`)
@@ -1731,11 +1742,35 @@ REGLAS GENERALES:
                 content: `Resultados de catálogo listos (${productsFromTool.length}). EN ESTE MISMO TURNO, emite hasta ${top.length} llamadas tool_calls en paralelo, UNA por producto, exactamente como sigue (el caption DEBE empezar con el número de la lista para que el cliente pueda decir "quiero el 2"):\n${calls}\n\nNO repitas un producto que ya enviaste y NO vuelvas a llamar search_products para la misma búsqueda. NO envíes texto adicional en este mismo turno. Después de que las imágenes se entreguen, en el SIGUIENTE turno emite un mensaje corto de cierre OBLIGATORIO invitando al cliente a elegir por número (por ejemplo: "¿Cuál te llama la atención? Dime el número 😊"). Nunca dejes la conversación solo con imágenes — el mensaje de cierre en el turno siguiente es obligatorio. Si el cliente muestra interés en comprar, ofrece preguntar "¿Deseas agendar tu pedido?" para pasar a la recolección de datos.`,
               });
             }
+            const topImages = productsFromTool.slice(0, 6).filter((p: any) => p?.id && p?.has_image !== false);
+            for (const p of topImages) {
+              const imageExec = await executeToolCall(
+                {
+                  id: `auto_img_${p.id}`,
+                  function: {
+                    name: "send_product_image",
+                    arguments: JSON.stringify({
+                      product_id: p.id,
+                      caption: `${p.list_index ?? productsFromTool.indexOf(p) + 1}. ${p.name} — $${p.price ?? ""}`,
+                    }),
+                  },
+                },
+                ctx,
+              );
+              actions.push(imageExec.name);
+              if (/enviado al cliente/i.test(imageExec.result)) {
+                deliveredProductMedia = true;
+              }
+            }
           }
         } catch {
           // ignore parse errors
         }
       }
+    }
+
+    if (deliveredProductMedia) {
+      return { reply: buildProductMediaFollowUp(), actions };
     }
   }
 
