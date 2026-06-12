@@ -986,8 +986,58 @@ export async function executeToolCall(
         .single();
 
       if (insertError) {
-        result = `Error guardando el pedido: ${insertError.message}`;
-        details = `orders insert failed: ${insertError.message}`;
+        const isUniqueViolation =
+          (insertError as any)?.code === "23505" ||
+          /duplicate key|unique constraint/i.test(insertError.message || "");
+
+        if (isUniqueViolation && threadId) {
+          const { data: existing } = await (supabaseAdmin as any)
+            .from("orders")
+            .select("id, form_data")
+            .eq("org_id", orgId)
+            .eq("thread_id", threadId)
+            .eq("status", "confirmed")
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          if (Array.isArray(existing) && existing.length) {
+            let existingData: Record<string, unknown> = {};
+            try {
+              existingData = typeof existing[0].form_data === "string"
+                ? JSON.parse(existing[0].form_data || "{}")
+                : existing[0].form_data ?? {};
+            } catch {
+              existingData = {};
+            }
+
+            const mergedFormData = { ...existingData, ...((formData || {}) as Record<string, unknown>) };
+
+            const { error: updateError } = await (supabaseAdmin as any)
+              .from("orders")
+              .update({ form_data: mergedFormData, status: "confirmed" })
+              .eq("id", existing[0].id)
+              .eq("org_id", orgId);
+
+            if (updateError) {
+              result = `Error guardando el pedido: ${updateError.message}`;
+              details = `error al insertar pedidos (update fallback failed): ${updateError.message}`;
+            } else {
+              await (supabaseAdmin as any)
+                .from("threads")
+                .update({ purchase_intent: "compro" })
+                .eq("id", threadId)
+                .eq("org_id", orgId);
+              result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+              details = `Pedido fusionado tras choque de índice único para hilo ${threadId}.`;
+            }
+          } else {
+            result = `Error guardando el pedido: ${insertError.message}`;
+            details = `error al insertar pedidos: ${insertError.message}`;
+          }
+        } else {
+          result = `Error guardando el pedido: ${insertError.message}`;
+          details = `error al insertar pedidos: ${insertError.message}`;
+        }
       } else {
         await (supabaseAdmin as any)
           .from("threads")
