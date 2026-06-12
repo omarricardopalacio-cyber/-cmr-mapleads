@@ -257,9 +257,9 @@ async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[
     url.searchParams.set("tenant_id", `eq.${tenantId}`);
     url.searchParams.set("is_active", "eq.true");
     url.searchParams.set("select", "*");
-    // Limitar a 300 productos en lugar de 1000 para mejorar rendimiento
+    // Aumentar a 500 productos para mejor cobertura de búsquedas
     const res = await fetch(url.toString(), {
-      headers: { ...anonHeaders(cfg), "Range-Unit": "items", Range: "0-299" },
+      headers: { ...anonHeaders(cfg), "Range-Unit": "items", Range: "0-499" },
     });
     if (!res.ok) {
       const body = await res.text();
@@ -292,12 +292,27 @@ export function rankProductsMeta(
   const vocab = buildSearchVocabulary(products);
   console.log(`[DEBUG rankProductsMeta] query="${query}", q normalized="${q}", tokens=${JSON.stringify(queryTokens)}, total products=${products.length}`);
 
+  // Palabras de exclusión (contexto negativo)
+  const exclusionKeywords: Record<string, string[]> = {
+    almohada: ["bolsa", "funda", "carrito", "contenedor", "caja", "protector"],
+    silla: ["bolsa", "funda", "caja"],
+    cama: ["bolsa", "funda", "piso"],
+  };
+  const exclusions = exclusionKeywords[queryTokens[0]] || [];
+
   const scoredProducts = products.map((p) => {
     let score = 0;
     let nameHit = false;
     const nameClean = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const descClean = (p.description || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const skuClean = (p.sku || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    // PENALIZACIÓN: Si tiene palabras de exclusión, rechazar directamente
+    for (const exclusion of exclusions) {
+      if (nameClean.includes(exclusion) || descClean.includes(exclusion)) {
+        return { product: p, score: -1, nameHit: false }; // Rechazo definitivo
+      }
+    }
 
     // 1. Coincidencia exacta de la frase
     if (nameClean.includes(q)) {
@@ -354,18 +369,37 @@ export function rankProductsMeta(
     return { product: p, score, nameHit };
   });
 
-  const matched = scoredProducts.filter((sp) => sp.score > 0);
+  // FILTRO 1: Rechazar scores muy bajos (umbral mínimo)
+  const MIN_SCORE = 15;
+  const matched = scoredProducts.filter((sp) => sp.score >= MIN_SCORE);
+  
+  if (!matched.length) {
+    // Si no hay match fuerte, permitir scores >= 10 pero solo name-matches
+    const weakMatches = scoredProducts.filter((sp) => sp.score >= 10 && sp.nameHit);
+    const results = weakMatches
+      .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
+      .map((sp) => sp.product)
+      .slice(0, limit);
+    console.log(`[DEBUG rankProductsMeta] matched=${matched.length}, weakMatches=${weakMatches.length}, returned=${results.length}`);
+    return { results, hasNameMatch: weakMatches.length > 0 };
+  }
+
   const nameMatches = matched.filter((sp) => sp.nameHit);
-  // Combina name matches primero, luego otros matches para obtener mejor cobertura
-  const seen = new Set<string>();
-  const pool: typeof matched = [];
-  for (const m of nameMatches) {
-    pool.push(m);
-    seen.add(m.product.id);
+  
+  // FILTRO 2: Priorizar name-matches si hay suficientes
+  let pool = matched;
+  if (nameMatches.length >= Math.ceil(limit / 2)) {
+    // Si hay al menos 3 matches en nombre, usar solo esos
+    pool = nameMatches;
+  } else if (nameMatches.length > 0) {
+    // Si hay pocos matches en nombre, combinar pero priorizar
+    pool = [...nameMatches];
+    const otherMatches = matched.filter((sp) => !sp.nameHit);
+    for (const m of otherMatches) {
+      if (pool.length < limit) pool.push(m);
+    }
   }
-  for (const m of matched) {
-    if (!seen.has(m.product.id)) pool.push(m);
-  }
+
   console.log(`[DEBUG rankProductsMeta] matched=${matched.length}, nameMatches=${nameMatches.length}, pool=${pool.length}`);
   if (matched.length > 0) {
     console.log(`[DEBUG rankProductsMeta] scored samples: ${matched.slice(0, 5).map(sp => `${sp.product.name}(score=${sp.score})`).join(", ")}`);
