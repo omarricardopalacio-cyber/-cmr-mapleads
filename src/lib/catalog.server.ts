@@ -242,15 +242,23 @@ export async function searchCatalog(
 
   const scoredProducts = products.map((p) => {
     let score = 0;
+    let nameHit = false;
     const nameClean = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const descClean = (p.description || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const skuClean = (p.sku || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
     // 1. Coincidencia exacta de la frase
-    if (nameClean.includes(q)) score += 50;
-    else if (descClean.includes(q)) score += 20;
+    if (nameClean.includes(q)) {
+      score += 50;
+      nameHit = true;
+    } else if (descClean.includes(q)) {
+      score += 20;
+    }
 
-    if (p.sku && skuClean.includes(q)) score += 60;
+    if (p.sku && skuClean.includes(q)) {
+      score += 60;
+      nameHit = true;
+    }
 
     // 2. Coincidencia por tokens
     for (const token of queryTokens) {
@@ -258,30 +266,47 @@ export async function searchCatalog(
       const sing = singularizeSpanish(token);
       const corr = correctSpelling(token, vocab);
 
-      if (nameClean.includes(token)) score += 10;
-      else if (descClean.includes(token)) score += 5;
+      if (nameClean.includes(token)) {
+        score += 10;
+        nameHit = true;
+      } else if (descClean.includes(token)) {
+        score += 5;
+      }
 
-      if (p.sku && skuClean.includes(token)) score += 15;
+      if (p.sku && skuClean.includes(token)) {
+        score += 15;
+        nameHit = true;
+      }
 
       // Coincidencia con el término singularizado (plurales -> singular)
       if (sing !== token) {
-        if (nameClean.includes(sing)) score += 8;
-        else if (descClean.includes(sing)) score += 4;
+        if (nameClean.includes(sing)) {
+          score += 8;
+          nameHit = true;
+        } else if (descClean.includes(sing)) {
+          score += 4;
+        }
       }
 
       // Coincidencia con corrección de typos
       if (corr !== token && corr !== sing) {
-        if (nameClean.includes(corr)) score += 6;
-        else if (descClean.includes(corr)) score += 3;
+        if (nameClean.includes(corr)) {
+          score += 6;
+          nameHit = true;
+        } else if (descClean.includes(corr)) {
+          score += 3;
+        }
       }
     }
 
-    return { product: p, score };
+    return { product: p, score, nameHit };
   });
 
-  // Filtro estricto: score > 0 (garantiza que contenga algún término relacionado con la búsqueda)
-  return scoredProducts
-    .filter((sp) => sp.score > 0)
+  const matched = scoredProducts.filter((sp) => sp.score > 0);
+  const nameMatches = matched.filter((sp) => sp.nameHit);
+  const pool = nameMatches.length ? nameMatches : matched;
+
+  return pool
     .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
     .map((sp) => sp.product)
     .slice(0, limit);

@@ -622,7 +622,12 @@ function mapProductsForTool(products: CatalogProduct[]) {
 function formatProductDetailsForCustomer(p: CatalogProduct): string {
   const lines = [`${p.name}${p.sku ? ` (${p.sku})` : ""}`];
   if (p.price != null && String(p.price).trim() !== "") lines.push(`Valor: $${p.price}`);
-  if (p.description?.trim()) lines.push(`Detalle: ${p.description.trim()}`);
+  if (p.description?.trim()) {
+    const desc = p.description.trim();
+    // Evitar textos kilométricos en WhatsApp: recortar a ~320 caracteres en límite de palabra.
+    const trimmed = desc.length > 320 ? desc.slice(0, 320).replace(/\s+\S*$/, " ") + " … " : desc;
+    lines.push(`Detalle: ${trimmed}`);
+  }
   if (p.attributes && Object.keys(p.attributes).length) {
     for (const [key, value] of Object.entries(p.attributes).slice(0, 6)) {
       if (value == null || String(value).trim() === "") continue;
@@ -1503,8 +1508,30 @@ export async function runAiAgent({
   const catalogQuery = normalizeCatalogQuery(lastUserText);
   const hasCatalogKeyword = /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(lastUserText);
   const hasSearchIntent = /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|mu[eé]strame|mostrar|ver|vende[ns]?|venden|consigo|tendr[aá]s|tendr[ií]an|manejan|maneja)\b/i.test(lastUserText);
-  const isCatalogQuestion = hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword) && !isProductDetailQuestion(lastUserText));
-  const promptMode = isCollectingOrder ? "pedido" : selectedProductForDetails ? "product_detail" : isCatalogQuestion ? "catalog" : "general";
+  
+  // Intención de COMPRA/PEDIDO sobre el producto que ya se venía conversando.
+  // Estas frases NO deben disparar una búsqueda de catálogo (ej. "quiero hacer el
+  // pedido" no debe buscar "hacer" y traer máquinas de ejercicio). Debe entrar al
+  // flujo de pedido manteniendo el contexto del producto elegido.
+  const isOrderIntent = /\b(hacer (el |un |mi )?pedido|el pedido|mi pedido|agendar(lo| el pedido| mi pedido)?|como lo (pido|compro|adquiero|ordeno)|lo (quiero|deseo) (comprar|pedir|llevar)|quiero (comprar|pedir|ordenar|agendar)|deseo (comprar|pedir|hacer (el |un )?pedido|agendar)|me lo llevo|lo llevo|lo compro|finalizar (la )?compra|proceder con (el |la )?(pedido|compra))\b/i.test(lastUserText);
+  
+  const isCatalogQuestion = !isOrderIntent && (hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword) && !isProductDetailQuestion(lastUserText)));
+  
+  // Producto de contexto para el flujo de pedido: el elegido o el último mostrado.
+  const orderContextProduct = isOrderIntent && !selectedProductForDetails && catalogCfg
+    ? ((await loadLastSentProduct(ctx)) ?? ctx.lastProducts?.filter(Boolean).slice(-1)[0] ?? null)
+    : null;
+  const startOrderFlow = isOrderIntent && !isCollectingOrder && !!(selectedProductForDetails || orderContextProduct);
+
+  const promptMode = isCollectingOrder
+    ? "pedido"
+    : startOrderFlow
+    ? "pedido"
+    : selectedProductForDetails
+    ? "product_detail"
+    : isCatalogQuestion
+    ? "catalog"
+    : "general";
 
   const tools = promptMode === "pedido" || promptMode === "product_detail"
     ? CRM_TOOLS
@@ -1652,8 +1679,13 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
   const knowledgeBase = selectRelevantText(knowledgeBaseRaw, `${detailQuestionText}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`, KB_MAX);
 
-  const selectedProductText = selectedProductForDetails
-    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(selectedProductForDetails)}`
+  const contextProductForPrompt = selectedProductForDetails ?? orderContextProduct;
+  const selectedProductText = contextProductForPrompt
+    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${
+        startOrderFlow
+          ? "\n\nEl cliente quiere hacer el pedido de ESTE producto. NO busques otros productos ni reinicies la conversación. Continúa el flujo de pedido pidiendo los datos para agendar."
+          : ""
+      }`
     : "";
 
   const system = [
@@ -1790,8 +1822,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         }
 
         const details = formatProductDetailsForCustomer(chosen);
+        // Enviar las características/beneficios como UN mensaje, y la pregunta de
+        // cierre como un mensaje SEPARADO (mejor lectura en WhatsApp).
+        await queueOutgoingText(ctx, `¡Buena elección! 🙌\n\n${details}`);
         return {
-          reply: `¡Buena elección! 🙌\n\n${details}\n\n¿Tienes alguna consulta de lo que te acabo de enviar o del producto, o te gustaría agendar el pedido? 😊`,
+          reply: `¿Tienes alguna consulta de lo que te acabo de enviar o del producto, o te gustaría agendar el pedido? 😊`,
           actions: ["seleccionar_detalle_del_producto"],
         };
       }

@@ -1,4 +1,4 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { uploadBase64ToStorage } from "@/lib/engine-media.server";
@@ -51,7 +51,7 @@ export const Route = createFileRoute("/api/public/engine/upload-media")({
         if (sErr || !session) return json(401, { error: "Invalid session token" });
 
         try {
-          const uploaded = await uploadBase64ToStorage(parsed.data.data, session.org_id, {
+          const uploaded = await uploadBase64ToStorage(parsed.data.data, session.org_id ?? "", {
             mimeType: parsed.data.mimeType,
             msgType: parsed.data.msgType,
             fileName: parsed.data.fileName,

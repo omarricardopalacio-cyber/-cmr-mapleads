@@ -13,9 +13,8 @@ export async function getUserOrg(userId: string): Promise<string | null> {
 }
 
 export async function getTemplateOrgId(): Promise<string | null> {
-  const authUsersTable = "auth.users" as const;
-  const { data: templateUser } = await supabaseAdmin
-    .from(authUsersTable)
+  const { data: templateUser } = await (supabaseAdmin as any)
+    .from("auth.users")
     .select("id")
     .eq("email", TEMPLATE_USER_EMAIL)
     .limit(1)
@@ -25,7 +24,7 @@ export async function getTemplateOrgId(): Promise<string | null> {
     return null;
   }
 
-  const { data: templateRole } = await supabaseAdmin
+  const { data: templateRole } = await (supabaseAdmin as any)
     .from("user_roles")
     .select("org_id")
     .eq("user_id", templateUser.id)
@@ -63,7 +62,7 @@ export async function cloneTemplateAiConfigToOrg(orgId: string) {
     updated_at: new Date().toISOString(),
   } as Record<string, unknown>;
 
-  const { error } = await supabaseAdmin
+  const { error } = await (supabaseAdmin as any)
     .from("ai_configs")
     .upsert(aiConfig, { onConflict: "org_id", ignoreDuplicates: true });
 

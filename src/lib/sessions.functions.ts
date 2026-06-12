@@ -100,7 +100,7 @@ const deleteInChunks = async (table: string, column: string, values: string[]) =
   const chunkSize = 100;
   for (let i = 0; i < values.length; i += chunkSize) {
     const chunk = values.slice(i, i + chunkSize);
-    const { error } = await supabaseAdmin.from(table).delete().in(column, chunk);
+    const { error } = await (supabaseAdmin as any).from(table).delete().in(column, chunk);
     if (error) throw new Error(error.message);
   }
 };
