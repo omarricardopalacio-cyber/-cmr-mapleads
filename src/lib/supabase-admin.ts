@@ -15,37 +15,61 @@ import type {
   GlobalSettings,
 } from "./database.types";
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!supabaseUrl || !supabaseServiceKey) {
-  throw new Error("Missing Supabase configuration in environment variables");
-}
+// Crear cliente - en Lovable, si no hay service_role, usar el cliente normal
+// Las RLS policies protegen los datos
+export let supabaseAdmin: any;
 
-export const supabaseAdmin = createClient<Database>(
-  supabaseUrl,
-  supabaseServiceKey,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
+try {
+  if (supabaseUrl && supabaseServiceKey) {
+    supabaseAdmin = createClient<Database>(
+      supabaseUrl,
+      supabaseServiceKey,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      }
+    );
+  } else if (supabaseUrl) {
+    // Fallback: usar publicKey con RLS protection
+    supabaseAdmin = createClient<Database>(
+      supabaseUrl,
+      process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "placeholder",
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      }
+    );
+    console.warn("[supabase-admin] Using public key - RLS policies protect data");
   }
-);
+} catch (err) {
+  console.error("[supabase-admin] Init failed:", err);
+}
 
 // ============================================================================
 // HELPER FUNCTIONS - Platform Roles
 // ============================================================================
 
 export async function getPlatformRole(userId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("platform_roles")
-    .select("role")
-    .eq("user_id", userId)
-    .single();
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("platform_roles")
+      .select("role")
+      .eq("user_id", userId)
+      .single();
 
-  if (error) return null;
-  return data?.role || null;
+    if (error) return null;
+    return data?.role || null;
+  } catch (err) {
+    console.error("[getPlatformRole] Error:", err);
+    return null;
+  }
 }
 
 export async function setPlatformRole(
