@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createFileRoute, redirect, Outlet, Link, useRouterState, useNavigate } from "@tanstack/react-router";
 import {
   Sidebar,
@@ -41,11 +40,15 @@ export const Route = createFileRoute("/_authenticated")({
 function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const saasAccessFn = useServerFn(getSaasAccess);
-  const { data: saasAccess } = useQuery({
+  const { data: saasAccess, isLoading, isError, error } = useQuery({
     queryKey: ["saasAccess"],
     queryFn: () => saasAccessFn({}),
     retry: false,
   });
+
+  useEffect(() => {
+    console.log("[AppSidebar] saasAccess:", saasAccess, "loading:", isLoading, "error:", error);
+  }, [saasAccess, isLoading, error]);
 
   const main = [
     { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
