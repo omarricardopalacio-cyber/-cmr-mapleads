@@ -654,6 +654,8 @@ export type ToolExecCtx = {
   catalogSearchQuery?: string | null;
   /** Consulta de catálogo resuelta para esta herramienta. */
   resolvedCatalogQuery?: string | null;
+  /** ID único del carrusel actual para agrupar comandos SEND_MEDIA coherentes. */
+  carouselId?: string | null;
 };
 
 function mapProductsForTool(products: CatalogProduct[]) {
@@ -815,10 +817,11 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       .eq("type", "SEND_MEDIA")
       .gte("created_at", since)
       .order("created_at", { ascending: false })
-      .limit(40);
+      .limit(60);
 
-    // --- Cargar el snapshot guardado para complementar posiciones sin imagen ---
+    // --- Cargar el snapshot guardado ---
     let snapshotProducts: CatalogProduct[] = [];
+    let snapshotCarouselId: string | null = null;
     try {
       const { data: threadSnap } = await (supabaseAdmin as any)
         .from("threads")
@@ -830,8 +833,11 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       if (Array.isArray(state?.products)) {
         snapshotProducts = state.products as CatalogProduct[];
       }
+      if (state?.carousel_id) {
+        snapshotCarouselId = String(state.carousel_id);
+      }
     } catch {
-      // ignorar error de snapshot — el fallback principal seguirá funcionando
+      // ignorar error de snapshot
     }
 
     // Si no hay comandos SEND_MEDIA pero sí hay snapshot guardado, devolver snapshot
@@ -845,11 +851,28 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       return [];
     }
 
-    // Group commands by execution batches using timestamps (8 seconds window)
-    const batches: Array<typeof data> = [];
-    let currentBatch: typeof data = [];
-    let lastTime = 0;
+    let latestBatch: typeof data = [];
+    let usedCarouselGrouping = false;
 
+    // Estrategia A: Agrupación por carousel_id
+    if (snapshotCarouselId) {
+      const carouselGroup = data.filter((cmd: any) => {
+        const p = cmd?.payload ?? {};
+        if (p.chatId !== ctx.chatId) return false;
+        return p.carousel_id === snapshotCarouselId;
+      });
+
+      if (carouselGroup.length > 0) {
+        latestBatch = carouselGroup;
+        usedCarouselGrouping = true;
+        console.log(
+          `[loadRecentlyShownProducts] agrupado por carouselId (${snapshotCarouselId}): ${carouselGroup.length} comandos`,
+        );
+      }
+    }
+
+    // Filtrar comandos elegibles para Estrategia B
+    const eligibleCmds: typeof data = [];
     for (const cmd of data) {
       const p = cmd?.payload ?? {};
       if (p.chatId !== ctx.chatId) continue;
@@ -858,30 +881,56 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       const cap = String(p.caption ?? p.text ?? "");
       const numMatch = cap.match(/^\s*(\d{1,3})[.)]/);
       if (!numMatch) continue;
-
-      const time = new Date(cmd.created_at).getTime();
-      if (currentBatch.length === 0 || Math.abs(lastTime - time) <= 8000) {
-        currentBatch.push(cmd);
-        lastTime = time;
-      } else {
-        batches.push(currentBatch);
-        currentBatch = [cmd];
-        lastTime = time;
-      }
-    }
-    if (currentBatch.length > 0) {
-      batches.push(currentBatch);
+      eligibleCmds.push(cmd);
     }
 
-    if (!batches.length) {
+    // Si no hay comandos elegibles y no usamos agrupación por id
+    if (!eligibleCmds.length && !usedCarouselGrouping) {
       return snapshotProducts.length ? snapshotProducts : [];
     }
 
-    // The most recent batch represents the latest set of search results
-    const latestBatch =
-      batches.length > 1 && batches[0].length === 1 && batches[1].length > 1
-        ? batches[1]
-        : batches[0];
+    // Estrategia B: Agrupar por ventana de 120s y seleccionar el batch más grande de los últimos 5 min
+    const batches: Array<typeof eligibleCmds> = [];
+    if (!usedCarouselGrouping && eligibleCmds.length > 0) {
+      let currentBatch: typeof eligibleCmds = [];
+      let lastTime = 0;
+
+      for (const cmd of eligibleCmds) {
+        const time = new Date(cmd.created_at).getTime();
+        if (currentBatch.length === 0 || Math.abs(lastTime - time) <= 120000) {
+          currentBatch.push(cmd);
+          lastTime = time;
+        } else {
+          batches.push(currentBatch);
+          currentBatch = [cmd];
+          lastTime = time;
+        }
+      }
+      if (currentBatch.length > 0) {
+        batches.push(currentBatch);
+      }
+    }
+
+    if (!usedCarouselGrouping && batches.length > 0) {
+      const fiveMinAgo = Date.now() - 5 * 60_000;
+      const recentBatches = batches.filter((b) => {
+        return b.some((cmd: any) => new Date(cmd.created_at).getTime() >= fiveMinAgo);
+      });
+
+      const candidateBatches = recentBatches.length > 0 ? recentBatches : batches;
+
+      let bestBatch = candidateBatches[0];
+      for (const b of candidateBatches) {
+        if (b.length > bestBatch.length) {
+          bestBatch = b;
+        }
+      }
+      latestBatch = bestBatch;
+      console.log(
+        `[loadRecentlyShownProducts] fallback a ventana 120s: elegido lote de tamaño ${latestBatch.length} (total batches=${batches.length})`,
+      );
+    }
+
     const byPosition = new Map<number, string>();
     for (const cmd of latestBatch) {
       const p = cmd.payload ?? {};
@@ -894,20 +943,38 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       byPosition.set(pos, idMatch[1]);
     }
 
-    if (!byPosition.size) {
-      return snapshotProducts.length ? snapshotProducts : [];
+    if (!byPosition.size && !snapshotProducts.length) {
+      return [];
     }
 
-    // Determinar el total de posiciones: el máximo entre SEND_MEDIA detectados y el
-    // snapshot guardado (cubre los productos sin imagen que se enviaron como texto).
-    const maxPosMedia = Math.max(...byPosition.keys());
-    const maxPos = Math.max(maxPosMedia, snapshotProducts.length);
+    // Determinar coherencia del snapshot
+    let hayOverlapDeIds = false;
+    if (snapshotProducts.length > 0 && byPosition.size > 0) {
+      const snapshotIds = new Set(snapshotProducts.map((p) => p.id));
+      for (const id of byPosition.values()) {
+        if (snapshotIds.has(id)) {
+          hayOverlapDeIds = true;
+          break;
+        }
+      }
+    }
+
+    const snapshotIsCoherent =
+      usedCarouselGrouping ||
+      hayOverlapDeIds ||
+      (!usedCarouselGrouping && batches.length <= 1);
+
+    console.log(
+      `[loadRecentlyShownProducts] coherencia snapshot: usedCarouselGrouping=${usedCarouselGrouping}, hayOverlap=${hayOverlapDeIds}, batchesCount=${batches.length} => coherent=${snapshotIsCoherent}`,
+    );
+
+    const maxPosMedia = byPosition.size > 0 ? Math.max(...byPosition.keys()) : 0;
+    const maxPos = snapshotIsCoherent ? Math.max(maxPosMedia, snapshotProducts.length) : maxPosMedia;
 
     const sorted: CatalogProduct[] = [];
     for (let i = 1; i <= maxPos; i++) {
       const id = byPosition.get(i);
       if (id) {
-        // Posición con imagen: cargar desde catálogo o snapshot del comando
         const cmdForPos = latestBatch.find((cmd: any) => {
           const p = cmd?.payload ?? {};
           const cap = String(p.caption ?? p.text ?? "");
@@ -923,8 +990,7 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
             ? ((await getCatalogProduct(ctx.catalogCfg, id)) ?? snapshot ?? null)
             : (snapshot ?? null);
         sorted[i - 1] = prod as CatalogProduct;
-      } else if (snapshotProducts[i - 1]) {
-        // Posición sin imagen: complementar desde el snapshot guardado
+      } else if (snapshotIsCoherent && snapshotProducts[i - 1]) {
         sorted[i - 1] = snapshotProducts[i - 1];
         console.log(
           `[loadRecentlyShownProducts] posición ${i} sin SEND_MEDIA, completada desde snapshot: ${snapshotProducts[i - 1].name}`,
@@ -933,7 +999,7 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
     }
 
     console.log(
-      `[loadRecentlyShownProducts] reconstruidos ${sorted.filter(Boolean).length}/${maxPos} productos (media=${maxPosMedia}, snapshot=${snapshotProducts.length})`,
+      `[loadRecentlyShownProducts] reconstruidos ${sorted.filter(Boolean).length}/${maxPos} productos (media=${maxPosMedia}, snapshot=${snapshotProducts.length}, usedCarouselGrouping=${usedCarouselGrouping}, snapshotIsCoherent=${snapshotIsCoherent})`,
     );
     return sorted;
   } catch (err) {
@@ -1212,6 +1278,7 @@ type CatalogSearchState = {
   query: string;
   shownIds: string[];
   products: CatalogProduct[];
+  carouselId?: string | null;
 };
 
 async function loadCatalogSearchState(ctx: ToolExecCtx): Promise<CatalogSearchState> {
@@ -1230,6 +1297,7 @@ async function loadCatalogSearchState(ctx: ToolExecCtx): Promise<CatalogSearchSt
       query: state?.query ? String(state.query).trim() : "",
       shownIds: Array.isArray(state?.shown_ids) ? state.shown_ids.map(String) : [],
       products: Array.isArray(state?.products) ? (state.products as CatalogProduct[]) : [],
+      carouselId: state?.carousel_id ? String(state.carousel_id) : null,
     };
   } catch (err) {
     console.warn(
@@ -1294,6 +1362,7 @@ async function saveCatalogSearchState(
         stock: product.stock,
         attributes: product.attributes,
       })),
+      carousel_id: ctx.carouselId ?? null,
       updated_at: new Date().toISOString(),
     };
     snapshot._search_history = searchHistory.slice(-20); // Guardar últimas 20
@@ -1510,7 +1579,7 @@ async function queueOutgoingMedia(
     caption: caption || "",
     text: caption || "",
     dedupe_key: key,
-    source_media_url: mediaUrl,
+    carousel_id: ctx.carouselId ?? null,
     product: productSnapshot
       ? {
           id: productSnapshot.id,
@@ -1885,6 +1954,9 @@ export async function executeToolCall(
 
         ctx.lastProducts = products;
         ctx.resolvedCatalogQuery = q;
+        ctx.carouselId = canReuse
+          ? (storedState.carouselId ?? (globalThis.crypto?.randomUUID?.() ?? `car_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`))
+          : (globalThis.crypto?.randomUUID?.() ?? `car_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
         await saveFocusedProduct(ctx, null); // Reset focused product on new search
 
         if (q && products.length) {
@@ -2177,10 +2249,11 @@ export async function runAiAgent({
       ? previousDetailQuestion || lastUserText
       : lastUserText;
 
-  // Reconstruir los productos mostrados recientemente para poder resolver
-  // selecciones por número ("la 3") entre turnos.
   ctx.lastProducts = await loadRecentlyShownProducts(ctx);
   const storedCatalogState = await loadCatalogSearchState(ctx);
+  if (storedCatalogState.carouselId) {
+    ctx.carouselId = storedCatalogState.carouselId;
+  }
 
   // Si no se cargaron productos recientemente mostrados desde engine_commands,
   // intentar cargarlos desde el estado guardado del catálogo en el thread.
@@ -2724,6 +2797,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     if (discoveryIntent && catalogCfg) {
       const products = await searchCatalog(catalogCfg, currentCatalogQuery, MAX_CAROUSEL);
       if (products.length >= 2) {
+        ctx.carouselId = globalThis.crypto?.randomUUID?.() ?? `car_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         ctx.lastProducts = products;
         await saveCatalogSearchState(ctx, currentCatalogQuery, products.map((p) => p.id));
         await saveFocusedProduct(ctx, null);
