@@ -2016,143 +2016,7 @@ function normalizeCatalogQuery(text: string): string {
   return t.replace(/\s+/g, " ").trim();
 }
 
-function detectProductSearchIntent(
-  visibleChat: Array<{ role: string; content?: string }>,
-  lastUserText: string,
-  currentCatalogQuery: string,
-  isCollectingOrder: boolean,
-  assistantIsCollecting: boolean,
-): { isSearch: boolean; query: string | null; confidence: "high" | "low" } {
-  const text = (lastUserText || "").trim();
-  if (!text || isCollectingOrder || assistantIsCollecting) {
-    return { isSearch: false, query: null, confidence: "low" };
-  }
 
-  const normalized = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, " ");
-
-  const negativeOrderDataRegex = /\b(nombre|tel[eé]fono|celular|movil|email|correo|direcci[oó]n|ciudad|barrio|c[óo]digo|nit|r\.u\.t|cedula|identificaci[oó]n|ced\.\b|dni)\b/i;
-  const strongSearchRegex = /\b(?:tienes|tienen|tiene|hay|busco|buscar|busca|estoy buscando|me muestras|mu[eé]strame|mostrar|ver|vendes|venden|consigo|consigue|tendr[aá]s|tendr[ií]as|quiero|necesito|traes|tienes)\b/i;
-  const weakSearchRegex = /\b(?:producto|productos|cat[aá]logo|precio|precios|stock|disponible|disponibles|referencia|modelo|modelos|foto|fotos|imagen|images?)\b/i;
-  const deliveryIntentRegex = /\b(?:env[ií]o|envio|enviar|recibir|recibo|entregar|entrega|despacho|despachar|llegar|llegada|llegaría|llegaria|llega|fecha|hora|tiempo|destino|direcci[oó]n|ciudad)\b/i;
-  const politeResponseRegex = /\b(?:hola|buenas|gracias|ok|okay|vale|listo|si|sí|no)\b/i;
-  const locationRegex = /\b(?:bogota|medell[ií]n|cali|barranquilla|pereira|cartagena|manizales|boyac[aá]|antioquia|valle|santander|tolima)\b/i;
-
-  if (negativeOrderDataRegex.test(normalized) && !strongSearchRegex.test(normalized)) {
-    return { isSearch: false, query: null, confidence: "low" };
-  }
-
-  const candidateQuery = currentCatalogQuery?.trim();
-  const isDeliveryLocationQuestion = deliveryIntentRegex.test(normalized) && locationRegex.test(normalized);
-  const isLocationOnlyCandidate = candidateQuery && locationRegex.test(candidateQuery) && candidateQuery.split(/\s+/).length <= 3;
-  const normalizedGreetingCandidate = candidateQuery
-    ? candidateQuery
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9\s]/g, " ")
-        .replace(/([a-z0-9])\1{2,}/g, "$1")
-        .trim()
-    : "";
-  const greetingOnlyRegex = /^(?:hola|hey|ey|buen(?:o|a)s?|buenas?(?:\s+(?:dias|tardes|noches))?|que\s+tal|qué\s+tal|gracias|ok(?:ay)?|vale|listo|dale|claro|si|sí|no|bueno|buena)$/i;
-  const isGreetingOnlyCandidate = normalizedGreetingCandidate.length > 0 && greetingOnlyRegex.test(normalizedGreetingCandidate);
-
-  const shippingOnlyTokens = new Set([
-    "envio",
-    "envío",
-    "enviar",
-    "recibir",
-    "recibo",
-    "entrega",
-    "despacho",
-    "llegar",
-    "llegada",
-    "llegaría",
-    "llegaria",
-    "fecha",
-    "hora",
-    "tiempo",
-    "consulta",
-    "consultar",
-    "pregunta",
-    "preguntas",
-    "puedo",
-    "puedes",
-    "puede",
-    "cuando",
-    "cuándo",
-    "si",
-    "sí",
-    "quiero",
-    "me",
-    "el",
-    "la",
-    "los",
-    "las",
-    "de",
-    "mi",
-    "en",
-    "para",
-    "con",
-    "a",
-    "sobre",
-    "por",
-    "favor",
-    "porfa",
-    "porfis",
-  ]);
-  const normalizedCandidate = candidateQuery?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, " ") || "";
-  const candidateTokens = normalizedCandidate.split(/\s+/).filter(Boolean);
-  const isShippingOnlyCandidate =
-    deliveryIntentRegex.test(normalized) &&
-    candidateTokens.length > 0 &&
-    candidateTokens.every(
-      (token) => shippingOnlyTokens.has(token) || locationRegex.test(token) || token.length <= 2,
-    );
-
-  if (isDeliveryLocationQuestion || isLocationOnlyCandidate || isShippingOnlyCandidate || isGreetingOnlyCandidate) {
-    return { isSearch: false, query: null, confidence: "low" };
-  }
-
-  if (candidateQuery && candidateQuery.length >= 3) {
-    if (strongSearchRegex.test(normalized)) {
-      return { isSearch: true, query: candidateQuery, confidence: "high" };
-    }
-
-    if (isDeliveryLocationQuestion || isShippingOnlyCandidate) {
-      return { isSearch: false, query: null, confidence: "low" };
-    }
-
-    const assistantAskedForProduct = visibleChat
-      .slice(-8)
-      .some(
-        (m) =>
-          m.role === "assistant" &&
-          /\b(?:qu[eé] buscas|qu[eé] necesitas|qu[eé] producto|qu[eé] te interesa|qu[eé] est[aá]s buscando|dime qu[eé]|cu[aá]l producto|qu[eé] art[ií]culo)\b/i.test(
-            String(m.content || ""),
-          ),
-      );
-
-    if (assistantAskedForProduct) {
-      return { isSearch: true, query: candidateQuery, confidence: "low" };
-    }
-
-    if (weakSearchRegex.test(normalized) && !politeResponseRegex.test(normalized)) {
-      return { isSearch: true, query: candidateQuery, confidence: "low" };
-    }
-
-    const simpleProductOnly = /^[a-z0-9áéíóúñ]+(?:\s+[a-z0-9áéíóúñ]+){0,4}$/i.test(candidateQuery);
-    const candidateLooksLikeLocation = locationRegex.test(candidateQuery);
-
-    if (simpleProductOnly && !negativeOrderDataRegex.test(normalized) && !candidateLooksLikeLocation) {
-      return { isSearch: true, query: candidateQuery, confidence: "high" };
-    }
-  }
-
-  return { isSearch: false, query: null, confidence: "low" };
-}
 
 /** Detecta cuando el cliente pide ver el VIDEO/FOTO de un producto. */
 function isMediaRequest(text: string): boolean {
@@ -2902,13 +2766,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     }
   }
 
-  const buildProductMediaFollowUp = () => {
-    const imageCount = actions.filter((a) => a === "send_product_image").length;
-    const videoCount = actions.filter((a) => a === "send_product_video").length;
-    if (videoCount > 0) return "¿Te sirve? Si quieres lo agendamos 😊";
-    if (imageCount > 1) return "¿Cuál te llama la atención? Dime el número 😊";
-    return "¿Ese te sirve? Si quieres lo agendamos 😊";
-  };
+
 
   const stableStringify = (value: unknown): string => {
     if (Array.isArray(value)) {
