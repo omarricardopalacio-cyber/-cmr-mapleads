@@ -2042,6 +2042,9 @@ function detectProductSearchIntent(
   }
 
   const candidateQuery = currentCatalogQuery?.trim();
+  const shippingQuestionRegex = /\b(?:cuando|cuándo|llegar|llegaría|llegaria|llega|entrega|envío|envio|fecha|hora|tiempo|despacho|envío)\b/i;
+  const locationRegex = /\b(?:bogota|medell[ií]n|cali|barranquilla|pereira|cartagena|manizales|boyac[aá]|antioquia|valle|santander|tolima)\b/i;
+
   if (candidateQuery && candidateQuery.length >= 3) {
     if (strongSearchRegex.test(normalized)) {
       return { isSearch: true, query: candidateQuery, confidence: "high" };
@@ -2061,13 +2064,17 @@ function detectProductSearchIntent(
       return { isSearch: true, query: candidateQuery, confidence: "low" };
     }
 
+    if (shippingQuestionRegex.test(normalized) && locationRegex.test(normalized)) {
+      return { isSearch: false, query: null, confidence: "low" };
+    }
+
     if (weakSearchRegex.test(normalized) && !politeResponseRegex.test(normalized)) {
       return { isSearch: true, query: candidateQuery, confidence: "low" };
     }
 
     const simpleProductOnly = /^[a-z0-9áéíóúñ]+(?:\s+[a-z0-9áéíóúñ]+){0,4}$/i.test(candidateQuery);
     if (simpleProductOnly && !negativeOrderDataRegex.test(normalized)) {
-      return { isSearch: true, query: candidateQuery, confidence: "low" };
+      return { isSearch: true, query: candidateQuery, confidence: "high" };
     }
   }
 
@@ -2318,7 +2325,8 @@ export async function runAiAgent({
     !assistantIsCollecting &&
     !mediaRequest &&
     !wantsMoreProducts &&
-    explicitSearchIntent.isSearch;
+    explicitSearchIntent.isSearch &&
+    explicitSearchIntent.confidence === "high";
 
   if (isCatalogQuestion) {
     await saveFocusedProduct(ctx, null);
@@ -3353,12 +3361,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           const parsed = JSON.parse(exec.result || "{}");
           const productsFromTool = parsed?.products ?? [];
           if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
-            // Enviar TODOS los productos que no tienen explícitamente has_image === false.
-            // Esto incluye productos con has_image undefined, que suelen venir de estados
-            // antiguos o de cargados parciales.
-            const toSend = productsFromTool
-              .slice(0, 6)
-              .filter((p: any) => p?.id && p?.has_image !== false);
+            // Enviar TODOS los productos con id válido. Que no filtre por has_image.
+            // Si no tienen imagen, send_product_image debe manejarlo en su propio flujo.
+            const toSend = productsFromTool.slice(0, 6).filter((p: any) => p?.id);
 
             for (const p of toSend) {
               const imageExec = await executeToolCall(
