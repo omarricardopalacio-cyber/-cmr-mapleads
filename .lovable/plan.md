@@ -107,12 +107,40 @@ extension/
 - Delays aleatorios 600–1800ms entre sends del mismo chat.
 - Throttling global: max 1 send/600ms.
 
-## Confirmación antes de empezar
+---
 
-Antes de tocar código quiero confirmar 3 cosas:
+## Implementación: Carrusel Determinístico de Productos (2026-06-13)
 
-1. **¿Procedo fase por fase con commits independientes?** (recomendado — cada fase verifica que WhatsApp sigue funcionando antes de la siguiente).
-2. **¿Mantengo compatibilidad de la URL/token actuales** (popup ya configurado en `chrome.storage.local`)? Sí por defecto.
-3. **¿Migración backend ahora o al final?** Recomiendo Fase 5 para no romper sesiones activas.
+Cuando el cliente escribe frases tipo "estoy buscando almohadas", la IA envía todas las coincidencias del catálogo (hasta 30) como un carrusel de tarjetas WhatsApp con formato:
 
-Si confirmas, arranco con **Fase 1 + Fase 2** en el primer commit (esqueleto + migración mecánica de los 4 archivos actuales a la nueva estructura, sin cambiar comportamiento).
+```
+#1
+Nombre del producto
+$15.000
+[Imagen]
+```
+
+Y cierra con:
+```
+👉 Responde con el número del producto que más te guste.
+```
+
+### Cambios en `src/lib/ai.server.ts`
+
+| Cambio | Descripción |
+|--------|-------------|
+| `MAX_CAROUSEL = 30` | Constante de límite máximo de carrusel |
+| `CAROUSEL_PROMPT_TEXT` | Texto de cierre estándar |
+| `buildCarouselCaption()` | Helper que formatea `#N\nNombre\n$Precio` |
+| `normalizeCatalogQuery` ampliada | Strip de verbos de intención al inicio del texto |
+| `search_products` limit | Descripción actualizada a `1-30`, default `30` |
+| Bloque `discoveryIntent` | Carrusel directo sin pasar por el LLM |
+| Bloque "ver más" actualizado | Usa `MAX_CAROUSEL` y `buildCarouselCaption` |
+| `PRODUCT_FLOW_GUIDE` | Indica al LLM que no repita `search_products` cuando ya hay carrusel |
+
+### Criterios de aceptación verificados
+- ✅ "estoy buscando almohadas" → N tarjetas (#1..#N) + mensaje final
+- ✅ Cliente responde "2" → sistema enfoca producto #2 (resolveProductFromReference ya existente)
+- ✅ JSON de 30 productos no pasa por messages[] del LLM (loop directo)
+- ✅ Solo 1 resultado → flujo normal del LLM (sin carrusel)
+- ✅ Durante recolección de datos del pedido → NO se dispara el carrusel

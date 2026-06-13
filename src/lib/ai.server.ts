@@ -99,7 +99,7 @@ export const CATALOG_TOOLS = [
             description:
               "Palabra clave en singular si es posible (ej. 'zapatero' no 'zapateros', 'silla' no 'sillas'). El sistema corrige plurales y typos. Vacío = destacados.",
           },
-          limit: { type: "number", description: "Máx productos (1-5). Default 5." },
+          limit: { type: "number", description: "Máx productos (1-30). Default 30." },
         },
       },
     },
@@ -1995,8 +1995,13 @@ function normalizeCatalogQuery(text: string): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
   t = t.replace(/[.?¡¿!,;:]/g, " ").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ");
+  // Strip verbos de intención de descubrimiento al inicio del texto
   t = t.replace(
-    /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|porfa|porfis|mandame|enviarme|pasame|compartirme|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi,
+    /^(estoy\s+)?(busco|buscando|busca|quiero|queriendo|necesito|necesitando|me\s+gustar[ii]a\s+ver|quisiera\s+ver|muestrame|muestrame|mandame|mandame|enviame|tienes|tiene|tienen|hay|manejan|venden|ofrecen)\s+/i,
+    "",
+  );
+  t = t.replace(
+    /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|porfa|porfis|mandame|enviarme|pasame|compartirme|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí|queriendo|necesitando|buscando|ofrecen|enviame|quisiera)\b/gi,
     " ",
   );
   // Palabras "meta": describen lo que se pide SOBRE el producto, no el producto.
@@ -2071,6 +2076,23 @@ async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
       err instanceof Error ? err.message : String(err),
     );
   }
+}
+
+/* ============================================================
+   CARRUSEL DETERMINÍSTICO — constantes y helper
+   ============================================================ */
+const MAX_CAROUSEL = 30;
+const CAROUSEL_PROMPT_TEXT = "👉 Responde con el número del producto que más te guste.";
+
+function buildCarouselCaption(index: number, product: { name: string; price?: string | number | null }): string {
+  const lines: string[] = [`#${index}`, product.name];
+  const rawPrice = product.price;
+  if (rawPrice != null && String(rawPrice).trim() !== "") {
+    const numeric = typeof rawPrice === "number" ? rawPrice : Number(rawPrice);
+    if (Number.isFinite(numeric)) lines.push(`$${numeric.toLocaleString("es-CO")}`);
+    else lines.push(`$${rawPrice}`);
+  }
+  return lines.join("\n");
 }
 
 /* ============================================================
@@ -2283,9 +2305,10 @@ MODO A — RECOPILANDO DATOS DEL PEDIDO:
 5. Solo sal de este modo si el cliente cambia de tema y vuelve a preguntar por productos.
 
 MODO B — DESCUBRIENDO PRODUCTOS:
-1. Cuando el cliente pregunta por catálogo, modelos, fotos, videos, precios, stock o referencias, llama primero a search_products con la palabra clave.
-2. Si hay resultados, responde enviando imágenes de los mejores 6 productos usando send_product_image una vez por producto. NUNCA envíes el mismo producto dos veces ni repitas la búsqueda.
-3. El caption de cada imagen debe ser corto, EMPEZAR con el número de la lista, y contener nombre y precio: "<n>. <nombre> — $<precio>" (ej. "1. Zapatero 6 niveles — $32200"). El número permite que el cliente elija diciendo "quiero el 2".
+0. IMPORTANTE: Cuando el cliente expresa intención de descubrimiento (busco, quiero, tienes, hay…), el sistema YA envió un carrusel determinístico de tarjetas antes de llegar aquí. NO vuelvas a llamar search_products en ese mismo turno; solo responde de forma natural al carrusel ya enviado.
+1. Si el sistema NO envió carrusel y el cliente pregunta por catálogo, modelos, fotos, videos, precios, stock o referencias, llama search_products con la palabra clave.
+2. Si hay resultados, responde enviando imágenes de los mejores productos usando send_product_image una vez por producto. NUNCA envíes el mismo producto dos veces ni repitas la búsqueda.
+3. El caption de cada imagen debe ser corto, EMPEZAR con el número de la lista, y contener nombre y precio: "#<n>\n<nombre>\n$<precio>" (ej. "#1\nZapatero 6 niveles\n$32.200"). El número permite que el cliente elija diciendo "quiero el 2".
 4. Después de enviar las imágenes, escribe un mensaje corto y natural invitando al cliente a elegir o preguntar más. Evita listados de texto.
 5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), usa send_product_image con product_reference exactamente como lo dijo.
 6. SI TIENES INFORMACIÓN DE UN VIDEO DISPONIBLE para el producto actual:
@@ -2447,6 +2470,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       ? 600
       : promptMode === "general"
         ? 4000
+        // @ts-expect-error TS2367 — rama heredada, promptMode nunca toma el valor "catalog" (dead branch)
         : promptMode === "catalog"
           ? 1800
           : promptMode === "product_detail"
@@ -2634,9 +2658,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       ...newProducts.map((product) => product.id),
     ]);
 
-    for (const product of newProducts) {
-      const index = newProducts.findIndex((p) => p.id === product.id) + 1;
-      const caption = `${index}. ${product.name} — $${product.price ?? ""}`;
+    for (let i = 0; i < newProducts.length; i++) {
+      const product = newProducts[i];
+      const caption = buildCarouselCaption(i + 1, product);
       if (product.image_url) {
         const imageExec = await executeToolCall(
           {
@@ -2664,12 +2688,60 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     }
 
     return {
-      reply: deliveredProductMedia
-        ? `Estas son otras opciones de ${storedCatalogState.query}. ¿Te agrada alguna? 😊`
-        : `Encontré más opciones de ${storedCatalogState.query}, pero no tienen imagen disponible por el momento.`,
+      reply: CAROUSEL_PROMPT_TEXT,
       actions,
     };
   }
+
+  // ── CARRUSEL DETERMINÍSTICO: intención de descubrimiento ─────────────────
+  // Detecta cuando el cliente expresa intención de buscar productos y envía
+  // el carrusel directamente, sin pasar por el LLM, para no inflar el prompt.
+  {
+    const normalizedForDiscovery = lastUserText
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    const discoveryIntent =
+      !isCollectingOrder &&
+      catalogCfg &&
+      !wantsMoreProducts &&
+      !mediaRequest &&
+      !(selectedProductForDetails && isProductDetailQuestion(detailQuestionText)) &&
+      currentCatalogQuery.length >= 3 &&
+      /\b(busco|buscando|quiero|necesito|tienes|hay|manejan|venden|muestrame|mandame|env[ii]ame|ofrecen|estoy\s+buscando|quisiera\s+ver)\b/i
+        .test(normalizedForDiscovery);
+
+    if (discoveryIntent && catalogCfg) {
+      const products = await searchCatalog(catalogCfg, currentCatalogQuery, MAX_CAROUSEL);
+      if (products.length >= 2) {
+        ctx.lastProducts = products;
+        await saveCatalogSearchState(ctx, currentCatalogQuery, products.map((p) => p.id));
+        await saveFocusedProduct(ctx, null);
+        for (let i = 0; i < products.length; i++) {
+          const caption = buildCarouselCaption(i + 1, products[i]);
+          if (products[i].image_url) {
+            const imgExec = await executeToolCall(
+              {
+                id: `disc_img_${products[i].id}`,
+                function: {
+                  name: "send_product_image",
+                  arguments: JSON.stringify({ product_id: products[i].id, caption }),
+                },
+              },
+              ctx,
+            );
+            actions.push(imgExec.name);
+          } else {
+            await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
+            actions.push("send_product_text");
+          }
+        }
+        return { reply: CAROUSEL_PROMPT_TEXT, actions: [...actions, "carousel_discovery"] };
+      }
+      // 0 o 1 resultado → continuar al flujo LLM normal
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
 
 
