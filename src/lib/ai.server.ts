@@ -1442,7 +1442,7 @@ async function queueOutgoingMedia(
 
     const dup = (recent ?? []).some((c: any) => {
       const p = c?.payload ?? {};
-      return p.chatId === ctx.chatId && (p.dedupe_key === key || p.source_media_url === mediaUrl);
+      return p.chatId === ctx.chatId && p.dedupe_key && key && p.dedupe_key === key;
     });
 
     if (dup) {
