@@ -384,21 +384,11 @@ export function rankProductsMeta(
     ),
   );
 
-  // Palabras de exclusión (contexto negativo): evitan que accesorios/contenedores
-  // contaminen los resultados cuando se busca el producto principal.
-  const exclusionKeywords: Record<string, string[]> = {
-    silla: ["bolsa", "funda", "caja"],
-    cama: ["bolsa", "funda", "piso"],
-    almohada: ["bolsa", "funda", "contenedor"],
-    cojin: ["bolsa", "funda", "contenedor"],
-    zapatero: ["caja", "bolsa"],
-    zapato: ["caja", "bolsa"],
-    organizador: ["caja", "bolsa"],
-  };
-  // Acumular exclusiones de todos los tokens de la query (no solo el primero)
-  const exclusions = Array.from(
-    new Set(normalizedTokens.flatMap((token) => exclusionKeywords[token] || [])),
-  );
+  // NOTA: El filtro de exclusión por palabras clave fue eliminado porque causaba
+  // que productos legítimos (ej: "FUNDA ALMOHADA", "ALMOHADA C/FUNDA") fueran
+  // rechazados permanentemente al buscar "almohada". El MIN_SCORE=15 ya es
+  // suficiente para filtrar productos irrelevantes: una "BOLSA DE ROPA" al buscar
+  // "almohada" obtendría score=9 (solo match en descripción), que queda bajo el umbral.
 
   const scoredProducts = products.map((p) => {
     let score = 0;
@@ -415,22 +405,6 @@ export function rankProductsMeta(
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
-
-    // PENALIZACIÓN: rechazar productos cuyo NOMBRE contiene palabras de exclusión.
-    // FIX: Se usa el token PRIMARIO (el más específico de la búsqueda, ej: "almohada")
-    // para decidir si el producto ES lo que se busca. Si el nombre contiene el token
-    // primario, NUNCA se rechaza aunque también contenga una palabra de exclusión
-    // (ej: "FUNDA ALMOHADA" al buscar "almohada" → NO se rechaza porque contiene "almohada").
-    // Solo se rechaza si el nombre no tiene NINGUNA coincidencia con ningún token de búsqueda.
-    const primaryQueryTokens = queryTokens.filter((token) => token.length >= 3);
-    const nameMatchesPrimary = primaryQueryTokens.some((token) => nameClean.includes(token));
-    if (!nameMatchesPrimary) {
-      for (const exclusion of exclusions) {
-        if (nameClean.includes(exclusion)) {
-          return { product: p, score: -1, nameHit: false }; // Rechazo definitivo
-        }
-      }
-    }
 
     // 1. Coincidencia exacta de la frase original
     if (nameClean.includes(q)) {
