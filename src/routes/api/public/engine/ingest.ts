@@ -1116,7 +1116,17 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 // auto-replies already ran synchronously above, so AI enters right after.
                 // Pass autoRepliesWereSent so the AI uses contextual-entry mode.
                 const autoRepliesWereSent = totalDelaySec > 0;
-                await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, 0, autoRepliesWereSent);
+                if (process.env.ASYNC_AI_REPLY !== 'false') {
+                  // Asynchronous execution (optimizado)
+                  console.log('[ingest] Despachando maybeAiReply en segundo plano (asíncrono)');
+                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, 0, autoRepliesWereSent).catch((err) => {
+                    console.error('[ingest] Error en maybeAiReply asíncrono:', err);
+                  });
+                } else {
+                  // Fallback síncrono (reversión a comportamiento anterior)
+                  console.log('[ingest] Ejecutando maybeAiReply de forma síncrona (rollback/legacy)');
+                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, 0, autoRepliesWereSent);
+                }
               }
 
               // Schedule no-response pending entries for active no_response rules

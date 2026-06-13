@@ -77,27 +77,102 @@ async function saveConfig(url: string, token: string): Promise<void> {
 // Lifecycle
 // ============================================================
 
+let pollingTimer: any = null;
+let flushTimer: any = null;
+let isPollingLoopActive = false;
+let isFlushLoopActive = false;
+
+async function startFastPolling(): Promise<void> {
+  if (CONSTANTS.USE_LEGACY_ALARMS) {
+    if (pollingTimer) {
+      clearTimeout(pollingTimer);
+      pollingTimer = null;
+    }
+    isPollingLoopActive = false;
+    return;
+  }
+  if (isPollingLoopActive) return;
+  isPollingLoopActive = true;
+
+  async function run() {
+    if (CONSTANTS.USE_LEGACY_ALARMS) {
+      isPollingLoopActive = false;
+      return;
+    }
+    try {
+      await pollCommands();
+    } catch (e) {
+      console.warn("[FastPolling] Loop error:", e);
+    }
+    pollingTimer = setTimeout(run, CONSTANTS.POLLING_INTERVAL_MS);
+  }
+
+  run();
+}
+
+async function startFastFlush(): Promise<void> {
+  if (CONSTANTS.USE_LEGACY_ALARMS) {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    isFlushLoopActive = false;
+    return;
+  }
+  if (isFlushLoopActive) return;
+  isFlushLoopActive = true;
+
+  async function run() {
+    if (CONSTANTS.USE_LEGACY_ALARMS) {
+      isFlushLoopActive = false;
+      return;
+    }
+    try {
+      await flushIngestQueue();
+    } catch (e) {
+      console.warn("[FastFlush] Loop error:", e);
+    }
+    flushTimer = setTimeout(run, CONSTANTS.BATCH_FLUSH_INTERVAL_MS);
+  }
+
+  run();
+}
+
+function initLoops(): void {
+  setupAlarms();
+  if (!CONSTANTS.USE_LEGACY_ALARMS) {
+    console.log("[ServiceWorker] Iniciando bucles rápidos (Fast Polling & Fast Flush)...");
+    startFastPolling();
+    startFastFlush();
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[ServiceWorker] Extensión instalada/actualizada");
-  loadConfig().then(setupAlarms);
+  loadConfig().then(initLoops);
   // Nota: MV3 inyecta content scripts automáticamente en páginas nuevas.
   // Para tabs existentes, el usuario debe recargar web.whatsapp.com.
 });
 
 chrome.runtime.onStartup.addListener(() => {
   console.log("[ServiceWorker] Navegador iniciado");
-  loadConfig().then(setupAlarms);
+  loadConfig().then(initLoops);
 });
 
 chrome.storage.onChanged.addListener(async (changes) => {
   if (changes.backendUrl || changes.sessionToken) {
     await loadConfig();
-    await pollCommands();
+    if (!CONSTANTS.USE_LEGACY_ALARMS) {
+      startFastPolling();
+      startFastFlush();
+    } else {
+      await pollCommands();
+    }
   }
 });
 
 // Bootstrap también en cold start del SW
-loadConfig().then(setupAlarms);
+loadConfig().then(initLoops);
 
 // ============================================================
 // Alarms
@@ -113,13 +188,23 @@ function setupAlarms(): void {
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   switch (alarm.name) {
     case "polling":
-      await pollCommands();
+      if (CONSTANTS.USE_LEGACY_ALARMS) {
+        await pollCommands();
+      } else {
+        // Alarm acts as watchdog/keep-alive helper
+        startFastPolling();
+      }
       break;
     case "heartbeat":
       await sendHeartbeat();
       break;
     case "flush_ingest":
-      await flushIngestQueue();
+      if (CONSTANTS.USE_LEGACY_ALARMS) {
+        await flushIngestQueue();
+      } else {
+        // Alarm acts as watchdog/keep-alive helper
+        startFastFlush();
+      }
       break;
     case "cleanup":
       await cleanupOldData();
@@ -625,7 +710,10 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
     if (queue.length > 500) queue.splice(0, queue.length - 500);
     await chrome.storage.local.set({ eventQueue: queue });
 
-    if (eventHasHeavyMedia(event)) {
+    if (!CONSTANTS.USE_LEGACY_ALARMS) {
+      // Intentar flushing rápido inmediato
+      await flushIngestQueue().catch(() => {});
+    } else if (eventHasHeavyMedia(event)) {
       console.log(
         "[MAPLE MULTIMEDIA] Despachando archivo multimedia pesado inmediatamente (Bypass de Cola Batch)..."
       );

@@ -22,6 +22,9 @@ export const CONSTANTS = {
   /** Above this base64 length, upload to Storage before queuing (avoids DB timeout). */
   MEDIA_INLINE_MAX_LEN: 48_000,
 
+  // Rollback switch for fast timeout loops (set to true to use legacy MV3 alarms)
+  USE_LEGACY_ALARMS: false,
+
   // Storage
   DB_NAME: "MapleWAEngineDB",
   DB_VERSION: 1,
