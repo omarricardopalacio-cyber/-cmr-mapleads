@@ -2046,6 +2046,18 @@ function detectProductSearchIntent(
   const candidateQuery = currentCatalogQuery?.trim();
   const isDeliveryLocationQuestion = deliveryIntentRegex.test(normalized) && locationRegex.test(normalized);
   const isLocationOnlyCandidate = candidateQuery && locationRegex.test(candidateQuery) && candidateQuery.split(/\s+/).length <= 3;
+  const normalizedGreetingCandidate = candidateQuery
+    ? candidateQuery
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/([a-z0-9])\1{2,}/g, "$1")
+        .trim()
+    : "";
+  const greetingOnlyRegex = /^(?:hola|hey|ey|buen(?:o|a)s?|buenas?(?:\s+(?:dias|tardes|noches))?|que\s+tal|qué\s+tal|gracias|ok(?:ay)?|vale|listo|dale|claro|si|sí|no|bueno|buena)$/i;
+  const isGreetingOnlyCandidate = normalizedGreetingCandidate.length > 0 && greetingOnlyRegex.test(normalizedGreetingCandidate);
+
   const shippingOnlyTokens = new Set([
     "envio",
     "envío",
@@ -2099,7 +2111,7 @@ function detectProductSearchIntent(
       (token) => shippingOnlyTokens.has(token) || locationRegex.test(token) || token.length <= 2,
     );
 
-  if (isDeliveryLocationQuestion || isLocationOnlyCandidate || isShippingOnlyCandidate) {
+  if (isDeliveryLocationQuestion || isLocationOnlyCandidate || isShippingOnlyCandidate || isGreetingOnlyCandidate) {
     return { isSearch: false, query: null, confidence: "low" };
   }
 
