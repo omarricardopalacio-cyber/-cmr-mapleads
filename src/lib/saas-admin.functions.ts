@@ -52,8 +52,12 @@ export const getSaasAccess = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     try {
       const userId = context.userId;
+      console.log("[getSaasAccess] context:", context);
+      console.log("[getSaasAccess] userId:", userId);
+      
       if (!userId) {
         // Usuario no logueado, devolver acceso negado sin error
+        console.log("[getSaasAccess] No userId - returning false");
         return {
           isSuperAdmin: false,
           userId: null,
@@ -61,6 +65,7 @@ export const getSaasAccess = createServerFn({ method: "GET" })
       }
 
       const adminContext = await getAdminContext(userId);
+      console.log("[getSaasAccess] adminContext:", adminContext);
 
       return {
         isSuperAdmin: adminContext.isSuperAdmin,
