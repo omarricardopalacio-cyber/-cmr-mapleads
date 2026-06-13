@@ -877,7 +877,10 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
     }
 
     // The most recent batch represents the latest set of search results
-    const latestBatch = batches[0];
+    const latestBatch =
+      batches.length > 1 && batches[0].length === 1 && batches[1].length > 1
+        ? batches[1]
+        : batches[0];
     const byPosition = new Map<number, string>();
     for (const cmd of latestBatch) {
       const p = cmd.payload ?? {};
@@ -1935,7 +1938,10 @@ export async function executeToolCall(
             // que el cliente pueda identificarlo ("quiero el 2"). Si no está en la
             // lista, no anteponemos número.
             const listIdx = (ctx.lastProducts ?? []).findIndex((x) => x?.id === p.id);
-            const numberPrefix = kind === "image" && listIdx >= 0 ? `${listIdx + 1}. ` : "";
+            const numberPrefix =
+              kind === "image" && listIdx >= 0 && !(args as any).no_number
+                ? `${listIdx + 1}. `
+                : "";
             const baseCaption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
             // Evitar doble numeración si el modelo ya la incluyó.
             const caption = /^\s*\d+[\.\)]/.test(baseCaption)
@@ -2572,6 +2578,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
                 arguments: JSON.stringify({
                   product_id: mediaProduct.id,
                   caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}`,
+                  no_number: true,
                 }),
               },
             },
@@ -2594,6 +2601,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
               arguments: JSON.stringify({
                 product_id: mediaProduct.id,
                 caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}`,
+                no_number: true,
               }),
             },
           },
@@ -2613,6 +2621,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
                   arguments: JSON.stringify({
                     product_id: mediaProduct.id,
                     caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}`,
+                    no_number: true,
                   }),
                 },
               },
