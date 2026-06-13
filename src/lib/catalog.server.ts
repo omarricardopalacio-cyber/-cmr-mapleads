@@ -417,13 +417,14 @@ export function rankProductsMeta(
       .replace(/[\u0300-\u036f]/g, "");
 
     // PENALIZACIÓN: rechazar productos cuyo NOMBRE contiene palabras de exclusión.
-    // IMPORTANTE: si el nombre ya contiene el token de búsqueda (el producto ES
-    // lo que se busca), nunca lo excluimos aunque su descripción mencione la palabra
-    // excluyente (ej. "ALMOHADA — no incluye funda" no debe ser rechazado).
-    const nameMatchesQuery = queryTokens.some(
-      (token) => token.length >= 3 && nameClean.includes(token),
-    );
-    if (!nameMatchesQuery) {
+    // FIX: Se usa el token PRIMARIO (el más específico de la búsqueda, ej: "almohada")
+    // para decidir si el producto ES lo que se busca. Si el nombre contiene el token
+    // primario, NUNCA se rechaza aunque también contenga una palabra de exclusión
+    // (ej: "FUNDA ALMOHADA" al buscar "almohada" → NO se rechaza porque contiene "almohada").
+    // Solo se rechaza si el nombre no tiene NINGUNA coincidencia con ningún token de búsqueda.
+    const primaryQueryTokens = queryTokens.filter((token) => token.length >= 3);
+    const nameMatchesPrimary = primaryQueryTokens.some((token) => nameClean.includes(token));
+    if (!nameMatchesPrimary) {
       for (const exclusion of exclusions) {
         if (nameClean.includes(exclusion)) {
           return { product: p, score: -1, nameHit: false }; // Rechazo definitivo
