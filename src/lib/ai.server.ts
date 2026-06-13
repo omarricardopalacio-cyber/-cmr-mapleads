@@ -1866,10 +1866,14 @@ export async function executeToolCall(
 
         const normalizedQuery = normalizeCatalogQuery(q) || q.toLowerCase().trim();
         const storedState = await loadCatalogSearchState(ctx);
+        const storedProductsAreComplete =
+          storedState.products.length >= limit &&
+          storedState.products.slice(0, limit).every((product) => product?.id && product?.name);
+
         const canReuse =
           normalizedQuery.length > 0 &&
           normalizeCatalogQuery(storedState.query) === normalizedQuery &&
-          storedState.products.length > 0;
+          storedProductsAreComplete;
 
         const products = canReuse
           ? storedState.products.slice(0, limit)
@@ -2009,6 +2013,65 @@ function normalizeCatalogQuery(text: string): string {
     " ",
   );
   return t.replace(/\s+/g, " ").trim();
+}
+
+function detectProductSearchIntent(
+  visibleChat: Array<{ role: string; content?: string }>,
+  lastUserText: string,
+  currentCatalogQuery: string,
+  isCollectingOrder: boolean,
+  assistantIsCollecting: boolean,
+): { isSearch: boolean; query: string | null; confidence: "high" | "low" } {
+  const text = (lastUserText || "").trim();
+  if (!text || isCollectingOrder || assistantIsCollecting) {
+    return { isSearch: false, query: null, confidence: "low" };
+  }
+
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, " ");
+
+  const negativeOrderDataRegex = /\b(nombre|tel[eé]fono|celular|movil|email|correo|direcci[oó]n|ciudad|barrio|c[óo]digo|nit|r\.u\.t|cedula|identificaci[oó]n|ced\.\b|dni)\b/i;
+  const strongSearchRegex = /\b(?:tienes|tienen|tiene|hay|busco|buscar|busca|estoy buscando|me muestras|mu[eé]strame|mostrar|ver|vendes|venden|consigo|consigue|tendr[aá]s|tendr[ií]as|quiero|necesito|traes|tienes)\b/i;
+  const weakSearchRegex = /\b(?:producto|productos|cat[aá]logo|precio|precios|stock|disponible|disponibles|referencia|modelo|modelos|foto|fotos|imagen|images?)\b/i;
+  const politeResponseRegex = /\b(?:hola|buenas|gracias|ok|okay|vale|listo|si|sí|no)\b/i;
+
+  if (negativeOrderDataRegex.test(normalized) && !strongSearchRegex.test(normalized)) {
+    return { isSearch: false, query: null, confidence: "low" };
+  }
+
+  const candidateQuery = currentCatalogQuery?.trim();
+  if (candidateQuery && candidateQuery.length >= 3) {
+    if (strongSearchRegex.test(normalized)) {
+      return { isSearch: true, query: candidateQuery, confidence: "high" };
+    }
+
+    const assistantAskedForProduct = visibleChat
+      .slice(-8)
+      .some(
+        (m) =>
+          m.role === "assistant" &&
+          /\b(?:qu[eé] buscas|qu[eé] necesitas|qu[eé] producto|qu[eé] te interesa|qu[eé] est[aá]s buscando|dime qu[eé]|cu[aá]l producto|qu[eé] art[ií]culo)\b/i.test(
+            String(m.content || ""),
+          ),
+      );
+
+    if (assistantAskedForProduct) {
+      return { isSearch: true, query: candidateQuery, confidence: "low" };
+    }
+
+    if (weakSearchRegex.test(normalized) && !politeResponseRegex.test(normalized)) {
+      return { isSearch: true, query: candidateQuery, confidence: "low" };
+    }
+
+    const simpleProductOnly = /^[a-z0-9áéíóúñ]+(?:\s+[a-z0-9áéíóúñ]+){0,4}$/i.test(candidateQuery);
+    if (simpleProductOnly && !negativeOrderDataRegex.test(normalized)) {
+      return { isSearch: true, query: candidateQuery, confidence: "low" };
+    }
+  }
+
+  return { isSearch: false, query: null, confidence: "low" };
 }
 
 /** Detecta cuando el cliente pide ver el VIDEO/FOTO de un producto. */
@@ -2201,15 +2264,25 @@ export async function runAiAgent({
   const currentCatalogQuery = normalizeCatalogQuery(lastUserText);
   const wantsMoreProducts = isMoreProductsRequest(lastUserText);
   const mediaRequest = isMediaRequest(lastUserText);
-  const catalogQuery = currentCatalogQuery || (wantsMoreProducts ? storedCatalogState.query : "");
-  const hasCatalogKeyword =
-    /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(
-      lastUserText,
-    );
-  const hasSearchIntent =
-    /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|mu[eé]strame|mostrar|ver|vende[ns]?|venden|consigo|tendr[aá]s|tendr[ií]an|manejan|maneja)\b/i.test(
-      lastUserText,
-    );
+
+  const assistantIsCollecting = (() => {
+    const lastAssistantMsg = [...visibleChat].reverse().find((m) => m.role === "assistant");
+    return lastAssistantMsg
+      ? /\b(nombre|direcci[oó]n|ciudad|tel[eé]fono|celular|barrio|cantidad|confirmar|confirma|confirma|datos del pedido|datos de env[ií]o|indicar|ind[ií]canos|indique)\b/i.test(
+          lastAssistantMsg.content,
+        )
+      : false;
+  })();
+
+  const explicitSearchIntent = detectProductSearchIntent(
+    visibleChat,
+    lastUserText,
+    currentCatalogQuery,
+    isCollectingOrder,
+    assistantIsCollecting,
+  );
+
+  const catalogQuery = explicitSearchIntent.query || (wantsMoreProducts ? storedCatalogState.query : "");
   const looksLikeDirectProductSearch = !!catalogCfg && !!catalogQuery && catalogQuery.length >= 4;
 
   ctx.catalogSearchQuery = catalogQuery || null;
@@ -2241,13 +2314,11 @@ export async function runAiAgent({
 
   const isCatalogQuestion =
     !isOrderIntent &&
+    !isCollectingOrder &&
+    !assistantIsCollecting &&
     !mediaRequest &&
     !wantsMoreProducts &&
-    (hasCatalogKeyword ||
-      (!!catalogCfg &&
-        !!catalogQuery &&
-        (hasSearchIntent || hasCatalogKeyword || looksLikeDirectProductSearch) &&
-        !isProductDetailQuestion(lastUserText)));
+    explicitSearchIntent.isSearch;
 
   if (isCatalogQuestion) {
     await saveFocusedProduct(ctx, null);
@@ -3282,10 +3353,14 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           const parsed = JSON.parse(exec.result || "{}");
           const productsFromTool = parsed?.products ?? [];
           if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
-            const topImages = productsFromTool
+            // Enviar TODOS los productos que no tienen explícitamente has_image === false.
+            // Esto incluye productos con has_image undefined, que suelen venir de estados
+            // antiguos o de cargados parciales.
+            const toSend = productsFromTool
               .slice(0, 6)
               .filter((p: any) => p?.id && p?.has_image !== false);
-            for (const p of topImages) {
+
+            for (const p of toSend) {
               const imageExec = await executeToolCall(
                 {
                   id: `auto_img_${p.id}`,
