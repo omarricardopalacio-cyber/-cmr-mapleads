@@ -384,11 +384,24 @@ export function rankProductsMeta(
     ),
   );
 
-  // NOTA: El filtro de exclusión por palabras clave fue eliminado porque causaba
-  // que productos legítimos (ej: "FUNDA ALMOHADA", "ALMOHADA C/FUNDA") fueran
-  // rechazados permanentemente al buscar "almohada". El MIN_SCORE=15 ya es
-  // suficiente para filtrar productos irrelevantes: una "BOLSA DE ROPA" al buscar
-  // "almohada" obtendría score=9 (solo match en descripción), que queda bajo el umbral.
+  // Palabras de exclusión (contexto negativo): penalizan —pero NO rechazan— productos
+  // cuyo nombre contiene palabras que sugieren accesorio/contenedor.
+  // FIX: se usa penalización de score en vez de rechazo absoluto, y se verifica
+  // con rawTokens (sin normalizar) para evitar que correctSpelling cambie "almohada"
+  // por otra palabra cercana en el vocabulario.
+  const exclusionKeywords: Record<string, string[]> = {
+    silla: ["bolsa", "funda", "caja"],
+    cama: ["bolsa", "funda", "piso"],
+    almohada: ["bolsa", "funda", "contenedor"],
+    cojin: ["bolsa", "funda", "contenedor"],
+    zapatero: ["caja", "bolsa"],
+    zapato: ["caja", "bolsa"],
+    organizador: ["caja", "bolsa"],
+  };
+  // Usar rawTokens para evitar errores de corrección ortográfica automática
+  const exclusions = Array.from(
+    new Set(rawTokens.flatMap((token) => exclusionKeywords[singularizeSpanish(token)] || [])),
+  );
 
   const scoredProducts = products.map((p) => {
     let score = 0;
@@ -405,6 +418,22 @@ export function rankProductsMeta(
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
+
+    // EXCLUSIÓN SUAVE: si el nombre contiene una palabra de exclusión Y no contiene
+    // ningún token de búsqueda (en su forma raw/sin normalizar), se penaliza el score.
+    // Se usa rawTokens para que "almohada" no se confunda con "almohadon" u otras
+    // variantes cercanas que el corrector ortográfico podría generar.
+    const nameHasQueryToken = rawTokens.some(
+      (t) => t.length >= 3 && nameClean.includes(singularizeSpanish(t)),
+    );
+    if (!nameHasQueryToken && exclusions.length > 0) {
+      for (const exclusion of exclusions) {
+        if (nameClean.includes(exclusion)) {
+          score -= 40; // Penalización fuerte pero no permanente
+          break;
+        }
+      }
+    }
 
     // 1. Coincidencia exacta de la frase original
     if (nameClean.includes(q)) {
