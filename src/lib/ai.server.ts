@@ -816,9 +816,35 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       .order("created_at", { ascending: false })
       .limit(40);
 
-    if (!data?.length) return [];
+    // --- Cargar el snapshot guardado para complementar posiciones sin imagen ---
+    let snapshotProducts: CatalogProduct[] = [];
+    try {
+      const { data: threadSnap } = await (supabaseAdmin as any)
+        .from("threads")
+        .select("focused_product_snapshot")
+        .eq("id", ctx.threadId)
+        .eq("org_id", ctx.orgId)
+        .maybeSingle();
+      const state = (threadSnap?.focused_product_snapshot as any)?._catalog_search;
+      if (Array.isArray(state?.products)) {
+        snapshotProducts = state.products as CatalogProduct[];
+      }
+    } catch {
+      // ignorar error de snapshot — el fallback principal seguirá funcionando
+    }
 
-    // Group commands by execution batches using timestamps (e.g. 4 seconds window)
+    // Si no hay comandos SEND_MEDIA pero sí hay snapshot guardado, devolver snapshot
+    if (!data?.length) {
+      if (snapshotProducts.length) {
+        console.log(
+          `[loadRecentlyShownProducts] sin SEND_MEDIA, usando snapshot: ${snapshotProducts.length} productos`,
+        );
+        return snapshotProducts;
+      }
+      return [];
+    }
+
+    // Group commands by execution batches using timestamps (8 seconds window)
     const batches: Array<typeof data> = [];
     let currentBatch: typeof data = [];
     let lastTime = 0;
@@ -833,7 +859,7 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       if (!numMatch) continue;
 
       const time = new Date(cmd.created_at).getTime();
-      if (currentBatch.length === 0 || Math.abs(lastTime - time) <= 4000) {
+      if (currentBatch.length === 0 || Math.abs(lastTime - time) <= 8000) {
         currentBatch.push(cmd);
         lastTime = time;
       } else {
@@ -846,7 +872,9 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       batches.push(currentBatch);
     }
 
-    if (!batches.length) return [];
+    if (!batches.length) {
+      return snapshotProducts.length ? snapshotProducts : [];
+    }
 
     // The most recent batch represents the latest set of search results
     const latestBatch = batches[0];
@@ -862,27 +890,47 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       byPosition.set(pos, idMatch[1]);
     }
 
-    if (!byPosition.size) return [];
-    const maxPos = Math.max(...byPosition.keys());
+    if (!byPosition.size) {
+      return snapshotProducts.length ? snapshotProducts : [];
+    }
+
+    // Determinar el total de posiciones: el máximo entre SEND_MEDIA detectados y el
+    // snapshot guardado (cubre los productos sin imagen que se enviaron como texto).
+    const maxPosMedia = Math.max(...byPosition.keys());
+    const maxPos = Math.max(maxPosMedia, snapshotProducts.length);
+
     const sorted: CatalogProduct[] = [];
     for (let i = 1; i <= maxPos; i++) {
       const id = byPosition.get(i);
-      const cmdForPos = latestBatch.find((cmd: any) => {
-        const p = cmd?.payload ?? {};
-        const cap = String(p.caption ?? p.text ?? "");
-        return (
-          p.chatId === ctx.chatId &&
-          String(p.dedupe_key ?? "") === `image:${id}` &&
-          cap.match(new RegExp(`^\\s*${i}[.)]`))
+      if (id) {
+        // Posición con imagen: cargar desde catálogo o snapshot del comando
+        const cmdForPos = latestBatch.find((cmd: any) => {
+          const p = cmd?.payload ?? {};
+          const cap = String(p.caption ?? p.text ?? "");
+          return (
+            p.chatId === ctx.chatId &&
+            String(p.dedupe_key ?? "") === `image:${id}` &&
+            cap.match(new RegExp(`^\\s*${i}[.)]`))
+          );
+        });
+        const snapshot = cmdForPos?.payload?.product as CatalogProduct | undefined;
+        const prod =
+          ctx.catalogCfg
+            ? ((await getCatalogProduct(ctx.catalogCfg, id)) ?? snapshot ?? null)
+            : (snapshot ?? null);
+        sorted[i - 1] = prod as CatalogProduct;
+      } else if (snapshotProducts[i - 1]) {
+        // Posición sin imagen: complementar desde el snapshot guardado
+        sorted[i - 1] = snapshotProducts[i - 1];
+        console.log(
+          `[loadRecentlyShownProducts] posición ${i} sin SEND_MEDIA, completada desde snapshot: ${snapshotProducts[i - 1].name}`,
         );
-      });
-      const snapshot = cmdForPos?.payload?.product as CatalogProduct | undefined;
-      const prod =
-        id && ctx.catalogCfg
-          ? ((await getCatalogProduct(ctx.catalogCfg, id)) ?? snapshot ?? null)
-          : (snapshot ?? null);
-      sorted[i - 1] = prod as CatalogProduct;
+      }
     }
+
+    console.log(
+      `[loadRecentlyShownProducts] reconstruidos ${sorted.filter(Boolean).length}/${maxPos} productos (media=${maxPosMedia}, snapshot=${snapshotProducts.length})`,
+    );
     return sorted;
   } catch (err) {
     console.warn("[loadRecentlyShownProducts] falló", err);
@@ -2371,7 +2419,27 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     hour12: true,
   }).format(now);
 
-  const dynamicContextText = `\n\n=== CONTEXTO ACTUAL ===\nfecha_actual: ${fechaActual}\ndia_actual: ${diaActual}\nfecha_legible: ${fechaLegible}\nhora_actual: ${horaActual}`;
+  // Lista de productos mostrados recientemente para incluir en el contexto de la IA
+  const recentProductsForContext = (ctx.lastProducts ?? [])
+    .filter(Boolean)
+    .slice(0, 12);
+  const recentProductsSnapshotForContext =
+    recentProductsForContext.length === 0
+      ? storedCatalogState.products.slice(0, 12)
+      : recentProductsForContext;
+
+  const recentProductsContextBlock =
+    recentProductsSnapshotForContext.length > 0
+      ? `\n\n=== PRODUCTOS MOSTRADOS RECIENTEMENTE AL CLIENTE ===\nSi el cliente envía un número (ej. "6", "3", "el 2"), se refiere a esta lista numerada:\n${recentProductsSnapshotForContext
+          .map(
+            (p, idx) =>
+              `${idx + 1}. ${p.name}${p.price != null ? ` — $${p.price}` : ""}${p.sku ? ` (SKU: ${p.sku})` : ""}`,
+          )
+          .join("\n")}\n\nIMPORTANTE: Cuando el cliente envíe solo un número, responde con la información del producto de esa posición SIN buscar otros productos.`
+      : "";
+
+  const dynamicContextText = `\n\n=== CONTEXTO ACTUAL ===\nfecha_actual: ${fechaActual}\ndia_actual: ${diaActual}\nfecha_legible: ${fechaLegible}\nhora_actual: ${horaActual}${recentProductsContextBlock}`;
+
 
   const conversationRulesText = `\n\n=== REGLAS DE CONVERSACIÓN (OBLIGATORIO) ===
 - Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS y el prompt del sistema como referencia prioritaria antes de inventar respuestas.
@@ -2737,6 +2805,18 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     const sel = lastUser ? parseSelectionNumber(lastUser.content) : null;
     if (sel != null) {
       let chosen = ctx.lastProducts[sel - 1];
+
+      // Fallback: si la lista reconstruida no tiene esa posición (productos sin imagen
+      // no generan SEND_MEDIA), buscar en el snapshot guardado del hilo.
+      if (!chosen && storedCatalogState.products.length >= sel) {
+        chosen = storedCatalogState.products[sel - 1];
+        if (chosen) {
+          console.log(
+            `[runAiAgent] selección ${sel} resuelta desde snapshot guardado: ${chosen.name}`,
+          );
+        }
+      }
+
       if (chosen) {
         // Enriquecer con características/beneficios completos del catálogo (la
         // lista reconstruida puede venir sin descripción ni atributos).
@@ -2766,6 +2846,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           reply: `¿Tienes alguna consulta de lo que te acabo de enviar o del producto, o te gustaría agendar el pedido? 😊`,
           actions: ["seleccionar_detalle_del_producto"],
         };
+      } else {
+        console.log(
+          `[runAiAgent] selección ${sel} no encontrada en lastProducts(${ctx.lastProducts.length}) ni snapshot(${storedCatalogState.products.length}). Pasando a IA.`,
+        );
       }
     }
   }

@@ -337,7 +337,7 @@ export function rankProductsMeta(
     .trim()
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, " ");
+    .replace(/[\u0300-\u036f]/g, "");
   if (!q) return { results: products.slice(0, limit), hasNameMatch: false };
 
   const STOP_WORDS = new Set([
@@ -384,12 +384,21 @@ export function rankProductsMeta(
     ),
   );
 
-  // Palabras de exclusión (contexto negativo)
+  // Palabras de exclusión (contexto negativo): evitan que accesorios/contenedores
+  // contaminen los resultados cuando se busca el producto principal.
   const exclusionKeywords: Record<string, string[]> = {
     silla: ["bolsa", "funda", "caja"],
     cama: ["bolsa", "funda", "piso"],
+    almohada: ["bolsa", "funda", "contenedor"],
+    cojin: ["bolsa", "funda", "contenedor"],
+    zapatero: ["caja", "bolsa"],
+    zapato: ["caja", "bolsa"],
+    organizador: ["caja", "bolsa"],
   };
-  const exclusions = exclusionKeywords[normalizedTokens[0]] || [];
+  // Acumular exclusiones de todos los tokens de la query (no solo el primero)
+  const exclusions = Array.from(
+    new Set(normalizedTokens.flatMap((token) => exclusionKeywords[token] || [])),
+  );
 
   const scoredProducts = products.map((p) => {
     let score = 0;
