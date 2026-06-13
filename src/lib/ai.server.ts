@@ -1881,6 +1881,7 @@ export async function executeToolCall(
 
         ctx.lastProducts = products;
         ctx.resolvedCatalogQuery = q;
+        await saveFocusedProduct(ctx, null); // Reset focused product on new search
 
         if (q && products.length) {
           await saveCatalogSearchState(
@@ -2353,18 +2354,7 @@ export async function runAiAgent({
       : false;
   })();
 
-  const explicitSearchIntent = detectProductSearchIntent(
-    visibleChat,
-    lastUserText,
-    currentCatalogQuery,
-    isCollectingOrder,
-    assistantIsCollecting,
-  );
-
-  const catalogQuery = explicitSearchIntent.query || (wantsMoreProducts ? storedCatalogState.query : "");
-  const looksLikeDirectProductSearch = !!catalogCfg && !!catalogQuery && catalogQuery.length >= 4;
-
-  ctx.catalogSearchQuery = catalogQuery || null;
+  const catalogQuery = wantsMoreProducts ? storedCatalogState.query : "";
 
   // Intención de COMPRA/PEDIDO sobre el producto que ya se venía conversando.
   // Estas frases NO deben disparar una búsqueda de catálogo (ej. "quiero hacer el
@@ -2391,19 +2381,6 @@ export async function runAiAgent({
          : null))
     : null;
 
-  const isCatalogQuestion =
-    !isOrderIntent &&
-    !isCollectingOrder &&
-    !assistantIsCollecting &&
-    !mediaRequest &&
-    !wantsMoreProducts &&
-    explicitSearchIntent.isSearch &&
-    explicitSearchIntent.confidence === "high";
-
-  if (isCatalogQuestion) {
-    await saveFocusedProduct(ctx, null);
-  }
-
   // Producto de contexto para el flujo de pedido: prioriza foco, luego elegido, luego único mostrado.
   const orderContextProduct =
     isOrderIntent && !selectedProductForDetails
@@ -2422,9 +2399,7 @@ export async function runAiAgent({
       ? "pedido"
       : selectedProductForDetails
         ? "product_detail"
-        : isCatalogQuestion
-          ? "catalog"
-          : "general";
+        : "general";
 
   const tools =
     promptMode === "pedido" || promptMode === "product_detail"
@@ -2474,13 +2449,13 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 `;
 
   const activeFlowGuide =
-    promptMode === "catalog"
-      ? PRODUCT_FLOW_GUIDE
-      : promptMode === "product_detail"
-        ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la BASE DE CONOCIMIENTO relevante.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
-        : promptMode === "pedido"
-          ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
-          : `MODO GENERAL:\nResponde breve y natural. Si el cliente pregunta por productos, usa el catálogo; si muestra intención de compra, guía hacia el pedido.`;
+    promptMode === "product_detail"
+      ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la BASE DE CONOCIMIENTO relevante.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
+      : promptMode === "pedido"
+        ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
+        : catalogCfg
+          ? PRODUCT_FLOW_GUIDE
+          : `MODO GENERAL:\nResponde breve y natural. Si el cliente muestra intención de compra, guía hacia el pedido.`;
 
   // Load order fields con manejo de error
   try {
@@ -2832,85 +2807,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     };
   }
 
-  if (!isCollectingOrder && promptMode === "catalog" && catalogCfg && catalogQuery) {
-    // 1) Frase de espera ANTES de iniciar la búsqueda (no la dice la IA).
-    await queueOutgoingText(
-      ctx,
-      "¡Claro que sí! Permíteme 2 min mientras te busco todos los que tenemos 😉",
-    );
 
-    // 2) Búsqueda en cascada: searchCatalog ya expande términos y filtra de forma estricta.
-    console.log(
-      `[DEBUG SEARCH] lastUserText="${lastUserText}", catalogQuery="${catalogQuery}", currentCatalogQuery="${currentCatalogQuery}"`,
-    );
-    const products = await searchCatalog(catalogCfg, catalogQuery, 6);
-    ctx.lastProducts = products;
-    console.log(
-      `[DEBUG SEARCH] searchCatalog devolvió ${products.length} productos: ${products.map((p) => `${p.id}/${p.name}`).join(", ")}`,
-    );
-    console.log(
-      `[DEBUG SEARCH] productos con image_url: ${products.filter((p) => p.image_url).length}`,
-    );
-
-    if (!products.length) {
-      return {
-        reply: `Por ahora no me aparecen resultados de "${catalogQuery}" en el catálogo. ¿Me das otra referencia o el nombre exacto del producto? 😊`,
-        actions: ["catalog_no_exact_match"],
-      };
-    }
-
-    await saveCatalogSearchState(
-      ctx,
-      catalogQuery,
-      products.map((product) => product.id),
-    );
-
-    // 3) Enviar cada producto numerado. Los que no tienen imagen se envían como texto
-    //    para que el cliente vea TODOS los resultados, no sólo los que tienen foto.
-    for (const product of products) {
-      const index = products.findIndex((p) => p.id === product.id) + 1;
-      const caption = `${index}. ${product.name} — $${product.price ?? ""}`;
-      if (product.image_url) {
-        const imageExec = await executeToolCall(
-          {
-            id: `auto_img_${product.id}`,
-            function: {
-              name: "send_product_image",
-              arguments: JSON.stringify({
-                product_id: product.id,
-                caption,
-              }),
-            },
-          },
-          ctx,
-        );
-        actions.push(imageExec.name);
-        if (/enviado al cliente/i.test(imageExec.result)) deliveredProductMedia = true;
-      } else {
-        // Sin imagen: enviar como texto numerado para que no quede invisible
-        await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
-        actions.push("send_product_text");
-        deliveredProductMedia = true;
-      }
-    }
-
-    // 4) Mensaje de cierre con la palabra buscada; luego la IA queda activa.
-    if (deliveredProductMedia) {
-      return {
-        reply: `Mira, estos son los que tenemos de ${catalogQuery}. ¿Te agrada alguno? 😊`,
-        actions,
-      };
-    }
-
-    const textList = products
-      .slice(0, 6)
-      .map((p, idx) => `${idx + 1}. ${p.name}${p.price != null ? ` — $${p.price}` : ""}`)
-      .join("\n");
-    return {
-      reply: `Encontré estas opciones de ${catalogQuery}:\n${textList}\n\n¿Cuál te interesa? Dime el número 😊`,
-      actions: ["catalog_found_without_media"],
-    };
-  }
 
   if (!isCollectingOrder && promptMode === "product_detail" && selectedProductForDetails) {
     const focusedSystem = [
@@ -3423,48 +3320,6 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         deliveredProductMedia = true;
       }
       msgs.push({ role: "tool", tool_call_id: tc.id, name: exec.name, content: exec.result });
-
-      // Si la herramienta fue `search_products` y devolvió una lista, el backend
-      // envía las imágenes de forma determinística. No agregamos una nota para que
-      // la IA repita send_product_image, porque eso causa duplicados/dedupe y deja
-      // el flujo en estado inconsistente.
-      if (exec.name === "search_products") {
-        try {
-          const parsed = JSON.parse(exec.result || "{}");
-          const productsFromTool = parsed?.products ?? [];
-          if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
-            // Enviar TODOS los productos con id válido. Que no filtre por has_image.
-            // Si no tienen imagen, send_product_image debe manejarlo en su propio flujo.
-            const toSend = productsFromTool.slice(0, 6).filter((p: any) => p?.id);
-
-            for (const p of toSend) {
-              const imageExec = await executeToolCall(
-                {
-                  id: `auto_img_${p.id}`,
-                  function: {
-                    name: "send_product_image",
-                    arguments: JSON.stringify({
-                      product_id: p.id,
-                      caption: `${p.list_index ?? productsFromTool.indexOf(p) + 1}. ${p.name} — $${p.price ?? ""}`,
-                    }),
-                  },
-                },
-                ctx,
-              );
-              actions.push(imageExec.name);
-              if (/enviado al cliente/i.test(imageExec.result)) {
-                deliveredProductMedia = true;
-              }
-            }
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-    }
-
-    if (deliveredProductMedia) {
-      return { reply: buildProductMediaFollowUp(), actions };
     }
   }
 
