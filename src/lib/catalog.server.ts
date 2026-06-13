@@ -416,10 +416,18 @@ export function rankProductsMeta(
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
 
-    // PENALIZACIÓN: Si tiene palabras de exclusión, rechazar directamente
-    for (const exclusion of exclusions) {
-      if (nameClean.includes(exclusion) || descClean.includes(exclusion)) {
-        return { product: p, score: -1, nameHit: false }; // Rechazo definitivo
+    // PENALIZACIÓN: rechazar productos cuyo NOMBRE contiene palabras de exclusión.
+    // IMPORTANTE: si el nombre ya contiene el token de búsqueda (el producto ES
+    // lo que se busca), nunca lo excluimos aunque su descripción mencione la palabra
+    // excluyente (ej. "ALMOHADA — no incluye funda" no debe ser rechazado).
+    const nameMatchesQuery = queryTokens.some(
+      (token) => token.length >= 3 && nameClean.includes(token),
+    );
+    if (!nameMatchesQuery) {
+      for (const exclusion of exclusions) {
+        if (nameClean.includes(exclusion)) {
+          return { product: p, score: -1, nameHit: false }; // Rechazo definitivo
+        }
       }
     }
 
