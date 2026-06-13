@@ -2035,19 +2035,81 @@ function detectProductSearchIntent(
   const negativeOrderDataRegex = /\b(nombre|tel[eé]fono|celular|movil|email|correo|direcci[oó]n|ciudad|barrio|c[óo]digo|nit|r\.u\.t|cedula|identificaci[oó]n|ced\.\b|dni)\b/i;
   const strongSearchRegex = /\b(?:tienes|tienen|tiene|hay|busco|buscar|busca|estoy buscando|me muestras|mu[eé]strame|mostrar|ver|vendes|venden|consigo|consigue|tendr[aá]s|tendr[ií]as|quiero|necesito|traes|tienes)\b/i;
   const weakSearchRegex = /\b(?:producto|productos|cat[aá]logo|precio|precios|stock|disponible|disponibles|referencia|modelo|modelos|foto|fotos|imagen|images?)\b/i;
+  const deliveryIntentRegex = /\b(?:env[ií]o|envio|enviar|recibir|recibo|entregar|entrega|despacho|despachar|llegar|llegada|llegaría|llegaria|llega|fecha|hora|tiempo|destino|direcci[oó]n|ciudad)\b/i;
   const politeResponseRegex = /\b(?:hola|buenas|gracias|ok|okay|vale|listo|si|sí|no)\b/i;
+  const locationRegex = /\b(?:bogota|medell[ií]n|cali|barranquilla|pereira|cartagena|manizales|boyac[aá]|antioquia|valle|santander|tolima)\b/i;
 
   if (negativeOrderDataRegex.test(normalized) && !strongSearchRegex.test(normalized)) {
     return { isSearch: false, query: null, confidence: "low" };
   }
 
   const candidateQuery = currentCatalogQuery?.trim();
-  const shippingQuestionRegex = /\b(?:cuando|cuándo|llegar|llegaría|llegaria|llega|entrega|envío|envio|fecha|hora|tiempo|despacho|envío)\b/i;
-  const locationRegex = /\b(?:bogota|medell[ií]n|cali|barranquilla|pereira|cartagena|manizales|boyac[aá]|antioquia|valle|santander|tolima)\b/i;
+  const isDeliveryLocationQuestion = deliveryIntentRegex.test(normalized) && locationRegex.test(normalized);
+  const isLocationOnlyCandidate = candidateQuery && locationRegex.test(candidateQuery) && candidateQuery.split(/\s+/).length <= 3;
+  const shippingOnlyTokens = new Set([
+    "envio",
+    "envío",
+    "enviar",
+    "recibir",
+    "recibo",
+    "entrega",
+    "despacho",
+    "llegar",
+    "llegada",
+    "llegaría",
+    "llegaria",
+    "fecha",
+    "hora",
+    "tiempo",
+    "consulta",
+    "consultar",
+    "pregunta",
+    "preguntas",
+    "puedo",
+    "puedes",
+    "puede",
+    "cuando",
+    "cuándo",
+    "si",
+    "sí",
+    "quiero",
+    "me",
+    "el",
+    "la",
+    "los",
+    "las",
+    "de",
+    "mi",
+    "en",
+    "para",
+    "con",
+    "a",
+    "sobre",
+    "por",
+    "favor",
+    "porfa",
+    "porfis",
+  ]);
+  const normalizedCandidate = candidateQuery?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, " ") || "";
+  const candidateTokens = normalizedCandidate.split(/\s+/).filter(Boolean);
+  const isShippingOnlyCandidate =
+    deliveryIntentRegex.test(normalized) &&
+    candidateTokens.length > 0 &&
+    candidateTokens.every(
+      (token) => shippingOnlyTokens.has(token) || locationRegex.test(token) || token.length <= 2,
+    );
+
+  if (isDeliveryLocationQuestion || isLocationOnlyCandidate || isShippingOnlyCandidate) {
+    return { isSearch: false, query: null, confidence: "low" };
+  }
 
   if (candidateQuery && candidateQuery.length >= 3) {
     if (strongSearchRegex.test(normalized)) {
       return { isSearch: true, query: candidateQuery, confidence: "high" };
+    }
+
+    if (isDeliveryLocationQuestion || isShippingOnlyCandidate) {
+      return { isSearch: false, query: null, confidence: "low" };
     }
 
     const assistantAskedForProduct = visibleChat
@@ -2064,16 +2126,14 @@ function detectProductSearchIntent(
       return { isSearch: true, query: candidateQuery, confidence: "low" };
     }
 
-    if (shippingQuestionRegex.test(normalized) && locationRegex.test(normalized)) {
-      return { isSearch: false, query: null, confidence: "low" };
-    }
-
     if (weakSearchRegex.test(normalized) && !politeResponseRegex.test(normalized)) {
       return { isSearch: true, query: candidateQuery, confidence: "low" };
     }
 
     const simpleProductOnly = /^[a-z0-9áéíóúñ]+(?:\s+[a-z0-9áéíóúñ]+){0,4}$/i.test(candidateQuery);
-    if (simpleProductOnly && !negativeOrderDataRegex.test(normalized)) {
+    const candidateLooksLikeLocation = locationRegex.test(candidateQuery);
+
+    if (simpleProductOnly && !negativeOrderDataRegex.test(normalized) && !candidateLooksLikeLocation) {
       return { isSearch: true, query: candidateQuery, confidence: "high" };
     }
   }
