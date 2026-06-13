@@ -769,11 +769,12 @@ export function parseSelectionNumber(text: string): number | null {
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/gu, "")
     .trim();
   const numPat =
-    /^(?:(?:quiero|dame|me\s+gusta|me\s+interesa|me\s+quedo\s+con|prefiero|env[ií]ame|mu[eé]strame|ll[eé]vame)\s+)?(?:el|la|los|las|opci[oó]n|n[uú]mero|numero|nro|#)?\s*(\d{1,2})$/;
+    /^(?:(?:quiero|dame|me\s+gusta|me\s+interesa|me\s+quedo\s+con|prefiero|env[ií]ame|mu[eé]strame|ll[eé]vame)\s+)?(?:el|la|los|las|opci[oó]n|n[uú]mero|numero|nro|#)?\s*(\d{1,3})$/;
   const m = t.match(numPat);
   if (m) {
     const n = parseInt(m[1], 10);
-    if (n >= 1 && n <= 12) return n;
+    // Soporta carruseles grandes (hasta 99 productos). Antes el límite era 12.
+    if (n >= 1 && n <= 99) return n;
   }
   const ordinals: Record<string, number> = {
     primero: 1,
@@ -855,7 +856,7 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       const idMatch = String(p.dedupe_key ?? "").match(/^image:(.+)$/);
       if (!idMatch) continue;
       const cap = String(p.caption ?? p.text ?? "");
-      const numMatch = cap.match(/^\s*(\d{1,2})[.)]/);
+      const numMatch = cap.match(/^\s*(\d{1,3})[.)]/);
       if (!numMatch) continue;
 
       const time = new Date(cmd.created_at).getTime();
@@ -887,7 +888,7 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       const idMatch = String(p.dedupe_key ?? "").match(/^image:(.+)$/);
       if (!idMatch) continue;
       const cap = String(p.caption ?? p.text ?? "");
-      const numMatch = cap.match(/^\s*(\d{1,2})[.)]/);
+      const numMatch = cap.match(/^\s*(\d{1,3})[.)]/);
       if (!numMatch) continue;
       const pos = parseInt(numMatch[1], 10);
       byPosition.set(pos, idMatch[1]);
