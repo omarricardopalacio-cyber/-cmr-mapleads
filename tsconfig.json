@@ -21,6 +21,8 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "paths": {
+      "@/integrations/supabase/client": ["./src/lib/application-supabase.client.ts"],
+      "@/integrations/supabase/client.server": ["./src/lib/application-supabase.server.ts"],
       "@/*": ["./src/*"]
     }
   }

@@ -5,17 +5,22 @@
 // accesibles con la publishable (anon) key vía PostgREST.
 // ============================================================
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { expandSearchTerms, singularizeSpanish, correctSpelling, buildSearchVocabulary } from "./catalog-search";
+import {
+  expandSearchTerms,
+  singularizeSpanish,
+  correctSpelling,
+  buildSearchVocabulary,
+} from "./catalog-search";
 
 export type CatalogConfig = {
   id: string;
   org_id: string;
   enabled: boolean;
-  base_url: string;       // URL Supabase del catálogo: https://xxxx.supabase.co
-  catalog_slug: string;   // slug de la bodega/tenant
-  api_token: string;      // publishable (anon) key del catálogo
+  base_url: string; // URL Supabase del catálogo: https://xxxx.supabase.co
+  catalog_slug: string; // slug de la bodega/tenant
+  api_token: string; // publishable (anon) key del catálogo
   send_media: boolean;
-  tenants_table: string;  // default: tenants
+  tenants_table: string; // default: tenants
   products_table: string; // default: master_products
   tenant_id?: string | null;
 };
@@ -37,16 +42,37 @@ export type CatalogProduct = {
   attributes?: Record<string, unknown>;
 };
 
-function extractProductAttributes(raw: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
+function extractProductAttributes(
+  raw: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const attrs: Record<string, unknown> = {};
-  for (const key of ["attributes", "specifications", "specs", "details", "caracteristicas", "metadata"]) {
+  for (const key of [
+    "attributes",
+    "specifications",
+    "specs",
+    "details",
+    "caracteristicas",
+    "metadata",
+  ]) {
     const value = raw[key];
     if (value && typeof value === "object" && !Array.isArray(value)) {
       Object.assign(attrs, value as Record<string, unknown>);
     }
   }
-  for (const key of ["marca", "brand", "material", "color", "talla", "tamano", "medidas", "temperatura", "voltaje", "garantia", "garantía"]) {
+  for (const key of [
+    "marca",
+    "brand",
+    "material",
+    "color",
+    "talla",
+    "tamano",
+    "medidas",
+    "temperatura",
+    "voltaje",
+    "garantia",
+    "garantía",
+  ]) {
     if (raw[key] != null && raw[key] !== "") {
       attrs[key] = raw[key];
     }
@@ -64,8 +90,8 @@ function pgRestUrl(cfg: CatalogConfig, table: string): string {
 function anonHeaders(cfg: CatalogConfig): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "apikey": cfg.api_token,
-    "Authorization": `Bearer ${cfg.api_token}`,
+    apikey: cfg.api_token,
+    Authorization: `Bearer ${cfg.api_token}`,
   };
 }
 
@@ -89,7 +115,9 @@ async function resolveTenantId(cfg: CatalogConfig): Promise<string | null> {
 
   const rows: Array<{ id: string; slug: string; name?: string }> = await res.json();
   if (!rows.length) {
-    throw new Error(`Slug "${cfg.catalog_slug}" no encontrado en tabla "${table}". Verifica el slug y los permisos RLS para anon.`);
+    throw new Error(
+      `Slug "${cfg.catalog_slug}" no encontrado en tabla "${table}". Verifica el slug y los permisos RLS para anon.`,
+    );
   }
 
   const tenantId = rows[0].id;
@@ -106,6 +134,9 @@ async function resolveTenantId(cfg: CatalogConfig): Promise<string | null> {
 // ── cache ─────────────────────────────────────────────────
 const externalProductsCache = new Map<string, { products: CatalogProduct[]; timestamp: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+const searchResultsCache = new Map<string, { products: CatalogProduct[]; timestamp: number }>();
+const inFlightSearches = new Map<string, Promise<CatalogProduct[]>>();
+const SEARCH_CACHE_TTL_MS = 2 * 60 * 1000;
 
 function getCacheKey(cfg: CatalogConfig): string {
   return `${cfg.org_id}:${cfg.catalog_slug}:${cfg.api_token}`;
@@ -178,9 +209,9 @@ export async function pingCatalog(cfg: CatalogConfig): Promise<{
     const res = await fetch(url.toString(), {
       headers: {
         ...anonHeaders(cfg),
-        "Prefer": "count=exact",
+        Prefer: "count=exact",
         "Range-Unit": "items",
-        "Range": "0-0",
+        Range: "0-0",
       },
     });
 
@@ -210,7 +241,10 @@ export async function pingCatalog(cfg: CatalogConfig): Promise<{
 
 function mapProductRow(r: any, cfg: CatalogConfig): CatalogProduct {
   const raw = r.raw || r;
-  const imageFromRaw = raw.main_image_url || raw.image_url || (Array.isArray(raw.images) && (raw.images[0]?.url || raw.images[0]));
+  const imageFromRaw =
+    raw.main_image_url ||
+    raw.image_url ||
+    (Array.isArray(raw.images) && (raw.images[0]?.url || raw.images[0]));
   return {
     id: String(r.id ?? r.external_id),
     name: String(r.name || r.title || ""),
@@ -218,8 +252,15 @@ function mapProductRow(r: any, cfg: CatalogConfig): CatalogProduct {
     price: r.price ?? raw.base_price ?? undefined,
     stock: r.stock ?? raw.warehouse_stock ?? null,
     image_url: r.image_url || imageFromRaw || undefined,
-    video_url: r.video_url || raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
-    url: r.slug ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}` : undefined,
+    video_url:
+      r.video_url ||
+      raw.video_url ||
+      raw.main_video_url ||
+      (Array.isArray(raw.videos) && raw.videos[0]?.url) ||
+      undefined,
+    url: r.slug
+      ? `${cfg.base_url.replace(/\/+$/, "").replace("supabase.co", "netlify.app")}/producto/${r.slug}`
+      : undefined,
     sku: r.sku || raw.sku || undefined,
     badge: r.badge || raw.badge || undefined,
     attributes: extractProductAttributes(raw),
@@ -246,7 +287,9 @@ async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[
     const cacheKey = getCacheKey(cfg);
     const cached = externalProductsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      console.log(`[catalog] Usando caché de productos externos: ${cached.products.length} productos`);
+      console.log(
+        `[catalog] Usando caché de productos externos: ${cached.products.length} productos`,
+      );
       return cached.products;
     }
 
@@ -263,19 +306,24 @@ async function loadExternalProducts(cfg: CatalogConfig): Promise<CatalogProduct[
     });
     if (!res.ok) {
       const body = await res.text();
-      console.warn(`[catalog.search] catálogo externo respondió ${res.status}: ${body.slice(0, 180)}`);
+      console.warn(
+        `[catalog.search] catálogo externo respondió ${res.status}: ${body.slice(0, 180)}`,
+      );
       return [];
     }
     const rows: any[] = await res.json();
     const products = rows.map((r) => mapProductRow(r, cfg));
-    
+
     // Cache the results
     externalProductsCache.set(cacheKey, { products, timestamp: Date.now() });
     console.log(`[catalog] Cargados y cacheados ${products.length} productos externos`);
-    
+
     return products;
   } catch (err) {
-    console.warn("[catalog.search] fallback externo falló", err instanceof Error ? err.message : String(err));
+    console.warn(
+      "[catalog.search] fallback externo falló",
+      err instanceof Error ? err.message : String(err),
+    );
     return [];
   }
 }
@@ -285,27 +333,79 @@ export function rankProductsMeta(
   query: string,
   limit: number,
 ): { results: CatalogProduct[]; hasNameMatch: boolean } {
-  const q = query.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const q = query
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, " ");
   if (!q) return { results: products.slice(0, limit), hasNameMatch: false };
 
-  const queryTokens = q.split(/\s+/).filter(Boolean);
+  const STOP_WORDS = new Set([
+    "de",
+    "del",
+    "para",
+    "con",
+    "en",
+    "un",
+    "una",
+    "unos",
+    "unas",
+    "el",
+    "la",
+    "los",
+    "las",
+    "y",
+    "o",
+    "que",
+    "mueble",
+    "producto",
+  ]);
+  const SEMANTIC_GROUPS = [
+    ["zapatero", "zapato", "calzado"],
+    ["organizador", "organizar", "orden"],
+    ["silla", "asiento"],
+    ["almohada", "cojin"],
+  ];
+  const rawTokens = q.split(/\s+/).filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
   const vocab = buildSearchVocabulary(products);
-  console.log(`[DEBUG rankProductsMeta] query="${query}", q normalized="${q}", tokens=${JSON.stringify(queryTokens)}, total products=${products.length}`);
+  console.log(
+    `[DEBUG rankProductsMeta] query="${query}", q normalized="${q}", rawTokens=${JSON.stringify(rawTokens)}, total products=${products.length}`,
+  );
+
+  const normalizedTokens = rawTokens.map((token) =>
+    correctSpelling(singularizeSpanish(token), vocab),
+  );
+  const queryTokens = Array.from(
+    new Set(
+      normalizedTokens.flatMap((token) => {
+        const group = SEMANTIC_GROUPS.find((items) => items.includes(token));
+        return group ?? [token];
+      }),
+    ),
+  );
 
   // Palabras de exclusión (contexto negativo)
   const exclusionKeywords: Record<string, string[]> = {
-    almohada: ["bolsa", "funda", "carrito", "contenedor", "caja", "protector"],
     silla: ["bolsa", "funda", "caja"],
     cama: ["bolsa", "funda", "piso"],
   };
-  const exclusions = exclusionKeywords[queryTokens[0]] || [];
+  const exclusions = exclusionKeywords[normalizedTokens[0]] || [];
 
   const scoredProducts = products.map((p) => {
     let score = 0;
     let nameHit = false;
-    const nameClean = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const descClean = (p.description || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const skuClean = (p.sku || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const nameClean = p.name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    const descClean = (p.description || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    const skuClean = (p.sku || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
 
     // PENALIZACIÓN: Si tiene palabras de exclusión, rechazar directamente
     for (const exclusion of exclusions) {
@@ -314,55 +414,25 @@ export function rankProductsMeta(
       }
     }
 
-    // 1. Coincidencia exacta de la frase
+    // 1. Coincidencia exacta de la frase original
     if (nameClean.includes(q)) {
       score += 50;
       nameHit = true;
-    } else if (descClean.includes(q)) {
-      score += 20;
     }
 
-    if (p.sku && skuClean.includes(q)) {
-      score += 60;
-      nameHit = true;
-    }
-
-    // 2. Coincidencia por tokens
+    // 2. Coincidencia por conceptos normalizados. Un match singular/plural en
+    // nombre es una señal fuerte por sigo sola y no puede quedar bajo el umbral.
     for (const token of queryTokens) {
       if (token.length < 2) continue;
-      const sing = singularizeSpanish(token);
-      const corr = correctSpelling(token, vocab);
-
       if (nameClean.includes(token)) {
-        score += 10;
+        score += 24;
         nameHit = true;
       } else if (descClean.includes(token)) {
-        score += 5;
+        score += 9;
       }
-
       if (p.sku && skuClean.includes(token)) {
-        score += 15;
+        score += 35;
         nameHit = true;
-      }
-
-      // Coincidencia con el término singularizado (plurales -> singular)
-      if (sing !== token) {
-        if (nameClean.includes(sing)) {
-          score += 8;
-          nameHit = true;
-        } else if (descClean.includes(sing)) {
-          score += 4;
-        }
-      }
-
-      // Coincidencia con corrección de typos
-      if (corr !== token && corr !== sing) {
-        if (nameClean.includes(corr)) {
-          score += 6;
-          nameHit = true;
-        } else if (descClean.includes(corr)) {
-          score += 3;
-        }
       }
     }
 
@@ -372,7 +442,7 @@ export function rankProductsMeta(
   // FILTRO 1: Rechazar scores muy bajos (umbral mínimo)
   const MIN_SCORE = 15;
   const matched = scoredProducts.filter((sp) => sp.score >= MIN_SCORE);
-  
+
   if (!matched.length) {
     // Si no hay match fuerte, permitir scores >= 10 pero solo name-matches
     const weakMatches = scoredProducts.filter((sp) => sp.score >= 10 && sp.nameHit);
@@ -380,12 +450,14 @@ export function rankProductsMeta(
       .sort((a, b) => b.score - a.score || a.product.name.localeCompare(b.product.name))
       .map((sp) => sp.product)
       .slice(0, limit);
-    console.log(`[DEBUG rankProductsMeta] matched=${matched.length}, weakMatches=${weakMatches.length}, returned=${results.length}`);
+    console.log(
+      `[DEBUG rankProductsMeta] matched=${matched.length}, weakMatches=${weakMatches.length}, returned=${results.length}`,
+    );
     return { results, hasNameMatch: weakMatches.length > 0 };
   }
 
   const nameMatches = matched.filter((sp) => sp.nameHit);
-  
+
   // FILTRO 2: Priorizar name-matches si hay suficientes
   let pool = matched;
   if (nameMatches.length >= Math.ceil(limit / 2)) {
@@ -400,9 +472,16 @@ export function rankProductsMeta(
     }
   }
 
-  console.log(`[DEBUG rankProductsMeta] matched=${matched.length}, nameMatches=${nameMatches.length}, pool=${pool.length}`);
+  console.log(
+    `[DEBUG rankProductsMeta] matched=${matched.length}, nameMatches=${nameMatches.length}, pool=${pool.length}`,
+  );
   if (matched.length > 0) {
-    console.log(`[DEBUG rankProductsMeta] scored samples: ${matched.slice(0, 5).map(sp => `${sp.product.name}(score=${sp.score})`).join(", ")}`);
+    console.log(
+      `[DEBUG rankProductsMeta] scored samples: ${matched
+        .slice(0, 5)
+        .map((sp) => `${sp.product.name}(score=${sp.score})`)
+        .join(", ")}`,
+    );
   }
 
   const results = pool
@@ -414,14 +493,17 @@ export function rankProductsMeta(
 }
 
 function mergeCatalogProduct(primary: CatalogProduct, secondary: CatalogProduct): CatalogProduct {
-  const merged: CatalogProduct = { ...primary };
-  for (const key of Object.keys(secondary) as Array<keyof CatalogProduct>) {
-    const value = secondary[key] as CatalogProduct[typeof key];
-    if (value === undefined || value === null) continue;
-    if (typeof value === "string" && value.trim() === "") continue;
-    merged[key] = value;
-  }
-  return merged;
+  return {
+    ...primary,
+    ...Object.fromEntries(
+      Object.entries(secondary).filter(
+        ([_, value]) =>
+          value !== undefined &&
+          value !== null &&
+          !(typeof value === "string" && value.trim() === ""),
+      ),
+    ),
+  } as CatalogProduct;
 }
 
 /**
@@ -434,33 +516,41 @@ export async function searchCatalog(
   limit = 6,
 ): Promise<CatalogProduct[]> {
   const q = query.trim();
-  
-  // Cargar en paralelo en lugar de secuencial
-  const [localProducts, externalProducts] = await Promise.all([
-    loadLocalProducts(cfg),
-    q ? loadExternalProducts(cfg) : Promise.resolve([]),
-  ]);
-
-  if (!q) {
-    if (localProducts.length) return rankProductsMeta(localProducts, query, limit).results;
-    return rankProductsMeta(externalProducts, query, limit).results;
+  const normalizedQuery = q
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+  const cacheKey = `${getCacheKey(cfg)}:${normalizedQuery}`;
+  const cached = searchResultsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL_MS) {
+    return cached.products.slice(0, limit);
   }
 
-  const byId = new Map<string, CatalogProduct>();
-  for (const product of externalProducts) {
-    byId.set(product.id, product);
-  }
-  for (const product of localProducts) {
-    const existing = byId.get(product.id);
-    if (existing) {
-      byId.set(product.id, mergeCatalogProduct(existing, product));
-    } else {
-      byId.set(product.id, product);
-    }
+  let pending = inFlightSearches.get(cacheKey);
+  if (!pending) {
+    pending = (async () => {
+      const [localProducts, externalProducts] = await Promise.all([
+        loadLocalProducts(cfg),
+        q ? loadExternalProducts(cfg) : Promise.resolve([]),
+      ]);
+      const byId = new Map<string, CatalogProduct>();
+      for (const product of externalProducts) {
+        byId.set(product.id, product);
+      }
+      for (const product of localProducts) {
+        const existing = byId.get(product.id);
+        byId.set(product.id, existing ? mergeCatalogProduct(existing, product) : product);
+      }
+      const unifiedProducts = Array.from(byId.values());
+      const ranked = rankProductsMeta(unifiedProducts, query, unifiedProducts.length).results;
+      searchResultsCache.set(cacheKey, { products: ranked, timestamp: Date.now() });
+      return ranked;
+    })().finally(() => inFlightSearches.delete(cacheKey));
+    inFlightSearches.set(cacheKey, pending);
   }
 
-  const unifiedProducts = Array.from(byId.values());
-  return rankProductsMeta(unifiedProducts, query, limit).results;
+  return (await pending).slice(0, limit);
 }
 
 /**
@@ -488,7 +578,12 @@ export async function getCatalogProduct(
     price: r.price ?? undefined,
     stock: r.stock ?? null,
     image_url: r.image_url || undefined,
-    video_url: r.video_url || raw.video_url || raw.main_video_url || (Array.isArray(raw.videos) && raw.videos[0]?.url) || undefined,
+    video_url:
+      r.video_url ||
+      raw.video_url ||
+      raw.main_video_url ||
+      (Array.isArray(raw.videos) && raw.videos[0]?.url) ||
+      undefined,
     sku: r.sku || undefined,
     badge: r.badge || undefined,
     attributes: extractProductAttributes(raw),

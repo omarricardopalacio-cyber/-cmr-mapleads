@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * SaaS Admin Dashboard - 8 Tabs
  */

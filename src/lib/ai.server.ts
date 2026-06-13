@@ -1,15 +1,21 @@
 import { SignJWT, importPKCS8 } from "jose";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { getCatalogConfig, searchCatalog, getCatalogProduct, type CatalogConfig, type CatalogProduct } from "./catalog.server";
+import {
+  getCatalogConfig,
+  searchCatalog,
+  getCatalogProduct,
+  type CatalogConfig,
+  type CatalogProduct,
+} from "./catalog.server";
 import { resolveProductFromReference } from "./catalog-search";
 import { selectRelevantKnowledgeSources } from "./intent-classifier";
 
-export type Msg = { 
-  role: "system" | "user" | "assistant" | "tool"; 
-  content: string; 
-  tool_calls?: any[]; 
-  tool_call_id?: string; 
-  name?: string; 
+export type Msg = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: any[];
+  tool_call_id?: string;
+  name?: string;
 };
 
 /* ============================================================
@@ -39,7 +45,10 @@ export const CRM_TOOLS = [
         type: "object",
         properties: {
           note: { type: "string", description: "Descripcion del recordatorio" },
-          minutes_from_now: { type: "number", description: "Minutos desde ahora para el recordatorio" },
+          minutes_from_now: {
+            type: "number",
+            description: "Minutos desde ahora para el recordatorio",
+          },
         },
         required: ["note", "minutes_from_now"],
       },
@@ -57,11 +66,16 @@ export const CRM_TOOLS = [
     type: "function" as const,
     function: {
       name: "confirm_order",
-      description: "Guarda los datos del pedido en el sistema una vez que el cliente los ha confirmado todos. Pasa los datos recopilados como un objeto JSON stringificado.",
+      description:
+        "Guarda los datos del pedido en el sistema una vez que el cliente los ha confirmado todos. Pasa los datos recopilados como un objeto JSON stringificado.",
       parameters: {
         type: "object",
         properties: {
-          form_data: { type: "string", description: "Objeto JSON (como string) con los datos recopilados (ej. '{\"Nombre\": \"Juan\", \"Ciudad\": \"Bogota\"}')" },
+          form_data: {
+            type: "string",
+            description:
+              'Objeto JSON (como string) con los datos recopilados (ej. \'{"Nombre": "Juan", "Ciudad": "Bogota"}\')',
+          },
         },
         required: ["form_data"],
       },
@@ -122,7 +136,8 @@ export const CATALOG_TOOLS = [
           product_id: { type: "string", description: "id UUID del producto (preferido)" },
           product_reference: {
             type: "string",
-            description: "Referencia del cliente al producto de la lista (ej. '6 niveles', 'JDM-62')",
+            description:
+              "Referencia del cliente al producto de la lista (ej. '6 niveles', 'JDM-62')",
           },
           caption: { type: "string", description: "Texto opcional debajo del video" },
         },
@@ -232,11 +247,11 @@ async function getVertexAccessTokenFromJSON(saJson: string): Promise<string> {
   } catch (err) {
     throw new Error(`Vertex service account JSON inválido: ${err}`);
   }
-  
+
   // Validar campos requeridos
   if (!sa.client_email) throw new Error("Vertex SA: falta client_email");
   if (!sa.private_key) throw new Error("Vertex SA: falta private_key");
-  
+
   const cacheKey = `${sa.client_email}:${sa.private_key_id ?? ""}`;
   if (cachedToken?.key === cacheKey && cachedToken.exp - 60 > Date.now() / 1000) {
     return cachedToken.token;
@@ -292,8 +307,8 @@ function parseVertexResponse(response: any) {
   const elements = Array.isArray(candidate.content)
     ? candidate.content
     : candidate.content
-    ? [candidate.content]
-    : [];
+      ? [candidate.content]
+      : [];
 
   for (const element of elements) {
     if (!element) continue;
@@ -324,7 +339,10 @@ function parseVertexResponse(response: any) {
     },
   }));
 
-  return { text: text.trim(), toolCalls: normalizedToolCalls.length ? normalizedToolCalls : undefined };
+  return {
+    text: text.trim(),
+    toolCalls: normalizedToolCalls.length ? normalizedToolCalls : undefined,
+  };
 }
 
 export async function callVertexAI(opts: {
@@ -349,7 +367,9 @@ export async function callVertexAI(opts: {
       if (m.role === "tool") {
         return {
           role: "user",
-          parts: [{ functionResponse: { name: m.name || "tool", response: { result: m.content } } }],
+          parts: [
+            { functionResponse: { name: m.name || "tool", response: { result: m.content } } },
+          ],
         };
       }
 
@@ -357,9 +377,10 @@ export async function callVertexAI(opts: {
         const functionParts = m.tool_calls.map((tc: any) => {
           let args: Record<string, unknown> = {};
           try {
-            args = typeof tc.function?.arguments === "string"
-              ? JSON.parse(tc.function.arguments || "{}")
-              : tc.function?.arguments ?? {};
+            args =
+              typeof tc.function?.arguments === "string"
+                ? JSON.parse(tc.function.arguments || "{}")
+                : (tc.function?.arguments ?? {});
           } catch {
             args = {};
           }
@@ -387,10 +408,10 @@ export async function callVertexAI(opts: {
 
   const bodyText = JSON.stringify(body);
   const requestSizeBytes =
-    typeof Buffer !== 'undefined'
-      ? Buffer.byteLength(bodyText, 'utf8')
+    typeof Buffer !== "undefined"
+      ? Buffer.byteLength(bodyText, "utf8")
       : new TextEncoder().encode(bodyText).length;
-  console.info('[callVertexAI] vertex request size', {
+  console.info("[callVertexAI] vertex request size", {
     model: opts.model,
     project: opts.project,
     location: opts.location,
@@ -427,10 +448,10 @@ export async function callVertexAI(opts: {
             try {
               await opts.onRetry(attempt);
             } catch (err) {
-              console.warn('[callVertexAI] onRetry callback failed', err);
+              console.warn("[callVertexAI] onRetry callback failed", err);
             }
           }
-          console.warn('[callVertexAI] retrying due to Vertex transient error', {
+          console.warn("[callVertexAI] retrying due to Vertex transient error", {
             attempt,
             status: res.status,
             model: opts.model,
@@ -454,16 +475,21 @@ export async function callVertexAI(opts: {
     } catch (err) {
       if (attempt < maxAttempts) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes('429') || errMsg.includes('503') || errMsg.includes('AbortError') || errMsg.includes('timeout')) {
+        if (
+          errMsg.includes("429") ||
+          errMsg.includes("503") ||
+          errMsg.includes("AbortError") ||
+          errMsg.includes("timeout")
+        ) {
           retriedAttempts.add(attempt);
           if (opts.onRetry) {
             try {
               await opts.onRetry(attempt);
             } catch (err) {
-              console.warn('[callVertexAI] onRetry callback failed', err);
+              console.warn("[callVertexAI] onRetry callback failed", err);
             }
           }
-          console.warn('[callVertexAI] transient failure, retrying', {
+          console.warn("[callVertexAI] transient failure, retrying", {
             attempt,
             error: errMsg,
             model: opts.model,
@@ -482,7 +508,7 @@ export async function callVertexAI(opts: {
     }
   }
 
-  throw lastError ?? new Error('Vertex request failed after all retry attempts');
+  throw lastError ?? new Error("Vertex request failed after all retry attempts");
 }
 
 /* ============================================================
@@ -504,9 +530,12 @@ export async function getAiConfigFromDb(orgId: string) {
 const hasOpenAICredentials = (cfg: Record<string, unknown>) => !!(cfg.openai_api_key as string);
 const hasGrokCredentials = (cfg: Record<string, unknown>) => !!(cfg.grok_api_key as string);
 const hasLovableCredentials = () => !!process.env.LOVABLE_API_KEY;
-const normalizeOpenAIModel = (model?: string) => model?.startsWith("gpt-") ? model : "gpt-4o-mini";
-const normalizeGrokModel = (model?: string) => /^(llama|gemma|mixtral|compound)/i.test(model ?? "") ? model! : "llama-3.1-8b-instant";
-const normalizeLovableModel = (model?: string) => model?.includes("/") ? model : "google/gemini-3-flash-preview";
+const normalizeOpenAIModel = (model?: string) =>
+  model?.startsWith("gpt-") ? model : "gpt-4o-mini";
+const normalizeGrokModel = (model?: string) =>
+  /^(llama|gemma|mixtral|compound)/i.test(model ?? "") ? model! : "llama-3.1-8b-instant";
+const normalizeLovableModel = (model?: string) =>
+  model?.includes("/") ? model : "google/gemini-3-flash-preview";
 
 const validateCredentials = (provider: string, cfg: Record<string, unknown>) => {
   if (provider === "openai" && !cfg.openai_api_key) throw new Error("Falta openai_api_key");
@@ -519,14 +548,24 @@ const callProviderByName = async (
   cfg: Record<string, unknown>,
   messages: Msg[],
   tools?: any[],
-  onRetry?: (attempt: number) => Promise<void>
+  onRetry?: (attempt: number) => Promise<void>,
 ): Promise<{ text: string; toolCalls?: any[]; retryAttempt?: number }> => {
   const model = (cfg.model as string) || "gpt-4o";
   if (provider === "openai") {
-    return callOpenAI({ apiKey: cfg.openai_api_key as string, model: normalizeOpenAIModel(model), messages, tools });
+    return callOpenAI({
+      apiKey: cfg.openai_api_key as string,
+      model: normalizeOpenAIModel(model),
+      messages,
+      tools,
+    });
   }
   if (provider === "grok") {
-    return callGrok({ apiKey: cfg.grok_api_key as string, model: normalizeGrokModel(model), messages, tools });
+    return callGrok({
+      apiKey: cfg.grok_api_key as string,
+      model: normalizeGrokModel(model),
+      messages,
+      tools,
+    });
   }
   if (provider === "vertex") {
     return callVertexAI({
@@ -556,7 +595,10 @@ const fallbackVertexProvider = async (
     validateCredentials(fallback, cfg);
     return await callProviderByName(fallback, cfg, messages, tools);
   } catch (err) {
-    console.warn(`[fallbackVertexProvider] Fallback provider ${fallback} failed or lacks credentials:`, err);
+    console.warn(
+      `[fallbackVertexProvider] Fallback provider ${fallback} failed or lacks credentials:`,
+      err,
+    );
     return callLovableAI({ model: normalizeLovableModel(cfg.model as string), messages, tools });
   }
 };
@@ -565,7 +607,7 @@ export async function callAiProvider(
   cfg: Record<string, unknown>,
   messages: Msg[],
   tools?: any[],
-  onRetry?: (attempt: number) => Promise<void>
+  onRetry?: (attempt: number) => Promise<void>,
 ): Promise<{ text: string; toolCalls?: any[]; retryAttempt?: number }> {
   const provider = (cfg.selected_provider as string) || (cfg.provider as string) || "lovable";
   const fallback = (cfg.fallback_provider as string) || "lovable";
@@ -575,14 +617,20 @@ export async function callAiProvider(
     return await callProviderByName(provider, cfg, messages, tools, onRetry);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn(`[callAiProvider] Primary provider ${provider} failed, trying fallback ${fallback}. Error:`, errMsg);
+    console.warn(
+      `[callAiProvider] Primary provider ${provider} failed, trying fallback ${fallback}. Error:`,
+      errMsg,
+    );
 
     if (fallback && fallback !== "none" && fallback !== provider) {
       try {
         validateCredentials(fallback, cfg);
         return await callProviderByName(fallback, cfg, messages, tools, onRetry);
       } catch (fallbackErr) {
-        console.warn(`[callAiProvider] Fallback provider ${fallback} also failed, falling back to lovable. Error:`, fallbackErr);
+        console.warn(
+          `[callAiProvider] Fallback provider ${fallback} also failed, falling back to lovable. Error:`,
+          fallbackErr,
+        );
       }
     }
 
@@ -604,6 +652,8 @@ export type ToolExecCtx = {
   lastProducts?: CatalogProduct[];
   /** Consulta actual de catálogo que debe persistirse entre turnos. */
   catalogSearchQuery?: string | null;
+  /** Consulta de catálogo resuelta para esta herramienta. */
+  resolvedCatalogQuery?: string | null;
 };
 
 function mapProductsForTool(products: CatalogProduct[]) {
@@ -615,7 +665,9 @@ function mapProductsForTool(products: CatalogProduct[]) {
     stock: p.stock,
     sku: p.sku,
     description: (p.description ?? "").slice(0, 220),
-    attributes: p.attributes ? Object.fromEntries(Object.entries(p.attributes).slice(0, 8)) : undefined,
+    attributes: p.attributes
+      ? Object.fromEntries(Object.entries(p.attributes).slice(0, 8))
+      : undefined,
     has_image: !!p.image_url,
     badge: p.badge,
   }));
@@ -636,19 +688,30 @@ function formatProductDetailsForCustomer(p: CatalogProduct): string {
       lines.push(`${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`);
     }
   }
-  if (p.stock != null) lines.push(`Disponibilidad: ${p.stock > 0 ? "disponible" : "por confirmar"}`);
+  if (p.stock != null)
+    lines.push(`Disponibilidad: ${p.stock > 0 ? "disponible" : "por confirmar"}`);
   if (p.video_url) lines.push("Tengo video disponible si quieres verlo mejor 😊");
   return lines.join("\n");
 }
 
 function isProductDetailQuestion(text: string): boolean {
-  const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  return /\b(detalle|detalles|informacion|info|caracteristica|caracteristicas|especificacion|especificaciones|material|hech[oa]|sirve|funciona|garantia|garantía|medida|medidas|tamano|tamaño|peso|voltaje|temperatura|color|tipo de cabello|cabello)\b/.test(t);
+  const t = (text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return /\b(detalle|detalles|informacion|info|caracteristica|caracteristicas|especificacion|especificaciones|material|hech[oa]|sirve|funciona|garantia|garantía|medida|medidas|tamano|tamaño|peso|voltaje|temperatura|color|tipo de cabello|cabello)\b/.test(
+    t,
+  );
 }
 
 function buildProductDetailReply(product: CatalogProduct): string {
-  const hasDetails = Boolean(product.description?.trim() || (product.attributes && Object.keys(product.attributes).length));
-  const price = product.price != null && String(product.price).trim() !== "" ? ` Su valor es $${product.price}.` : "";
+  const hasDetails = Boolean(
+    product.description?.trim() || (product.attributes && Object.keys(product.attributes).length),
+  );
+  const price =
+    product.price != null && String(product.price).trim() !== ""
+      ? ` Su valor es $${product.price}.`
+      : "";
   if (!hasDetails) {
     return `Del ${product.name}${price} no tengo más especificaciones cargadas en el catálogo. Dame un minuto ya te verifico 😊`;
   }
@@ -670,17 +733,23 @@ function selectRelevantText(raw: string, query: string, maxChars: number): strin
     .filter(Boolean);
   const scored = blocks
     .map((block, idx) => {
-      const normalized = block.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const normalized = block
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
       const score = terms.reduce((acc, term) => acc + (normalized.includes(term) ? 1 : 0), 0);
       return { block, index: idx, score };
     })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index);
-  const selected = scored.length ? scored : blocks.slice(0, 3).map((block, idx) => ({ block, idx, score: 0 }));
+  const selected = scored.length
+    ? scored
+    : blocks.slice(0, 3).map((block, idx) => ({ block, idx, score: 0 }));
   let out = "";
   for (const item of selected) {
     if (out.length >= maxChars) break;
-    out += (out ? "\n\n" : "") + item.block.slice(0, Math.min(item.block.length, maxChars - out.length));
+    out +=
+      (out ? "\n\n" : "") + item.block.slice(0, Math.min(item.block.length, maxChars - out.length));
   }
   return out.slice(0, maxChars);
 }
@@ -699,7 +768,8 @@ export function parseSelectionNumber(text: string): number | null {
     .replace(/[.!¡¿?\s]+$/g, "")
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/gu, "")
     .trim();
-  const numPat = /^(?:(?:quiero|dame|me\s+gusta|me\s+interesa|me\s+quedo\s+con|prefiero|env[ií]ame|mu[eé]strame|ll[eé]vame)\s+)?(?:el|la|los|las|opci[oó]n|n[uú]mero|numero|nro|#)?\s*(\d{1,2})$/;
+  const numPat =
+    /^(?:(?:quiero|dame|me\s+gusta|me\s+interesa|me\s+quedo\s+con|prefiero|env[ií]ame|mu[eé]strame|ll[eé]vame)\s+)?(?:el|la|los|las|opci[oó]n|n[uú]mero|numero|nro|#)?\s*(\d{1,2})$/;
   const m = t.match(numPat);
   if (m) {
     const n = parseInt(m[1], 10);
@@ -733,7 +803,7 @@ export function parseSelectionNumber(text: string): number | null {
  * resolver "la 3" entre turnos sin volver a llamar a la IA.
  */
 async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProduct[]> {
-  if (!ctx.catalogCfg || !ctx.sessionId || !ctx.chatId) return [];
+  if (!ctx.sessionId || !ctx.chatId) return [];
   try {
     const since = new Date(Date.now() - 30 * 60_000).toISOString();
     const { data } = await (supabaseAdmin as any)
@@ -747,8 +817,12 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       .limit(40);
 
     if (!data?.length) return [];
-    // De más reciente a más antiguo: la primera posición vista pertenece a la última ronda de imágenes.
-    const byPosition = new Map<number, string>();
+
+    // Group commands by execution batches using timestamps (e.g. 4 seconds window)
+    const batches: Array<typeof data> = [];
+    let currentBatch: typeof data = [];
+    let lastTime = 0;
+
     for (const cmd of data) {
       const p = cmd?.payload ?? {};
       if (p.chatId !== ctx.chatId) continue;
@@ -757,21 +831,56 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
       const cap = String(p.caption ?? p.text ?? "");
       const numMatch = cap.match(/^\s*(\d{1,2})[.)]/);
       if (!numMatch) continue;
-      const pos = parseInt(numMatch[1], 10);
-      if (!byPosition.has(pos)) byPosition.set(pos, idMatch[1]);
+
+      const time = new Date(cmd.created_at).getTime();
+      if (currentBatch.length === 0 || Math.abs(lastTime - time) <= 4000) {
+        currentBatch.push(cmd);
+        lastTime = time;
+      } else {
+        batches.push(currentBatch);
+        currentBatch = [cmd];
+        lastTime = time;
+      }
     }
+    if (currentBatch.length > 0) {
+      batches.push(currentBatch);
+    }
+
+    if (!batches.length) return [];
+
+    // The most recent batch represents the latest set of search results
+    const latestBatch = batches[0];
+    const byPosition = new Map<number, string>();
+    for (const cmd of latestBatch) {
+      const p = cmd.payload ?? {};
+      const idMatch = String(p.dedupe_key ?? "").match(/^image:(.+)$/);
+      if (!idMatch) continue;
+      const cap = String(p.caption ?? p.text ?? "");
+      const numMatch = cap.match(/^\s*(\d{1,2})[.)]/);
+      if (!numMatch) continue;
+      const pos = parseInt(numMatch[1], 10);
+      byPosition.set(pos, idMatch[1]);
+    }
+
     if (!byPosition.size) return [];
     const maxPos = Math.max(...byPosition.keys());
     const sorted: CatalogProduct[] = [];
     for (let i = 1; i <= maxPos; i++) {
       const id = byPosition.get(i);
-      const cmdForPos = data.find((cmd: any) => {
+      const cmdForPos = latestBatch.find((cmd: any) => {
         const p = cmd?.payload ?? {};
         const cap = String(p.caption ?? p.text ?? "");
-        return p.chatId === ctx.chatId && String(p.dedupe_key ?? "") === `image:${id}` && cap.match(new RegExp(`^\\s*${i}[.)]`));
+        return (
+          p.chatId === ctx.chatId &&
+          String(p.dedupe_key ?? "") === `image:${id}` &&
+          cap.match(new RegExp(`^\\s*${i}[.)]`))
+        );
       });
       const snapshot = cmdForPos?.payload?.product as CatalogProduct | undefined;
-      const prod = id ? ((await getCatalogProduct(ctx.catalogCfg, id)) ?? snapshot ?? null) : null;
+      const prod =
+        id && ctx.catalogCfg
+          ? ((await getCatalogProduct(ctx.catalogCfg, id)) ?? snapshot ?? null)
+          : (snapshot ?? null);
       sorted[i - 1] = prod as CatalogProduct;
     }
     return sorted;
@@ -788,7 +897,7 @@ async function loadRecentlyShownProducts(ctx: ToolExecCtx): Promise<CatalogProdu
  * coincide con el elegido. También cubre el caso de un único combo mostrado.
  */
 async function loadLastSentProduct(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
-  if (!ctx.catalogCfg || !ctx.sessionId || !ctx.chatId) return null;
+  if (!ctx.sessionId || !ctx.chatId) return null;
   try {
     const since = new Date(Date.now() - 60 * 60_000).toISOString();
     const { data } = await (supabaseAdmin as any)
@@ -808,7 +917,9 @@ async function loadLastSentProduct(ctx: ToolExecCtx): Promise<CatalogProduct | n
       const idMatch = String(p.dedupe_key ?? "").match(/^image:(.+)$/);
       if (!idMatch) continue;
       const snapshot = p.product as CatalogProduct | undefined;
-      const prod = (await getCatalogProduct(ctx.catalogCfg, idMatch[1])) ?? snapshot ?? null;
+      const prod = ctx.catalogCfg
+        ? ((await getCatalogProduct(ctx.catalogCfg, idMatch[1])) ?? snapshot ?? null)
+        : (snapshot ?? null);
       if (prod) return prod;
     }
     return null;
@@ -831,7 +942,8 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
       .eq("org_id", ctx.orgId)
       .maybeSingle();
 
-    const existingSnapshot = (thread?.focused_product_snapshot as Record<string, unknown> | null) ?? {};
+    const existingSnapshot =
+      (thread?.focused_product_snapshot as Record<string, unknown> | null) ?? {};
     const snapshot = {
       ...existingSnapshot,
       id: p.id,
@@ -850,7 +962,7 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
       })
       .eq("id", ctx.threadId)
       .eq("org_id", ctx.orgId);
-    
+
     // Sincronizar al CRM
     if (thread?.contact_id) {
       const { data: contact } = await (supabaseAdmin as any)
@@ -858,7 +970,7 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
         .select("crm_data")
         .eq("id", thread.contact_id)
         .maybeSingle();
-      
+
       const crmData = (contact?.crm_data as Record<string, any>) || {};
       crmData.focused_product_id = p.id;
       crmData.focused_product_name = p.name;
@@ -867,14 +979,17 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
       crmData.focused_product_image = p.image_url ?? null;
       crmData.focused_product_video = p.video_url ?? null;
       crmData.last_product_interaction = new Date().toISOString();
-      
+
       await (supabaseAdmin as any)
         .from("contacts")
         .update({ crm_data: crmData })
         .eq("id", thread.contact_id);
     }
   } catch (err) {
-    console.warn("[saveFocusedProduct] no se pudo guardar el foco", err instanceof Error ? err.message : String(err));
+    console.warn(
+      "[saveFocusedProduct] no se pudo guardar el foco",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -882,7 +997,7 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
  * Carga el producto en foco guardado; expira a 6h; enriquece desde catálogo si es posible, fallback a snapshot.
  */
 async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
-  if (!ctx.threadId || !ctx.catalogCfg) return null;
+  if (!ctx.threadId) return null;
   try {
     const { data: thread } = await (supabaseAdmin as any)
       .from("threads")
@@ -896,11 +1011,13 @@ async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | nu
     const age = new Date().getTime() - new Date(thread.focused_updated_at).getTime();
     if (age > 6 * 60 * 60 * 1000) return null; // Expira a 6h
 
-    try {
-      const enriched = await getCatalogProduct(ctx.catalogCfg, thread.focused_product_id);
-      if (enriched) return enriched;
-    } catch {
-      /* continúa con snapshot */
+    if (ctx.catalogCfg) {
+      try {
+        const enriched = await getCatalogProduct(ctx.catalogCfg, thread.focused_product_id);
+        if (enriched) return enriched;
+      } catch {
+        /* continúa con snapshot */
+      }
     }
 
     return (thread.focused_product_snapshot as CatalogProduct) ?? null;
@@ -916,7 +1033,9 @@ async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | nu
 async function resolveFocus(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
   const persisted = await loadFocusedProduct(ctx);
   if (persisted) return persisted;
-  const lastSent = await loadLastSentProduct(ctx);
+  const shown = (ctx.lastProducts ?? []).filter(Boolean);
+  if (shown.length !== 1) return null;
+  const lastSent = shown[0] ?? (await loadLastSentProduct(ctx));
   if (lastSent) {
     await saveFocusedProduct(ctx, lastSent);
     return lastSent;
@@ -929,19 +1048,36 @@ async function resolveFocus(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
  */
 function mentionsFocusedProduct(query: string, product: CatalogProduct | null): boolean {
   if (!query || !product) return false;
-  const q = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const nameWords = product.name.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+  const q = query
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+  // Reconocimiento de frases contextuales cortas
+  if (/^(?:si|sí|ok|okay|dale|listo|correcto|ese|esa|este|esta|eso|quiero ese|quiero esa|lo quiero|la quiero|agr[eé]galo|a[nñ][aá]delo)$/i.test(q)) {
+    return true;
+  }
+  const nameWords = product.name
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 3);
   const skuTokens = (product.sku || "").split(/[-_]/).filter((t) => t.length >= 2);
   return nameWords.some((w) => q.includes(w)) || skuTokens.some((t) => q.includes(t));
 }
 
 const normFieldKey = (s: string) =>
-  String(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  String(s)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
 function hasOrderProduct(data: Record<string, unknown>): boolean {
   return Object.entries(data || {}).some(([k, v]) => {
     const nk = normFieldKey(k);
-    return /(producto|articulo|art[ií]culo|item|referencia)/.test(nk) && String(v ?? "").trim().length > 0;
+    return (
+      /(producto|articulo|art[ií]culo|item|referencia)/.test(nk) &&
+      String(v ?? "").trim().length > 0
+    );
   });
 }
 
@@ -953,8 +1089,14 @@ function hasOrderValue(data: Record<string, unknown>): boolean {
 }
 
 function genericMediaReference(text: string): boolean {
-  const normalized = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const words = normalized.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  const normalized = (text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const words = normalized
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
   if (!words.length) return false;
   const genericWords = [
     "producto",
@@ -1000,9 +1142,15 @@ function genericMediaReference(text: string): boolean {
 }
 
 function isMoreProductsRequest(text: string): boolean {
-  const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const t = (text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
   return (
-    (/\b(mas|otras?|otros?|diferentes|adicionales)\b/.test(t) && /\b(opciones|productos|modelos|referencias|tienes|tienen|hay|muestrame|muestra|ver)\b/.test(t)) ||
+    (/\b(mas|otras?|otros?|diferentes|adicionales)\b/.test(t) &&
+      /\b(opciones|productos|modelos|referencias|tienes|tienen|hay|muestrame|muestra|ver)\b/.test(
+        t,
+      )) ||
     /\balgo\s*mas\b/.test(t) ||
     /\bsolo\s+(tienes|tienen|hay)\s+(esa|ese|esas|esos|esta|este|estas|estos)\b/.test(t)
   );
@@ -1011,10 +1159,11 @@ function isMoreProductsRequest(text: string): boolean {
 type CatalogSearchState = {
   query: string;
   shownIds: string[];
+  products: CatalogProduct[];
 };
 
 async function loadCatalogSearchState(ctx: ToolExecCtx): Promise<CatalogSearchState> {
-  if (!ctx.threadId) return { query: "", shownIds: [] };
+  if (!ctx.threadId) return { query: "", shownIds: [], products: [] };
   try {
     const { data: thread } = await (supabaseAdmin as any)
       .from("threads")
@@ -1027,17 +1176,23 @@ async function loadCatalogSearchState(ctx: ToolExecCtx): Promise<CatalogSearchSt
     const state = snapshot?._catalog_search as Record<string, unknown> | null;
     return {
       query: state?.query ? String(state.query).trim() : "",
-      shownIds: Array.isArray(state?.shown_ids)
-        ? state.shown_ids.map(String)
-        : [],
+      shownIds: Array.isArray(state?.shown_ids) ? state.shown_ids.map(String) : [],
+      products: Array.isArray(state?.products) ? (state.products as CatalogProduct[]) : [],
     };
   } catch (err) {
-    console.warn("[loadCatalogSearchState] falló", err instanceof Error ? err.message : String(err));
-    return { query: "", shownIds: [] };
+    console.warn(
+      "[loadCatalogSearchState] falló",
+      err instanceof Error ? err.message : String(err),
+    );
+    return { query: "", shownIds: [], products: [] };
   }
 }
 
-async function saveCatalogSearchState(ctx: ToolExecCtx, query: string, shownIds: string[]): Promise<void> {
+async function saveCatalogSearchState(
+  ctx: ToolExecCtx,
+  query: string,
+  shownIds: string[],
+): Promise<void> {
   if (!ctx.threadId) return;
   try {
     const { data: thread } = await (supabaseAdmin as any)
@@ -1049,14 +1204,44 @@ async function saveCatalogSearchState(ctx: ToolExecCtx, query: string, shownIds:
 
     const currentSnapshot = thread?.focused_product_snapshot as Record<string, unknown> | null;
     const snapshot = currentSnapshot ? { ...currentSnapshot } : {};
-    
+
+    // Detectar si comienza una nueva búsqueda (query cambia respecto a la búsqueda anterior guardada)
+    // En tal caso limpiamos el foco anterior para evitar mezclar productos de búsquedas viejas
+    const oldQuery = (snapshot._catalog_search as any)?.query;
+    if (query && query !== oldQuery) {
+      for (const key of ["id", "name", "price", "sku", "image_url", "video_url"]) {
+        delete snapshot[key];
+      }
+      await (supabaseAdmin as any)
+        .from("threads")
+        .update({
+          focused_product_id: null,
+          focused_updated_at: null,
+          focused_product_snapshot: snapshot,
+        })
+        .eq("id", ctx.threadId)
+        .eq("org_id", ctx.orgId);
+    }
+
     // Mantener historial de búsquedas
-    const searchHistory = (snapshot._search_history as Array<{query: string; timestamp: string}>) || [];
+    const searchHistory =
+      (snapshot._search_history as Array<{ query: string; timestamp: string }>) || [];
     searchHistory.push({ query, timestamp: new Date().toISOString() });
-    
+
     snapshot._catalog_search = {
       query,
       shown_ids: Array.from(new Set(shownIds)),
+      products: (ctx.lastProducts ?? []).map((product) => ({
+        id: product.id,
+        name: product.name,
+        price: product.price,
+        sku: product.sku,
+        image_url: product.image_url,
+        video_url: product.video_url,
+        description: product.description,
+        stock: product.stock,
+        attributes: product.attributes,
+      })),
       updated_at: new Date().toISOString(),
     };
     snapshot._search_history = searchHistory.slice(-20); // Guardar últimas 20
@@ -1066,7 +1251,7 @@ async function saveCatalogSearchState(ctx: ToolExecCtx, query: string, shownIds:
       .update({ focused_product_snapshot: snapshot })
       .eq("id", ctx.threadId)
       .eq("org_id", ctx.orgId);
-    
+
     // Sincronizar al CRM si hay contacto
     if (thread?.contact_id) {
       const { data: contact } = await (supabaseAdmin as any)
@@ -1074,19 +1259,24 @@ async function saveCatalogSearchState(ctx: ToolExecCtx, query: string, shownIds:
         .select("crm_data")
         .eq("id", thread.contact_id)
         .maybeSingle();
-      
+
       const crmData = (contact?.crm_data as Record<string, any>) || {};
-      crmData.last_product_searches = searchHistory.slice(-5).map(s => `${s.query} (${s.timestamp})`);
+      crmData.last_product_searches = searchHistory
+        .slice(-5)
+        .map((s) => `${s.query} (${s.timestamp})`);
       crmData.last_searched_product_ids = shownIds;
       crmData.last_search_at = new Date().toISOString();
-      
+
       await (supabaseAdmin as any)
         .from("contacts")
         .update({ crm_data: crmData })
         .eq("id", thread.contact_id);
     }
   } catch (err) {
-    console.warn("[saveCatalogSearchState] falló", err instanceof Error ? err.message : String(err));
+    console.warn(
+      "[saveCatalogSearchState] falló",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -1127,7 +1317,16 @@ async function resolveProductForSend(
 ): Promise<CatalogProduct | null> {
   if (!ctx.catalogCfg) return null;
   const ref = String(args.product_reference || args.product_id || "").trim();
-  if (!ref) return null;
+  if (!ref || genericMediaReference(ref)) {
+    return (await resolveFocus(ctx)) ??
+      ((ctx.lastProducts ?? []).filter(Boolean).length === 1
+        ? ctx.lastProducts?.[0] ?? null
+        : null);
+  }
+
+  if (/^(?:ese|esa|este|esta|eso|lo|la|quiero ese|quiero esa|lo quiero|la quiero)$/i.test(ref)) {
+    return (await resolveFocus(ctx)) ?? null;
+  }
 
   const directFromList = (ctx.lastProducts ?? []).find((p) => String(p?.id) === ref);
   if (directFromList) return directFromList;
@@ -1244,7 +1443,10 @@ async function queueOutgoingMedia(
       finalUrl = pub.publicUrl;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[ai.queueOutgoingMedia] No se pudo copiar ${kind}; se enviará URL original:`, msg);
+      console.warn(
+        `[ai.queueOutgoingMedia] No se pudo copiar ${kind}; se enviará URL original:`,
+        msg,
+      );
       finalUrl = mediaUrl;
     }
   }
@@ -1272,7 +1474,8 @@ async function queueOutgoingMedia(
         }
       : undefined,
   };
-  const cmdId = (globalThis.crypto?.randomUUID?.() ?? `cmd_${Date.now()}_${Math.random()}`) as string;
+  const cmdId = (globalThis.crypto?.randomUUID?.() ??
+    `cmd_${Date.now()}_${Math.random()}`) as string;
   // Echo en la conversación para que el operador lo vea en el CRM
   await (supabaseAdmin as any).from("messages").insert({
     org_id: ctx.orgId,
@@ -1374,7 +1577,7 @@ export async function executeToolCall(
     details = `Programo un recordatorio: "${note}" para ${dueAt}`;
   } else if (name === "transfer_to_human") {
     try {
-      await supabaseAdmin
+      await (supabaseAdmin as any)
         .from("threads")
         .update({ ai_enabled: false } as unknown as Record<string, never>)
         .eq("id", threadId)
@@ -1438,16 +1641,21 @@ export async function executeToolCall(
     if (result) {
       // Parsing failed, no insert attempt.
     } else if (!hasValidOrderFields(formData || {})) {
-      result = "Datos del pedido inválidos o incompletos: form_data debe contener al menos un campo de pedido válido.";
+      result =
+        "Datos del pedido inválidos o incompletos: form_data debe contener al menos un campo de pedido válido.";
       details = "form_data inválido o vacío";
     } else {
       // Completar producto y valor desde el contexto si el form_data no los trae,
       // para que el pedido nunca quede con "Producto: -".
       formData = await enrichOrderWithProduct(formData || {}, ctx);
       // Evitar duplicados: si ya hay un pedido confirmado en este hilo con los mismos datos o en un corto intervalo.
-        const isRecoveryFormData = (data: Record<string, unknown>) => {
+      const isRecoveryFormData = (data: Record<string, unknown>) => {
         const origin = String(data?.Origen ?? data?._source_message_id ?? data?.origin ?? "");
-        return origin.includes("Recuperación automática") || origin.includes("Reparación automática") || Boolean(data?._source_message_id);
+        return (
+          origin.includes("Recuperación automática") ||
+          origin.includes("Reparación automática") ||
+          Boolean(data?._source_message_id)
+        );
       };
 
       if (threadId) {
@@ -1477,10 +1685,11 @@ export async function executeToolCall(
           const normalizedFormData = (formData || {}) as Record<string, unknown>;
           const newIsRecovery = isRecoveryFormData(normalizedFormData);
 
-          const existingOrder = existingOrders.find((order) => {
-            const existing = parseFormData(order.form_data);
-            return !isRecoveryFormData(existing);
-          }) ?? existingOrders[0];
+          const existingOrder =
+            existingOrders.find((order) => {
+              const existing = parseFormData(order.form_data);
+              return !isRecoveryFormData(existing);
+            }) ?? existingOrders[0];
 
           const existingData = parseFormData(existingOrder.form_data);
           const existingIsRecovery = isRecoveryFormData(existingData);
@@ -1509,7 +1718,8 @@ export async function executeToolCall(
               .eq("id", threadId)
               .eq("org_id", orgId);
 
-            result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+            result =
+              "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
             details = `Pedido existente actualizado/fusionado (id ${existingOrder.id}) para hilo ${threadId}.`;
             return { name, result };
           }
@@ -1546,14 +1756,18 @@ export async function executeToolCall(
           if (Array.isArray(existing) && existing.length) {
             let existingData: Record<string, unknown> = {};
             try {
-              existingData = typeof existing[0].form_data === "string"
-                ? JSON.parse(existing[0].form_data || "{}")
-                : existing[0].form_data ?? {};
+              existingData =
+                typeof existing[0].form_data === "string"
+                  ? JSON.parse(existing[0].form_data || "{}")
+                  : (existing[0].form_data ?? {});
             } catch {
               existingData = {};
             }
 
-            const mergedFormData = { ...existingData, ...((formData || {}) as Record<string, unknown>) };
+            const mergedFormData = {
+              ...existingData,
+              ...((formData || {}) as Record<string, unknown>),
+            };
 
             const { error: updateError } = await (supabaseAdmin as any)
               .from("orders")
@@ -1570,7 +1784,8 @@ export async function executeToolCall(
                 .update({ purchase_intent: "compro" })
                 .eq("id", threadId)
                 .eq("org_id", orgId);
-              result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+              result =
+                "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
               details = `Pedido fusionado tras choque de índice único para hilo ${threadId}.`;
             }
           } else {
@@ -1587,7 +1802,8 @@ export async function executeToolCall(
           .update({ purchase_intent: "compro" })
           .eq("id", threadId)
           .eq("org_id", orgId);
-        result = "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
+        result =
+          "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
         details = `Pedido guardado con datos: ${JSON.stringify(formData)}`;
       }
     }
@@ -1599,8 +1815,21 @@ export async function executeToolCall(
       try {
         const q = (args.query || "").toString().trim();
         const limit = Math.min(Math.max(Number(args.limit) || 6, 1), 6);
-        const products = await searchCatalog(catalogCfg, q, limit);
+
+        const normalizedQuery = normalizeCatalogQuery(q) || q.toLowerCase().trim();
+        const storedState = await loadCatalogSearchState(ctx);
+        const canReuse =
+          normalizedQuery.length > 0 &&
+          normalizeCatalogQuery(storedState.query) === normalizedQuery &&
+          storedState.products.length > 0;
+
+        const products = canReuse
+          ? storedState.products.slice(0, limit)
+          : await searchCatalog(catalogCfg, q, limit);
+
         ctx.lastProducts = products;
+        ctx.resolvedCatalogQuery = q;
+
         if (q && products.length) {
           await saveCatalogSearchState(
             ctx,
@@ -1612,7 +1841,8 @@ export async function executeToolCall(
         if (!products.length) {
           result = JSON.stringify({
             found: 0,
-            message: "No hay coincidencias para esa búsqueda. Intenta con otros términos o pide recomendaciones.",
+            message:
+              "No hay coincidencias para esa búsqueda. Intenta con otros términos o pide recomendaciones.",
             products: [],
           });
         } else {
@@ -1622,7 +1852,9 @@ export async function executeToolCall(
             hint: "Si el cliente elige por descripción (ej. 'el de 6 niveles'), usa product_reference con esa frase en send_product_image.",
           });
         }
-        details = `Buscó productos: "${q}" (${products.length} resultados)`;
+        details = canReuse
+          ? `Reutilizó búsqueda: "${q}" (${products.length} resultados)`
+          : `Buscó productos: "${q}" (${products.length} resultados)`;
       } catch (e) {
         result = `Error al buscar en catálogo: ${(e as Error).message}`;
         details = result;
@@ -1653,7 +1885,9 @@ export async function executeToolCall(
             const numberPrefix = kind === "image" && listIdx >= 0 ? `${listIdx + 1}. ` : "";
             const baseCaption = (args.caption as string) || `${p.name} — $${p.price || ""}`;
             // Evitar doble numeración si el modelo ya la incluyó.
-            const caption = /^\s*\d+[\.\)]/.test(baseCaption) ? baseCaption : `${numberPrefix}${baseCaption}`;
+            const caption = /^\s*\d+[\.\)]/.test(baseCaption)
+              ? baseCaption
+              : `${numberPrefix}${baseCaption}`;
 
             const dedupeKey = `${kind}:${p.id}`;
             const sendResult = await queueOutgoingMedia(ctx, kind, url, caption, dedupeKey, p);
@@ -1672,7 +1906,10 @@ export async function executeToolCall(
               // Enriquecer el resultado con contexto útil para el modelo
               const hasVideo = !!p.video_url;
               const hasImage = !!p.image_url;
-              const videoNote = kind === "image" && hasVideo ? ` [Este producto TIENE video disponible — si el cliente lo pide, usa send_product_video con product_id="${p.id}"]` : "";
+              const videoNote =
+                kind === "image" && hasVideo
+                  ? ` [Este producto TIENE video disponible — si el cliente lo pide, usa send_product_video con product_id="${p.id}"]`
+                  : "";
               result = `${kind === "video" ? "Video" : "Imagen"} enviado al cliente. Producto #${listIdx >= 0 ? listIdx + 1 : "?"}: "${p.name}" (id: ${p.id})${videoNote}`;
             }
             details = `${name}: ${p.id} (${p.name}) a ${chatId}`;
@@ -1689,7 +1926,7 @@ export async function executeToolCall(
   }
 
   // Log to ai_actions_log
-  await supabaseAdmin.from("ai_actions_log").insert({
+  await (supabaseAdmin as any).from("ai_actions_log").insert({
     org_id: orgId,
     thread_id: threadId,
     action_name: name,
@@ -1700,20 +1937,38 @@ export async function executeToolCall(
 }
 
 function normalizeCatalogQuery(text: string): string {
-  let t = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let t = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
   t = t.replace(/[.?¡¿!,;:]/g, " ").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ");
-  t = t.replace(/\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|porfa|porfis|mandame|enviarme|pasame|compartirme|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi, " ");
+  t = t.replace(
+    /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|muestrame|mostrar|ver|vendes|venden|consigo|tendras|tendrian|manejan|maneja|por\s+favor|porfa|porfis|mandame|enviarme|pasame|compartirme|hola|buenas|tardes|dias|noches|gracias|ok|okay|listo|dale|si|sí)\b/gi,
+    " ",
+  );
   // Palabras "meta": describen lo que se pide SOBRE el producto, no el producto.
-  t = t.replace(/\b(video|videos|foto|fotos|imagen|imagenes|informacion|info|detalle|detalles|caracteristica|caracteristicas|especificacion|especificaciones|precio|precios|disponible|disponibles|stock|mas|mejor)\b/gi, " ");
+  t = t.replace(
+    /\b(video|videos|foto|fotos|imagen|imagenes|informacion|info|detalle|detalles|caracteristica|caracteristicas|especificacion|especificaciones|precio|precios|disponible|disponibles|stock|mas|mejor)\b/gi,
+    " ",
+  );
   // Palabras vagas / demostrativos que impiden detectar productos nuevos
-  t = t.replace(/\b(algun|alguno|alguna|algunos|algunas|como|se|ve|asi|eso|esto|esta|este|estos|estas|ese|esa|esos|esas|aqui|ahi|alli|mismo|igual|tan|muy|me|te|le|al|es|son)\b/gi, " ");
-  t = t.replace(/\b(un|uno|una|unos|unas|el|la|los|las|de|del|para|con|en|sobre|y|o|u|que|lo)\b/gi, " ");
+  t = t.replace(
+    /\b(algun|alguno|alguna|algunos|algunas|como|se|ve|asi|eso|esto|esta|este|estos|estas|ese|esa|esos|esas|aqui|ahi|alli|mismo|igual|tan|muy|me|te|le|al|es|son)\b/gi,
+    " ",
+  );
+  t = t.replace(
+    /\b(un|uno|una|unos|unas|el|la|los|las|de|del|para|con|en|sobre|y|o|u|que|lo)\b/gi,
+    " ",
+  );
   return t.replace(/\s+/g, " ").trim();
 }
 
 /** Detecta cuando el cliente pide ver el VIDEO/FOTO de un producto. */
 function isMediaRequest(text: string): boolean {
-  const t = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const t = (text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
   return /\b(video|videos|foto|fotos|imagen|imagenes)\b/.test(t);
 }
 
@@ -1736,7 +1991,8 @@ function extractProductReferencesFromText(text: string): string[] {
 
 async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
   if (!ctx.sessionId || !ctx.chatId || !text.trim()) return;
-  const cmdId = (globalThis.crypto?.randomUUID?.() ?? `cmd_${Date.now()}_${Math.random()}`) as string;
+  const cmdId = (globalThis.crypto?.randomUUID?.() ??
+    `cmd_${Date.now()}_${Math.random()}`) as string;
   try {
     await (supabaseAdmin as any).from("messages").insert({
       org_id: ctx.orgId,
@@ -1755,7 +2011,10 @@ async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
       status: "pending",
     });
   } catch (err) {
-    console.error("[queueOutgoingText] no se pudo encolar texto", err instanceof Error ? err.message : String(err));
+    console.error(
+      "[queueOutgoingText] no se pudo encolar texto",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
@@ -1780,55 +2039,70 @@ export async function runAiAgent({
   cfg: Record<string, unknown>;
 }): Promise<{ reply: string; actions: string[] }> {
   let catalogCfg, threadRow, orderFieldsData, knowledgeSourcesData;
-  
+
   // Envolver todas las queries de BD en try-catch
   try {
     // Cargar integración de catálogo (si está activa)
     catalogCfg = await getCatalogConfig(orgId);
   } catch (err) {
-    console.error('[runAiAgent] getCatalogConfig failed', err, { orgId });
+    console.error("[runAiAgent] getCatalogConfig failed", err, { orgId });
     catalogCfg = null;
   }
 
   // Cargar thread con manejo de error
   try {
     const result = await supabaseAdmin
-      .from('threads')
-      .select('purchase_intent')
-      .eq('id', threadId)
+      .from("threads")
+      .select("purchase_intent")
+      .eq("id", threadId)
       .maybeSingle();
     threadRow = result.data;
   } catch (err) {
-    console.error('[runAiAgent] threads query failed', err, { threadId, orgId });
+    console.error("[runAiAgent] threads query failed", err, { threadId, orgId });
     threadRow = null;
   }
-  
-  const purchaseIntent = (threadRow as any)?.purchase_intent || 'none';
-  const isCollectingOrder = purchaseIntent === 'collecting_data';
+
+  const purchaseIntent = (threadRow as any)?.purchase_intent || "none";
+  const isCollectingOrder = purchaseIntent === "collecting_data";
   const orderStateText = `\n\n=== ESTADO ACTUAL DEL THREAD ===\nestado_pedido: ${purchaseIntent}\n${
     isCollectingOrder
-      ? 'El cliente ESTÁ entregando datos del pedido. NO busques productos: pide el siguiente dato faltante o ejecuta confirm_order si ya tienes todo.'
-      : 'El cliente NO está en modo recolección de datos. Atiende normalmente según la jerarquía de modos.'
+      ? "El cliente ESTÁ entregando datos del pedido. NO busques productos: pide el siguiente dato faltante o ejecuta confirm_order si ya tienes todo."
+      : "El cliente NO está en modo recolección de datos. Atiende normalmente según la jerarquía de modos."
   }`;
 
   const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
-  const visibleChat = messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim());
-  const lastUserText = [...visibleChat].reverse().find((m) => m.role === "user")?.content?.trim() ?? "";
+  const visibleChat = messages.filter(
+    (m) => (m.role === "user" || m.role === "assistant") && m.content?.trim(),
+  );
+  const lastUserText =
+    [...visibleChat]
+      .reverse()
+      .find((m) => m.role === "user")
+      ?.content?.trim() ?? "";
 
-  const previousDetailQuestion = [...visibleChat]
-    .reverse()
-    .filter((m) => m.role === "user" && m.content?.trim() !== lastUserText)
-    .find((m) => isProductDetailQuestion(m.content))?.content?.trim() ?? "";
+  const previousDetailQuestion =
+    [...visibleChat]
+      .reverse()
+      .filter((m) => m.role === "user" && m.content?.trim() !== lastUserText)
+      .find((m) => isProductDetailQuestion(m.content))
+      ?.content?.trim() ?? "";
 
   const detailQuestionText = isProductDetailQuestion(lastUserText)
     ? lastUserText
     : /^(\?+|¿\?+|\?\?|y\??|me responde\??|me confirmas\??)$/i.test(lastUserText.trim())
-    ? previousDetailQuestion || lastUserText
-    : lastUserText;
+      ? previousDetailQuestion || lastUserText
+      : lastUserText;
 
   // Reconstruir los productos mostrados recientemente para poder resolver
   // selecciones por número ("la 3") entre turnos.
   ctx.lastProducts = await loadRecentlyShownProducts(ctx);
+  const storedCatalogState = await loadCatalogSearchState(ctx);
+
+  // Si no se cargaron productos recientemente mostrados desde engine_commands,
+  // intentar cargarlos desde el estado guardado del catálogo en el thread.
+  if ((!ctx.lastProducts || !ctx.lastProducts.some(Boolean)) && storedCatalogState.products.length) {
+    ctx.lastProducts = storedCatalogState.products;
+  }
 
   // Resolver el producto en foco (memoria persistente del producto conversado)
   const focusedProduct = await resolveFocus(ctx);
@@ -1840,6 +2114,8 @@ export async function runAiAgent({
       const refs = extractProductReferencesFromText(msg.content);
       refs.sort((a, b) => (/\d/.test(b) ? 1 : 0) - (/\d/.test(a) ? 1 : 0)); // SKUs primero
       for (const ref of refs) {
+        const fromRecentList = resolveProductFromReference(ref, ctx.lastProducts ?? []);
+        if (fromRecentList) return fromRecentList;
         const hits = await searchCatalog(catalogCfg, ref, 3);
         const match = resolveProductFromReference(ref, hits) ?? hits[0];
         if (match) return match;
@@ -1849,60 +2125,114 @@ export async function runAiAgent({
   };
 
   const resolveCurrentProductForDetails = async (): Promise<CatalogProduct | null> => {
-    if (!catalogCfg || !isProductDetailQuestion(detailQuestionText)) return null;
-    for (const msg of [...visibleChat].reverse()) {
-      if (msg.role === "user") {
-        const sel = parseSelectionNumber(msg.content);
-        if (sel != null && ctx.lastProducts?.[sel - 1]) return ctx.lastProducts[sel - 1];
-      }
-      const chosenMatch = msg.content.match(/(?:buena elecci[oó]n|excelente elecci[oó]n)[\s\S]{0,80}?\b(?:el|la)\s+([^\n🙌😊.]+)/i);
-      if (chosenMatch) {
-        const hits = await searchCatalog(catalogCfg, chosenMatch[1].trim(), 3);
-        if (hits[0]) return hits[0];
+    if (!isProductDetailQuestion(detailQuestionText)) return null;
+    if (catalogCfg) {
+      for (const msg of [...visibleChat].reverse()) {
+        if (msg.role === "user") {
+          const sel = parseSelectionNumber(msg.content);
+          if (sel != null && ctx.lastProducts?.[sel - 1]) return ctx.lastProducts[sel - 1];
+        }
+        const chosenMatch = msg.content.match(
+          /(?:buena elecci[oó]n|excelente elecci[oó]n)[\s\S]{0,80}?\b(?:el|la)\s+([^\n🙌😊.]+)/i,
+        );
+        if (chosenMatch) {
+          const reference = chosenMatch[1].trim();
+          const fromRecentList = resolveProductFromReference(reference, ctx.lastProducts ?? []);
+          if (fromRecentList) return fromRecentList;
+          const hits = await searchCatalog(catalogCfg, reference, 3);
+          if (hits[0]) return hits[0];
+        }
       }
     }
-    return focusedProduct ?? (await loadLastSentProduct(ctx)) ?? (await resolveProductFromConversation());
+    return (
+      focusedProduct ?? (await loadLastSentProduct(ctx)) ?? (await resolveProductFromConversation())
+    );
   };
 
   const selectedProductForDetails = await resolveCurrentProductForDetails();
-  const storedCatalogState = await loadCatalogSearchState(ctx);
   const currentCatalogQuery = normalizeCatalogQuery(lastUserText);
   const wantsMoreProducts = isMoreProductsRequest(lastUserText);
   const mediaRequest = isMediaRequest(lastUserText);
   const catalogQuery = currentCatalogQuery || (wantsMoreProducts ? storedCatalogState.query : "");
-  const hasCatalogKeyword = /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(lastUserText);
-  const hasSearchIntent = /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|mu[eé]strame|mostrar|ver|vende[ns]?|venden|consigo|tendr[aá]s|tendr[ií]an|manejan|maneja)\b/i.test(lastUserText);
+  const hasCatalogKeyword =
+    /\b(cat[aá]logo|producto|productos|modelo|modelos|foto|fotos|imagen|im[aá]genes|precio|precios|stock|disponible|referencia|combo|plancha|secador|cepillo)\b/i.test(
+      lastUserText,
+    );
+  const hasSearchIntent =
+    /\b(tienes|tiene|tienen|hay|busco|buscar|busca|quiero|necesito|me\s+muestras|mu[eé]strame|mostrar|ver|vende[ns]?|venden|consigo|tendr[aá]s|tendr[ií]an|manejan|maneja)\b/i.test(
+      lastUserText,
+    );
   const looksLikeDirectProductSearch = !!catalogCfg && !!catalogQuery && catalogQuery.length >= 4;
-  
+
   ctx.catalogSearchQuery = catalogQuery || null;
 
   // Intención de COMPRA/PEDIDO sobre el producto que ya se venía conversando.
   // Estas frases NO deben disparar una búsqueda de catálogo (ej. "quiero hacer el
   // pedido" no debe buscar "hacer" y traer máquinas de ejercicio). Debe entrar al
   // flujo de pedido manteniendo el contexto del producto elegido.
-  const isOrderIntent = /\b(hacer (el |un |mi )?pedido|el pedido|mi pedido|agendar(lo| el pedido| mi pedido)?|como lo (pido|compro|adquiero|ordeno)|lo (quiero|deseo) (comprar|pedir|llevar)|quiero (comprar|pedir|ordenar|agendar)|deseo (comprar|pedir|hacer (el |un )?pedido|agendar)|me lo llevo|lo llevo|lo compro|finalizar (la )?compra|proceder con (el |la )?(pedido|compra))\b/i.test(lastUserText);
-  
-  const isCatalogQuestion = !isOrderIntent && !mediaRequest && !wantsMoreProducts && (hasCatalogKeyword || (!!catalogCfg && !!catalogQuery && (hasSearchIntent || hasCatalogKeyword || looksLikeDirectProductSearch) && !isProductDetailQuestion(lastUserText)));
-  
-  // Producto de contexto para el flujo de pedido: prioriza foco, luego elegido, luego último mostrado.
-  const orderContextProduct = isOrderIntent && !selectedProductForDetails && catalogCfg
-    ? (focusedProduct ?? (await loadLastSentProduct(ctx)) ?? ctx.lastProducts?.filter(Boolean).slice(-1)[0] ?? null)
+  const isOrderIntent =
+    /\b(hacer (el |un |mi )?pedido|el pedido|mi pedido|agendar(lo| el pedido| mi pedido)?|como lo (pido|compro|adquiero|ordeno)|lo (quiero|deseo) (comprar|pedir|llevar)|quiero (comprar|pedir|ordenar|agendar)|deseo (comprar|pedir|hacer (el |un )?pedido|agendar)|me lo llevo|lo llevo|lo compro|finalizar (la )?compra|proceder con (el |la )?(pedido|compra))\b/i.test(
+      lastUserText,
+    ) ||
+    /\b(quiero ese|quiero esa|lo quiero|la quiero|los quiero|las quiero|me interesa ese|me interesa esa|lo llevo|la llevo|agr[eé]galo|agr[eé]gamelo|a[nñ][aá]delo|a[nñ][aá]demelo)\b/i.test(
+      lastUserText,
+    );
+
+  const isContextualFollowUp =
+    /^(?:si|sí|ok|okay|dale|listo|correcto|ese|esa|este|esta|eso|quiero ese|quiero esa|lo quiero|la quiero|agr[eé]galo|a[nñ][aá]delo)$/i.test(
+      lastUserText.trim(),
+    );
+
+  const contextualProduct = isContextualFollowUp
+    ? (focusedProduct ??
+       (await loadLastSentProduct(ctx)) ??
+       ((ctx.lastProducts ?? []).filter(Boolean).length === 1
+         ? ctx.lastProducts?.[0] ?? null
+         : null))
     : null;
-  const startOrderFlow = isOrderIntent && !isCollectingOrder && !!(selectedProductForDetails || orderContextProduct);
+
+  const isCatalogQuestion =
+    !isOrderIntent &&
+    !mediaRequest &&
+    !wantsMoreProducts &&
+    (hasCatalogKeyword ||
+      (!!catalogCfg &&
+        !!catalogQuery &&
+        (hasSearchIntent || hasCatalogKeyword || looksLikeDirectProductSearch) &&
+        !isProductDetailQuestion(lastUserText)));
+
+  if (isCatalogQuestion) {
+    await saveFocusedProduct(ctx, null);
+  }
+
+  // Producto de contexto para el flujo de pedido: prioriza foco, luego elegido, luego único mostrado.
+  const orderContextProduct =
+    isOrderIntent && !selectedProductForDetails
+      ? (focusedProduct ??
+        (await loadLastSentProduct(ctx)) ??
+        ((ctx.lastProducts ?? []).filter(Boolean).length === 1
+          ? ctx.lastProducts?.[0] ?? null
+          : null))
+      : null;
+  const startOrderFlow =
+    isOrderIntent && !isCollectingOrder && !!(selectedProductForDetails || orderContextProduct);
 
   const promptMode = isCollectingOrder
     ? "pedido"
     : startOrderFlow
-    ? "pedido"
-    : selectedProductForDetails
-    ? "product_detail"
-    : isCatalogQuestion
-    ? "catalog"
-    : "general";
+      ? "pedido"
+      : selectedProductForDetails
+        ? "product_detail"
+        : isCatalogQuestion
+          ? "catalog"
+          : "general";
 
-  const tools = promptMode === "pedido" || promptMode === "product_detail"
-    ? CRM_TOOLS
-    : catalogCfg ? [...CRM_TOOLS, ...CATALOG_TOOLS] : CRM_TOOLS;
+  const tools =
+    promptMode === "pedido" || promptMode === "product_detail"
+      ? CRM_TOOLS
+      : catalogCfg
+        ? [...CRM_TOOLS, ...CATALOG_TOOLS]
+        : CRM_TOOLS;
 
   const PRODUCT_FLOW_GUIDE = `
 Eres un asistente comercial por WhatsApp. Tu objetivo es ATENDER, AGENDAR/PREPARAR PEDIDOS y MOSTRAR PRODUCTOS cuando corresponda.
@@ -1944,13 +2274,14 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 3. IMPORTANTE: NUNCA pide datos de contacto al cliente cuando falta información.
 `;
 
-  const activeFlowGuide = promptMode === "catalog"
-    ? PRODUCT_FLOW_GUIDE
-    : promptMode === "product_detail"
-      ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la BASE DE CONOCIMIENTO relevante.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
-      : promptMode === "pedido"
-        ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
-        : `MODO GENERAL:\nResponde breve y natural. Si el cliente pregunta por productos, usa el catálogo; si muestra intención de compra, guía hacia el pedido.`;
+  const activeFlowGuide =
+    promptMode === "catalog"
+      ? PRODUCT_FLOW_GUIDE
+      : promptMode === "product_detail"
+        ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la BASE DE CONOCIMIENTO relevante.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
+        : promptMode === "pedido"
+          ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
+          : `MODO GENERAL:\nResponde breve y natural. Si el cliente pregunta por productos, usa el catálogo; si muestra intención de compra, guía hacia el pedido.`;
 
   // Load order fields con manejo de error
   try {
@@ -1961,13 +2292,13 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .order("display_order", { ascending: true });
     orderFieldsData = result.data;
   } catch (err) {
-    console.error('[runAiAgent] order_fields query failed', err, { orgId });
+    console.error("[runAiAgent] order_fields query failed", err, { orgId });
     orderFieldsData = null;
   }
-    
+
   const orderFields = orderFieldsData ?? [];
-  const orderFieldsText = orderFields.length 
-    ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si deseas agendar o hacer el pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? '' : ' (opcional)'}`).join('\n')}"\n3. INTERPRETA LOS DATOS EN CUALQUIER FORMATO: el cliente puede enviarlos con etiquetas ("Nombre: Juan"), separados por "/" o por comas, o cada dato en una línea distinta sin rótulos. Mapea cada valor al campo correcto sin importar el formato y NO le pidas que los reescriba.\n4. Si después de interpretar falta algún dato REQUERIDO, pide ÚNICAMENTE el dato que falta, de forma breve y cortés, una sola pregunta por mensaje, y repite solo hasta que el cliente entregue todos los datos requeridos. No avances ni confirma mientras falten datos requeridos.\n5. SIEMPRE incluye en el form_data el PRODUCTO que el cliente está comprando (nombre/referencia del producto que se venía conversando o que eligió) y su VALOR/precio. Si el cliente no mencionó el producto explícitamente, use el último producto mostrado en la conversación. Usa las claves "Producto" y "Valor".\n6. Cuando tengas TODOS los datos requeridos (incluido Producto y Cantidad), muestra un resumen claro con el producto, valor y datos del cliente, y pregunta: "¿La información es correcta para confirmar su pedido?"\n7. SOLO cuando el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON (incluido Producto y Valor). NO digas "pedido registrado" ni confirma el pedido si no ejecutas confirm_order.\n8. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no se puede considerar el pedido confirmado.\n9. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso".`
+  const orderFieldsText = orderFields.length
+    ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si deseas agendar o hacer el pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? "" : " (opcional)"}`).join("\n")}"\n3. INTERPRETA LOS DATOS EN CUALQUIER FORMATO: el cliente puede enviarlos con etiquetas ("Nombre: Juan"), separados por "/" o por comas, o cada dato en una línea distinta sin rótulos. Mapea cada valor al campo correcto sin importar el formato y NO le pidas que los reescriba.\n4. Si después de interpretar falta algún dato REQUERIDO, pide ÚNICAMENTE el dato que falta, de forma breve y cortés, una sola pregunta por mensaje, y repite solo hasta que el cliente entregue todos los datos requeridos. No avances ni confirma mientras falten datos requeridos.\n5. SIEMPRE incluye en el form_data el PRODUCTO que el cliente está comprando (nombre/referencia del producto que se venía conversando o que eligió) y su VALOR/precio. Si el cliente no mencionó el producto explícitamente, use el último producto mostrado en la conversación. Usa las claves "Producto" y "Valor".\n6. Cuando tengas TODOS los datos requeridos (incluido Producto y Cantidad), muestra un resumen claro con el producto, valor y datos del cliente, y pregunta: "¿La información es correcta para confirmar su pedido?"\n7. SOLO cuando el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON (incluido Producto y Valor). NO digas "pedido registrado" ni confirma el pedido si no ejecutas confirm_order.\n8. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no se puede considerar el pedido confirmado.\n9. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso".`
     : "";
 
   // Load knowledge sources con manejo de error
@@ -1979,16 +2310,25 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .eq("is_active", true);
     knowledgeSourcesData = result.data;
   } catch (err) {
-    console.error('[runAiAgent] knowledge_sources query failed', err, { orgId });
+    console.error("[runAiAgent] knowledge_sources query failed", err, { orgId });
     knowledgeSourcesData = null;
   }
 
-  const intentSelection = selectRelevantKnowledgeSources(lastUserText, (knowledgeSourcesData as any[]) ?? []);
-  const sourcesToUse = intentSelection?.matched ?? ((knowledgeSourcesData as any[]) ?? []);
+  const intentSelection = selectRelevantKnowledgeSources(
+    lastUserText,
+    (knowledgeSourcesData as any[]) ?? [],
+  );
+  const sourcesToUse = intentSelection?.matched ?? (knowledgeSourcesData as any[]) ?? [];
   const hasIntentMatch = !!intentSelection;
 
   const KS_PER_SOURCE = hasIntentMatch ? 1400 : promptMode === "general" ? 900 : 500;
-  const KS_TOTAL = hasIntentMatch ? 2000 : promptMode === "general" ? 3000 : promptMode === "pedido" ? 800 : 1500;
+  const KS_TOTAL = hasIntentMatch
+    ? 2000
+    : promptMode === "general"
+      ? 3000
+      : promptMode === "pedido"
+        ? 800
+        : 1500;
   const knowledgeSourcesText = (() => {
     if (!sourcesToUse.length) return "";
     let used = 0;
@@ -1996,7 +2336,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     for (const ks of sourcesToUse as any[]) {
       if (used >= KS_TOTAL) break;
       const remaining = KS_TOTAL - used;
-      const body = selectRelevantText(String(ks.content ?? ""), lastUserText, Math.min(KS_PER_SOURCE, remaining));
+      const body = selectRelevantText(
+        String(ks.content ?? ""),
+        lastUserText,
+        Math.min(KS_PER_SOURCE, remaining),
+      );
       if (!body.trim()) continue;
       blocks.push(`[Tipo: ${ks.source_type} | Nombre: ${ks.name}]\n${body}`);
       used += body.length;
@@ -2040,13 +2384,28 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 - Si el cliente confirma la información del pedido, llama obligatoriamente la herramienta \`confirm_order\` y no digas "pedido registrado" hasta que esa herramienta se ejecute.`;
 
   const intentIsProduct = intentSelection?.intent.includes("product") ?? false;
-  const KB_MAX = hasIntentMatch && !intentIsProduct
-    ? 600
-    : promptMode === "general" ? 4000 : promptMode === "catalog" ? 1800 : promptMode === "product_detail" ? 2500 : 1200;
+  const KB_MAX =
+    hasIntentMatch && !intentIsProduct
+      ? 600
+      : promptMode === "general"
+        ? 4000
+        : promptMode === "catalog"
+          ? 1800
+          : promptMode === "product_detail"
+            ? 2500
+            : 1200;
   const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
-  const knowledgeBase = selectRelevantText(knowledgeBaseRaw, `${detailQuestionText}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`, KB_MAX);
+  const knowledgeBase = selectRelevantText(
+    knowledgeBaseRaw,
+    `${detailQuestionText}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`,
+    KB_MAX,
+  );
 
-  const contextProductForPrompt = selectedProductForDetails ?? orderContextProduct;
+  const contextProductForPrompt =
+    selectedProductForDetails ??
+    orderContextProduct ??
+    contextualProduct ??
+    focusedProduct;
   const selectedProductText = contextProductForPrompt
     ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${
         startOrderFlow
@@ -2056,13 +2415,12 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     : "";
 
   const system = [
-    (cfg.system_prompt as string)?.trim() || "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
+    (cfg.system_prompt as string)?.trim() ||
+      "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     `\n\n=== MODO DE PROMPT DINÁMICO ===\nmodo: ${promptMode}\nUsa solo el contexto incluido aquí. Para detalles del producto elegido, prioriza PRODUCTO ELEGIDO y BASE DE CONOCIMIENTO relevante; no reinicies búsqueda ni envías otra ronda de imágenes salvo que el cliente pida otros productos.`,
     conversationRulesText,
     selectedProductText,
-    knowledgeBase
-      ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}`
-      : "",
+    knowledgeBase ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}` : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
     "\n\n" + activeFlowGuide,
     orderStateText,
@@ -2071,7 +2429,8 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     dynamicContextText,
   ].join("");
 
-  const approxPromptChars = system.length + messages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+  const approxPromptChars =
+    system.length + messages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
   console.info("[runAiAgent] prompt size", {
     orgId,
     threadId,
@@ -2090,9 +2449,17 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   let deliveredProductMedia = false;
 
   // Cortocircuito determinista de media: si el cliente pide ver VIDEO/FOTO de un producto
-  if (!isCollectingOrder && catalogCfg && isMediaRequest(lastUserText) && (!catalogQuery || genericMediaReference(catalogQuery))) {
+  if (
+    !isCollectingOrder &&
+    catalogCfg &&
+    isMediaRequest(lastUserText) &&
+    (!catalogQuery || genericMediaReference(catalogQuery))
+  ) {
     const wantsVideo = /\b(video|videos)\b/i.test(
-      lastUserText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+      lastUserText
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, ""),
     );
     const mediaProduct =
       selectedProductForDetails ??
@@ -2102,7 +2469,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       (await resolveProductFromConversation());
 
     // Ruteo inteligente: ¿la consulta nombra un producto NUEVO o se refiere al que está en foco?
-    const namesNewProduct = !!catalogQuery && catalogQuery.length >= 3 && !genericMediaReference(catalogQuery) && !mentionsFocusedProduct(catalogQuery, mediaProduct);
+    const namesNewProduct =
+      !!catalogQuery &&
+      catalogQuery.length >= 3 &&
+      !genericMediaReference(catalogQuery) &&
+      !mentionsFocusedProduct(catalogQuery, mediaProduct);
 
     if (mediaProduct && !namesNewProduct) {
       await saveFocusedProduct(ctx, mediaProduct); // Guardar foco para próximos turnos
@@ -2111,50 +2482,83 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
       if (wantsVideo && !mediaProduct.video_url) {
         if (mediaProduct.image_url) {
-          await executeToolCall({ id: `auto_media_${mediaProduct.id}`, function: {
-            name: "send_product_image",
-            arguments: JSON.stringify({ product_id: mediaProduct.id, caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}` }),
-          }}, ctx);
+          await executeToolCall(
+            {
+              id: `auto_media_${mediaProduct.id}`,
+              function: {
+                name: "send_product_image",
+                arguments: JSON.stringify({
+                  product_id: mediaProduct.id,
+                  caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}`,
+                }),
+              },
+            },
+            ctx,
+          );
           actions.push("send_product_image");
         }
-        return { reply: `Del ${mediaProduct.name} no tengo video cargado, pero te envié la imagen. ¿Quieres que te dé más detalles o lo agendamos? 😊`,
-                 actions: actions.length ? actions : ["media_no_video"] };
+        return {
+          reply: `Del ${mediaProduct.name} no tengo video cargado, pero te envié la imagen. ¿Quieres que te dé más detalles o lo agendamos? 😊`,
+          actions: actions.length ? actions : ["media_no_video"],
+        };
       }
 
       if (url) {
-        const exec = await executeToolCall({ id: `auto_media_${mediaProduct.id}`, function: {
-          name: kind === "video" ? "send_product_video" : "send_product_image",
-          arguments: JSON.stringify({ product_id: mediaProduct.id, caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}` }),
-        }}, ctx);
-        
+        const exec = await executeToolCall(
+          {
+            id: `auto_media_${mediaProduct.id}`,
+            function: {
+              name: kind === "video" ? "send_product_video" : "send_product_image",
+              arguments: JSON.stringify({
+                product_id: mediaProduct.id,
+                caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}`,
+              }),
+            },
+          },
+          ctx,
+        );
+
         const sent = /enviado al cliente/i.test(exec.result);
 
         // Si el video no es válido, NO afirmar que se envió: fallback a imagen.
         if (kind === "video" && !sent) {
           if (mediaProduct.image_url) {
-            const imgExec = await executeToolCall({ id: `auto_media_img_${mediaProduct.id}`, function: {
-              name: "send_product_image",
-              arguments: JSON.stringify({ product_id: mediaProduct.id, caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}` }),
-            }}, ctx);
+            const imgExec = await executeToolCall(
+              {
+                id: `auto_media_img_${mediaProduct.id}`,
+                function: {
+                  name: "send_product_image",
+                  arguments: JSON.stringify({
+                    product_id: mediaProduct.id,
+                    caption: `${mediaProduct.name} — $${mediaProduct.price ?? ""}`,
+                  }),
+                },
+              },
+              ctx,
+            );
             actions.push(imgExec.name);
-            return { reply: `El video del ${mediaProduct.name} no está disponible en este momento, pero te envié la imagen. ¿Quieres que te dé más detalles o lo agendamos? 😊`, actions };
+            return {
+              reply: `El video del ${mediaProduct.name} no está disponible en este momento, pero te envié la imagen. ¿Quieres que te dé más detalles o lo agendamos? 😊`,
+              actions,
+            };
           }
-          return { reply: `Por ahora no puedo enviarte el video del ${mediaProduct.name}, pero con gusto te doy todos los detalles. ¿Qué te gustaría saber? 😊`, actions: actions.length ? actions : ["media_invalid_video"] };
+          return {
+            reply: `Por ahora no puedo enviarte el video del ${mediaProduct.name}, pero con gusto te doy todos los detalles. ¿Qué te gustaría saber? 😊`,
+            actions: actions.length ? actions : ["media_invalid_video"],
+          };
         }
 
         actions.push(exec.name);
-        return { reply: `Aquí tienes ${kind === "video" ? "el video" : "la imagen"} del ${mediaProduct.name}. ¿Tienes alguna consulta o te gustaría agendar el pedido? 😊`, actions };
+        return {
+          reply: `Aquí tienes ${kind === "video" ? "el video" : "la imagen"} del ${mediaProduct.name}. ¿Tienes alguna consulta o te gustaría agendar el pedido? 😊`,
+          actions,
+        };
       }
     }
     // Si no se resolvió producto, continúa el flujo normal.
   }
 
-  if (
-    !isCollectingOrder &&
-    catalogCfg &&
-    wantsMoreProducts &&
-    storedCatalogState.query
-  ) {
+  if (!isCollectingOrder && catalogCfg && wantsMoreProducts && storedCatalogState.query) {
     const allMatches = await searchCatalog(catalogCfg, storedCatalogState.query, 60);
     const shownIds = new Set(storedCatalogState.shownIds);
     const newProducts = allMatches.filter((p) => !shownIds.has(p.id)).slice(0, 6);
@@ -2167,11 +2571,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     }
 
     ctx.lastProducts = newProducts;
-    await saveCatalogSearchState(
-      ctx,
-      storedCatalogState.query,
-      [...shownIds, ...newProducts.map((product) => product.id)],
-    );
+    await saveCatalogSearchState(ctx, storedCatalogState.query, [
+      ...shownIds,
+      ...newProducts.map((product) => product.id),
+    ]);
 
     for (const product of newProducts.filter((p) => p.image_url)) {
       const index = newProducts.findIndex((p) => p.id === product.id) + 1;
@@ -2204,14 +2607,23 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   if (!isCollectingOrder && promptMode === "catalog" && catalogCfg && catalogQuery) {
     // 1) Frase de espera ANTES de iniciar la búsqueda (no la dice la IA).
-    await queueOutgoingText(ctx, "¡Claro que sí! Permíteme 2 min mientras te busco todos los que tenemos 😉");
+    await queueOutgoingText(
+      ctx,
+      "¡Claro que sí! Permíteme 2 min mientras te busco todos los que tenemos 😉",
+    );
 
     // 2) Búsqueda en cascada: searchCatalog ya expande términos y filtra de forma estricta.
-    console.log(`[DEBUG SEARCH] lastUserText="${lastUserText}", catalogQuery="${catalogQuery}", currentCatalogQuery="${currentCatalogQuery}"`);
+    console.log(
+      `[DEBUG SEARCH] lastUserText="${lastUserText}", catalogQuery="${catalogQuery}", currentCatalogQuery="${currentCatalogQuery}"`,
+    );
     const products = await searchCatalog(catalogCfg, catalogQuery, 6);
     ctx.lastProducts = products;
-    console.log(`[DEBUG SEARCH] searchCatalog devolvió ${products.length} productos: ${products.map(p => `${p.id}/${p.name}`).join(", ")}`);
-    console.log(`[DEBUG SEARCH] productos con image_url: ${products.filter(p => p.image_url).length}`);
+    console.log(
+      `[DEBUG SEARCH] searchCatalog devolvió ${products.length} productos: ${products.map((p) => `${p.id}/${p.name}`).join(", ")}`,
+    );
+    console.log(
+      `[DEBUG SEARCH] productos con image_url: ${products.filter((p) => p.image_url).length}`,
+    );
 
     if (!products.length) {
       return {
@@ -2240,7 +2652,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
             }),
           },
         },
-        ctx
+        ctx,
       );
       actions.push(imageExec.name);
       if (/enviado al cliente/i.test(imageExec.result)) deliveredProductMedia = true;
@@ -2282,11 +2694,14 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         return { reply: focused.text.trim(), actions: ["product_detail_from_catalog"] };
       }
     } catch (err) {
-      console.warn("[runAiAgent] Falló el detalle del producto enfocado, se utilizará la respuesta determinista del catálogo", {
-        error: err instanceof Error ? err.message : String(err),
-        orgId,
-        threadId,
-      });
+      console.warn(
+        "[runAiAgent] Falló el detalle del producto enfocado, se utilizará la respuesta determinista del catálogo",
+        {
+          error: err instanceof Error ? err.message : String(err),
+          orgId,
+          threadId,
+        },
+      );
     }
     await saveFocusedProduct(ctx, selectedProductForDetails);
     return {
@@ -2308,12 +2723,19 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       if (chosen) {
         // Enriquecer con características/beneficios completos del catálogo (la
         // lista reconstruida puede venir sin descripción ni atributos).
-        if (catalogCfg && (!chosen.description && !(chosen.attributes && Object.keys(chosen.attributes).length))) {
+        if (
+          catalogCfg &&
+          !chosen.description &&
+          !(chosen.attributes && Object.keys(chosen.attributes).length)
+        ) {
           try {
             const full = await getCatalogProduct(catalogCfg, chosen.id);
             if (full) chosen = full;
           } catch (err) {
-            console.warn("[runAiAgent] no se pudo enriquecer el producto elegido", err instanceof Error ? err.message : String(err));
+            console.warn(
+              "[runAiAgent] no se pudo enriquecer el producto elegido",
+              err instanceof Error ? err.message : String(err),
+            );
           }
         }
 
@@ -2364,8 +2786,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     return stableStringify(rawArgs);
   };
 
-  const toolCallSignature = (tc: { function: { name: string; arguments: string | Record<string, unknown> } }) =>
-    `${tc.function.name}:${normalizeToolArgs(tc.function.arguments)}`;
+  const toolCallSignature = (tc: {
+    function: { name: string; arguments: string | Record<string, unknown> };
+  }) => `${tc.function.name}:${normalizeToolArgs(tc.function.arguments)}`;
 
   const FIELD_ALIASES: Record<string, string[]> = {
     nombre: ["nombre", "cliente", "name"],
@@ -2376,7 +2799,12 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     cantidad: ["cantidad", "unidades", "qty", "cant"],
   };
   const normKey = (s: string) =>
-    s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, "").trim();
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9 ]/g, "")
+      .trim();
 
   // Intenta estructurar un mensaje libre del cliente en los campos del pedido.
   const extractStructuredOrderData = (text: string): Record<string, string> => {
@@ -2399,10 +2827,14 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     // 2) Volcado separado por "/" o "," mapeado posicionalmente a los campos.
     if (Object.keys(out).length < Math.min(2, fieldNames.length) && /[\/,]/.test(text)) {
       const sep = text.includes("/") ? "/" : ",";
-      const parts = text.split(sep).map((p) => p.trim()).filter(Boolean);
+      const parts = text
+        .split(sep)
+        .map((p) => p.trim())
+        .filter(Boolean);
       if (parts.length >= 2) {
         fieldNames.forEach((fn, i) => {
-          if (parts[i] && !out[fn]) out[fn] = parts[i].replace(/^(enviame|quiero|cantidad)\s*/i, "").trim();
+          if (parts[i] && !out[fn])
+            out[fn] = parts[i].replace(/^(enviame|quiero|cantidad)\s*/i, "").trim();
         });
       }
     }
@@ -2474,13 +2906,22 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
       .filter((m) => !m.content.trim().startsWith("[INSTRUCCIÓN DEL SISTEMA"));
     const recent = visibleHistory.slice(-16);
-    const lastUser = [...visibleHistory].reverse().find((m) => m.role === "user")?.content?.trim() ?? "";
-    const lastAssistant = [...visibleHistory].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
+    const lastUser =
+      [...visibleHistory]
+        .reverse()
+        .find((m) => m.role === "user")
+        ?.content?.trim() ?? "";
+    const lastAssistant =
+      [...visibleHistory]
+        .reverse()
+        .find((m) => m.role === "assistant")
+        ?.content?.trim() ?? "";
 
     const structured = extractStructuredOrderData(lastUser);
 
     return {
-      Origen: "Recuperación automática: la IA confirmó el pedido sin ejecutar la herramienta confirm_order",
+      Origen:
+        "Recuperación automática: la IA confirmó el pedido sin ejecutar la herramienta confirm_order",
       "Confirmación cliente": lastUser,
       "Resumen mostrado al cliente": lastAssistant,
       "Respuesta de confirmación enviada": replyText,
@@ -2495,8 +2936,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   const isExplicitCustomerConfirmation = (text: string) => {
     const normalized = text.trim().toLowerCase();
     if (!normalized) return false;
-    const shortAffirmative = /^(s[ií]|si|ok|okay|dale|listo|claro|vale|perfecto|confirmo|confirmado|adelante|de acuerdo)([\s.!¡¿?]|$)/i;
-    const explicitConfirmation = /\b(correcto|est[aá] bien|todo bien|confirmar|confirmado|confirmo|adelante|de acuerdo|registrad[oa]|guardad[oa]|guardarlo|guardar|pedido.*bien)\b/i;
+    const shortAffirmative =
+      /^(s[ií]|si|ok|okay|dale|listo|claro|vale|perfecto|confirmo|confirmado|adelante|de acuerdo)([\s.!¡¿?]|$)/i;
+    const explicitConfirmation =
+      /\b(correcto|est[aá] bien|todo bien|confirmar|confirmado|confirmo|adelante|de acuerdo|registrad[oa]|guardad[oa]|guardarlo|guardar|pedido.*bien)\b/i;
     return shortAffirmative.test(normalized) || explicitConfirmation.test(normalized);
   };
 
@@ -2514,18 +2957,30 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .map((m) => m.content ?? "")
       .join(" \n");
 
-    const confirmationPrompt = /\b(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa]|pedido.*bien|confirmar.*pedido|confirmaci[oó]n.*pedido|¿.*correct[oa].*pedido|¿.*informaci[oó]n.*correcta|¿.*quieres que registre|¿.*quieres que lo registre|registralo|reg[íi]stralo|guardalo|confirmalo)\b/i;
-    const orderContextPrompt = /\b(pedido|resumen|confirmaci[oó]n|datos.*pedido|guardar|registrar|confirmar)\b/i;
-    
+    const confirmationPrompt =
+      /\b(informaci[oó]n es correcta|confirmar (su |tu |el )?pedido|resumen|datos.*pedido|pedido.*correct[oa]|pedido.*bien|confirmar.*pedido|confirmaci[oó]n.*pedido|¿.*correct[oa].*pedido|¿.*informaci[oó]n.*correcta|¿.*quieres que registre|¿.*quieres que lo registre|registralo|reg[íi]stralo|guardalo|confirmalo)\b/i;
+    const orderContextPrompt =
+      /\b(pedido|resumen|confirmaci[oó]n|datos.*pedido|guardar|registrar|confirmar)\b/i;
+
     const isExplicitConf = isExplicitCustomerConfirmation(lastUser);
     const isDump = isCollectingOrder && isDataDump();
 
-    return (isExplicitConf && (confirmationPrompt.test(recentAssistantPrompts) || orderContextPrompt.test(recentAssistantPrompts))) || isDump;
+    return (
+      (isExplicitConf &&
+        (confirmationPrompt.test(recentAssistantPrompts) ||
+          orderContextPrompt.test(recentAssistantPrompts))) ||
+      isDump
+    );
   };
 
   const markCollectingOrderDataIfNeeded = async (replyText: string) => {
     if (!orderFields.length || orderConfirmed || actions.includes("confirm_order")) return;
-    if (!/(para agendar su pedido|para agendar tu pedido|ind[ií]queme|ind[ií]came|datos.*pedido|pedido.*datos)/i.test(replyText)) return;
+    if (
+      !/(para agendar su pedido|para agendar tu pedido|ind[ií]queme|ind[ií]came|datos.*pedido|pedido.*datos)/i.test(
+        replyText,
+      )
+    )
+      return;
     await (supabaseAdmin as any)
       .from("threads")
       .update({ purchase_intent: "collecting_data" })
@@ -2534,7 +2989,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   };
 
   const recoverMissingOrderConfirmation = async (replyText: string) => {
-    if (!isOrderClaimWithoutConfirmation(replyText) || actions.includes("confirm_order") || orderConfirmed) {
+    if (
+      !isOrderClaimWithoutConfirmation(replyText) ||
+      actions.includes("confirm_order") ||
+      orderConfirmed
+    ) {
       return false;
     }
 
@@ -2548,7 +3007,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           }),
         },
       },
-      ctx
+      ctx,
     );
 
     actions.push(exec.name);
@@ -2563,16 +3022,21 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         function: {
           name: "confirm_order",
           arguments: JSON.stringify({
-            form_data: JSON.stringify(buildRecoveredOrderData("Confirmación explícita del cliente")),
+            form_data: JSON.stringify(
+              buildRecoveredOrderData("Confirmación explícita del cliente"),
+            ),
           }),
         },
       },
-      ctx
+      ctx,
     );
     actions.push(exec.name);
     orderConfirmed = exec.result.toLowerCase().includes("pedido guardado exitosamente");
     if (orderConfirmed) {
-      return { reply: "Pedido registrado correctamente. Gracias, su pedido está en proceso.", actions };
+      return {
+        reply: "Pedido registrado correctamente. Gracias, su pedido está en proceso.",
+        actions,
+      };
     }
   }
 
@@ -2580,23 +3044,23 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   // Aumentamos a 6 rondas para dar margen a encadenar múltiples llamadas a send_product_image.
   const notifyRetryMessage = async (attempt: number) => {
     if (!sessionId || !chatId) return;
-    
-    let message = '';
+
+    let message = "";
     if (attempt === 4) {
       // 4to intento después de 3 silenciosos
-      message = 'Permíteme un minuto, ya te confirmo 😊';
+      message = "Permíteme un minuto, ya te confirmo 😊";
     } else if (attempt === 7) {
       // 7mo intento, último esfuerzo
-      message = 'Dame un ratito, ya te envío 😉';
+      message = "Dame un ratito, ya te envío 😉";
     }
-    
+
     if (message) {
-      await supabaseAdmin.from('engine_commands').insert({
+      await (supabaseAdmin as any).from("engine_commands").insert({
         org_id: orgId,
         session_id: sessionId,
-        type: 'SEND_MESSAGE',
+        type: "SEND_MESSAGE",
         payload: { chatId, text: message },
-        status: 'pending',
+        status: "pending",
       });
     }
   };
@@ -2607,29 +3071,34 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       result = await callAiProvider(cfg, msgs, tools, notifyRetryMessage);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn('[runAiAgent] round failed, attempting fallback or continuing', {
+      console.warn("[runAiAgent] round failed, attempting fallback or continuing", {
         round,
         error: errMsg,
         provider: cfg.selected_provider || cfg.provider,
         hasActions: actions.length > 0,
       });
-      
+
       // Si es Vertex y hay proveedor alternativo, intentar fallback
-      if ((cfg.selected_provider === 'vertex' || cfg.provider === 'vertex') &&
-          (errMsg.includes('Vertex 429') ||
-            errMsg.includes('Vertex 503') ||
-            errMsg.includes('RESOURCE_EXHAUSTED') ||
-            errMsg.includes('AbortError') ||
-            errMsg.includes('timeout') ||
-            errMsg.includes('aborted'))) {
+      if (
+        (cfg.selected_provider === "vertex" || cfg.provider === "vertex") &&
+        (errMsg.includes("Vertex 429") ||
+          errMsg.includes("Vertex 503") ||
+          errMsg.includes("RESOURCE_EXHAUSTED") ||
+          errMsg.includes("AbortError") ||
+          errMsg.includes("timeout") ||
+          errMsg.includes("aborted"))
+      ) {
         try {
-          console.info('[runAiAgent] Vertex failed in loop, attempting fallback provider');
+          console.info("[runAiAgent] Vertex failed in loop, attempting fallback provider");
           result = await fallbackVertexProvider(cfg, msgs, tools);
         } catch (fallbackErr) {
-          console.error('[runAiAgent] fallback also failed', fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
+          console.error(
+            "[runAiAgent] fallback also failed",
+            fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+          );
           // No break: permitir que el loop continúe en la siguiente ronda
           // Usar respuesta genérica para mantener conversación viva
-          result = { text: '', toolCalls: undefined };
+          result = { text: "", toolCalls: undefined };
           continue;
         }
       } else {
@@ -2639,8 +3108,8 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     }
 
     if (!result) {
-      console.warn('[runAiAgent] result is undefined after error handling, using safe fallback');
-      result = { text: '', toolCalls: undefined };
+      console.warn("[runAiAgent] result is undefined after error handling, using safe fallback");
+      result = { text: "", toolCalls: undefined };
     }
 
     const { text, toolCalls } = result;
@@ -2689,7 +3158,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         exec = await executeToolCall(tc, ctx);
       }
       actions.push(exec.name);
-      if (exec.name === "confirm_order" && exec.result.toLowerCase().includes("pedido guardado exitosamente")) {
+      if (
+        exec.name === "confirm_order" &&
+        exec.result.toLowerCase().includes("pedido guardado exitosamente")
+      ) {
         orderConfirmed = true;
       }
       if (
@@ -2709,7 +3181,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           const parsed = JSON.parse(exec.result || "{}");
           const productsFromTool = parsed?.products ?? [];
           if (Array.isArray(productsFromTool) && productsFromTool.length > 0) {
-            const topImages = productsFromTool.slice(0, 6).filter((p: any) => p?.id && p?.has_image !== false);
+            const topImages = productsFromTool
+              .slice(0, 6)
+              .filter((p: any) => p?.id && p?.has_image !== false);
             for (const p of topImages) {
               const imageExec = await executeToolCall(
                 {
@@ -2747,16 +3221,19 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     const result = await callAiProvider(cfg, msgs);
     finalText = result.text;
   } catch (err) {
-    console.warn('[runAiAgent] final text generation failed after tool chain, falling back to last known text or image follow-up', {
-      error: err instanceof Error ? err.message : String(err),
-      orgId,
-      threadId,
-      actions,
-    });
+    console.warn(
+      "[runAiAgent] final text generation failed after tool chain, falling back to last known text or image follow-up",
+      {
+        error: err instanceof Error ? err.message : String(err),
+        orgId,
+        threadId,
+        actions,
+      },
+    );
     if (lastText) {
       finalText = lastText;
-    } else if (actions.some((a) => a === 'send_product_image' || a === 'send_product_video')) {
-      finalText = '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.';
+    } else if (actions.some((a) => a === "send_product_image" || a === "send_product_video")) {
+      finalText = "¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.";
     } else {
       throw err;
     }
@@ -2787,7 +3264,7 @@ export async function generateReply(
     selected_provider?: string | null;
   },
   userText: string,
-  history: Msg[] = []
+  history: Msg[] = [],
 ): Promise<string> {
   const system = [
     cfg.system_prompt?.trim() || "Eres un asistente util.",

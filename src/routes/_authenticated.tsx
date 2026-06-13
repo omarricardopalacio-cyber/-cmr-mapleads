@@ -88,7 +88,7 @@ function AppSidebar() {
     items.map((item) => (
       <SidebarMenuItem key={item.title}>
         <SidebarMenuButton asChild isActive={pathname.startsWith(item.url)}>
-          <Link to={item.url} search={item.query} className="flex items-center gap-2">
+          <Link to={item.url} className="flex items-center gap-2">
             <item.icon className="h-4 w-4 shrink-0" />
             <span className="truncate">{item.title}</span>
           </Link>
