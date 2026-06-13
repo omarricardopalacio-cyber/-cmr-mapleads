@@ -2576,23 +2576,31 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       ...newProducts.map((product) => product.id),
     ]);
 
-    for (const product of newProducts.filter((p) => p.image_url)) {
+    for (const product of newProducts) {
       const index = newProducts.findIndex((p) => p.id === product.id) + 1;
-      const imageExec = await executeToolCall(
-        {
-          id: `more_img_${product.id}`,
-          function: {
-            name: "send_product_image",
-            arguments: JSON.stringify({
-              product_id: product.id,
-              caption: `${index}. ${product.name} — $${product.price ?? ""}`,
-            }),
+      const caption = `${index}. ${product.name} — $${product.price ?? ""}`;
+      if (product.image_url) {
+        const imageExec = await executeToolCall(
+          {
+            id: `more_img_${product.id}`,
+            function: {
+              name: "send_product_image",
+              arguments: JSON.stringify({
+                product_id: product.id,
+                caption,
+              }),
+            },
           },
-        },
-        ctx,
-      );
-      actions.push(imageExec.name);
-      if (/enviado al cliente/i.test(imageExec.result)) {
+          ctx,
+        );
+        actions.push(imageExec.name);
+        if (/enviado al cliente/i.test(imageExec.result)) {
+          deliveredProductMedia = true;
+        }
+      } else {
+        // Sin imagen: enviar como texto numerado para que el cliente vea todos los resultados
+        await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
+        actions.push("send_product_text");
         deliveredProductMedia = true;
       }
     }
@@ -2638,24 +2646,33 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       products.map((product) => product.id),
     );
 
-    // 3) Enviar cada producto numerado.
-    for (const product of products.filter((p) => p.image_url)) {
+    // 3) Enviar cada producto numerado. Los que no tienen imagen se envían como texto
+    //    para que el cliente vea TODOS los resultados, no sólo los que tienen foto.
+    for (const product of products) {
       const index = products.findIndex((p) => p.id === product.id) + 1;
-      const imageExec = await executeToolCall(
-        {
-          id: `auto_img_${product.id}`,
-          function: {
-            name: "send_product_image",
-            arguments: JSON.stringify({
-              product_id: product.id,
-              caption: `${index}. ${product.name} — $${product.price ?? ""}`,
-            }),
+      const caption = `${index}. ${product.name} — $${product.price ?? ""}`;
+      if (product.image_url) {
+        const imageExec = await executeToolCall(
+          {
+            id: `auto_img_${product.id}`,
+            function: {
+              name: "send_product_image",
+              arguments: JSON.stringify({
+                product_id: product.id,
+                caption,
+              }),
+            },
           },
-        },
-        ctx,
-      );
-      actions.push(imageExec.name);
-      if (/enviado al cliente/i.test(imageExec.result)) deliveredProductMedia = true;
+          ctx,
+        );
+        actions.push(imageExec.name);
+        if (/enviado al cliente/i.test(imageExec.result)) deliveredProductMedia = true;
+      } else {
+        // Sin imagen: enviar como texto numerado para que no quede invisible
+        await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
+        actions.push("send_product_text");
+        deliveredProductMedia = true;
+      }
     }
 
     // 4) Mensaje de cierre con la palabra buscada; luego la IA queda activa.
