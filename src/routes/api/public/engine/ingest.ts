@@ -599,34 +599,6 @@ async function maybeAiReply(
     let actions = firstAttempt.actions ?? []
     let finalReply = firstAttempt.reply?.trim() || ''
 
-    if (!finalReply && actions.length === 0) {
-      console.warn('[ai-reply] empty first response, attempting second immediate retry', {
-        orgId,
-        threadId,
-        chatId,
-        provider: cfgFast.provider,
-        model: cfgFast.model,
-      })
-      const retryHistory = [
-        ...historyWithContext,
-        {
-          role: 'system' as const,
-          content:
-            'Si no respondiste antes, por favor responde ahora con un mensaje breve y claro usando el historial completo. No dejes la respuesta vacía.',
-        },
-      ]
-      const retryResult = await runAiAgent({
-        orgId,
-        threadId,
-        contactId,
-        sessionId,
-        chatId,
-        messages: retryHistory,
-        cfg: cfgFast,
-      })
-      actions = retryResult.actions ?? []
-      finalReply = retryResult.reply?.trim() || ''
-    }
 
     if (!finalReply) {
       const sentImage = actions?.includes('send_product_image') || actions?.includes('send_product_video')
@@ -657,7 +629,7 @@ async function maybeAiReply(
   } catch (err) {
     let errMsg = err instanceof Error ? err.message : String(err);
     const errStack = err instanceof Error ? err.stack : '';
-    console.warn('[ai-reply] first attempt failed, trying one immediate retry', {
+    console.warn('[ai-reply] first attempt failed', {
       message: errMsg,
       orgId,
       threadId,
@@ -666,112 +638,6 @@ async function maybeAiReply(
       model: cfgFast?.model,
       selected_provider: cfg?.selected_provider,
     });
-
-    if (runAiAgent && cfgFast) {
-      try {
-        const retryResult = await runAiAgent({
-          orgId,
-          threadId,
-          contactId,
-          sessionId,
-          chatId,
-          messages: [
-            ...historyWithContext,
-            {
-              role: 'system' as const,
-              content:
-                'Reintenta ahora y responde con texto. Si ya enviaste datos, no dejes la respuesta en blanco. Usa todo el historial para generar la respuesta.',
-            },
-          ],
-          cfg: cfgFast,
-        });
-
-        let retryReply = retryResult.reply?.trim() || '';
-        if (!retryReply) {
-          const sentImage = retryResult.actions?.includes('send_product_image') || retryResult.actions?.includes('send_product_video');
-          retryReply = sentImage
-            ? '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
-            : 'Un momento por favor… ¿me confirmas qué producto te interesa?';
-        }
-
-        console.info('[ai-reply] retry succeeded', {
-          orgId,
-          threadId,
-          chatId,
-          replyLength: retryReply.length,
-        });
-
-        await supabaseAdmin.from('engine_commands').insert({
-          org_id: orgId,
-          session_id: sessionId,
-          type: 'SEND_MESSAGE',
-          payload: { chatId, text: retryReply },
-          status: 'pending',
-        });
-        return;
-      } catch (retryErr) {
-        errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-        console.error('[ai-reply] retry failed, guardando para reintento automático', {
-          message: errMsg,
-          orgId,
-          threadId,
-          chatId,
-          provider,
-          model: cfgFast.model,
-        });
-      }
-    } else {
-      console.error('[ai-reply] retry unavailable because AI runner or config is missing', {
-        orgId,
-        threadId,
-      });
-    }
-
-    try {
-      const retryResult = await runAiAgent({
-        orgId,
-        threadId,
-        contactId,
-        sessionId,
-        chatId,
-        messages: historyWithContext,
-        cfg: cfgFast,
-      });
-
-      let retryReply = retryResult.reply?.trim() || '';
-      if (!retryReply) {
-        const sentImage = retryResult.actions?.includes('send_product_image') || retryResult.actions?.includes('send_product_video');
-        retryReply = sentImage
-          ? '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
-          : 'Un momento por favor… ¿me confirmas qué producto te interesa?';
-      }
-
-      console.info('[ai-reply] retry succeeded', {
-        orgId,
-        threadId,
-        chatId,
-        replyLength: retryReply.length,
-      });
-
-      await supabaseAdmin.from('engine_commands').insert({
-        org_id: orgId,
-        session_id: sessionId,
-        type: 'SEND_MESSAGE',
-        payload: { chatId, text: retryReply },
-        status: 'pending',
-      });
-      return;
-    } catch (retryErr) {
-      errMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-      console.error('[ai-reply] retry failed, guardando para reintento automático', {
-        message: errMsg,
-        orgId,
-        threadId,
-        chatId,
-        provider: cfg?.provider,
-        model: cfg?.model,
-      });
-    }
 
     console.error('[ai-reply] error - DETALLES COMPLETOS:', {
       message: errMsg,
