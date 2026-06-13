@@ -48,9 +48,8 @@ async function requireSuperAdmin(userId: string): Promise<void> {
 // 1. GET SAAS ACCESS - Verificar SUPER_ADMIN
 // ============================================================================
 
-export const getSaasAccess = createServerFn(
-  { method: "GET" },
-  async (_input, { context }) => {
+export const getSaasAccess = createServerFn({ method: "GET" })
+  .handler(async ({ context }) => {
     try {
       const userId = context.userId;
       if (!userId) {
@@ -75,23 +74,18 @@ export const getSaasAccess = createServerFn(
         userId: null,
       };
     }
-  }
-);
+  });
 
 // ============================================================================
 // 2. LIST SAAS COMPANIES - Listar todas las organizaciones
 // ============================================================================
 
-export const listSaasCompanies = createServerFn(
-  { method: "GET" },
-  async (
-    _input: {
-      limit?: number;
-      offset?: number;
-      search?: string;
-    },
-    { context }
-  ) => {
+export const listSaasCompanies = createServerFn({ method: "GET" })
+  .handler(async ({ context }, _input: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -132,22 +126,17 @@ export const listSaasCompanies = createServerFn(
     });
 
     return data || [];
-  }
-);
+  });
 
 // ============================================================================
 // 3. UPDATE COMPANY - Actualizar estado de organización
 // ============================================================================
 
-export const updateCompany = createServerFn(
-  { method: "POST" },
-  async (
-    _input: {
-      orgId: string;
-      status: "active" | "trial" | "suspended";
-    },
-    { context }
-  ) => {
+export const updateCompany = createServerFn({ method: "POST" })
+  .handler(async ({ context }, _input: {
+    orgId: string;
+    status: "active" | "trial" | "suspended";
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -170,21 +159,16 @@ export const updateCompany = createServerFn(
     });
 
     return data;
-  }
-);
+  });
 
 // ============================================================================
 // 4. START IMPERSONATION - Suplantar una organización
 // ============================================================================
 
-export const startImpersonationFn = createServerFn(
-  { method: "POST" },
-  async (
-    _input: {
-      orgId: string;
-    },
-    { context }
-  ) => {
+export const startImpersonationFn = createServerFn({ method: "POST" })
+  .handler(async ({ context }, _input: {
+    orgId: string;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -204,16 +188,14 @@ export const startImpersonationFn = createServerFn(
     });
 
     return result;
-  }
-);
+  });
 
 // ============================================================================
 // 5. STOP IMPERSONATION - Terminar suplantación
 // ============================================================================
 
-export const stopImpersonationFn = createServerFn(
-  { method: "POST" },
-  async (_input, { context }) => {
+export const stopImpersonationFn = createServerFn({ method: "POST" })
+  .handler(async ({ context }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -232,22 +214,17 @@ export const stopImpersonationFn = createServerFn(
     });
 
     return result;
-  }
-);
+  });
 
 // ============================================================================
 // 6. LIST SAAS USERS - Listar usuarios con roles
 // ============================================================================
 
-export const listSaasUsers = createServerFn(
-  { method: "GET" },
-  async (
-    _input: {
-      limit?: number;
-      offset?: number;
-    },
-    { context }
-  ) => {
+export const listSaasUsers = createServerFn({ method: "GET" })
+  .handler(async ({ context }, _input: {
+    limit?: number;
+    offset?: number;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -267,22 +244,17 @@ export const listSaasUsers = createServerFn(
     });
 
     return data || [];
-  }
-);
+  });
 
 // ============================================================================
 // 7. UPDATE SAAS USER - Actualizar rol de usuario SaaS
 // ============================================================================
 
-export const updateSaasUser = createServerFn(
-  { method: "POST" },
-  async (
-    _input: {
-      userId: string;
-      action: "grant" | "revoke";
-    },
-    { context }
-  ) => {
+export const updateSaasUser = createServerFn({ method: "POST" })
+  .handler(async ({ context }, _input: {
+    userId: string;
+    action: "grant" | "revoke";
+  }) => {
     const currentUserId = context?.userId;
     if (!currentUserId) throw new Error("Unauthorized");
 
@@ -311,30 +283,25 @@ export const updateSaasUser = createServerFn(
 
       return { success: true, action: "revoked" };
     }
-  }
-);
+  });
 
 // ============================================================================
 // 8. SAVE SAAS PLAN - Crear o actualizar plan de suscripción
 // ============================================================================
 
-export const saveSaasPlan = createServerFn(
-  { method: "POST" },
-  async (
-    _input: {
-      id?: string;
-      name: string;
-      price: number;
-      limits: {
-        maxUsers: number;
-        maxWaSessions: number;
-        maxContacts: number;
-        maxCampaigns: number;
-        maxAutomations: number;
-      };
-    },
-    { context }
-  ) => {
+export const saveSaasPlan = createServerFn({ method: "POST" })
+  .handler(async ({ context }, _input: {
+    id?: string;
+    name: string;
+    price: number;
+    limits: {
+      maxUsers: number;
+      maxWaSessions: number;
+      maxContacts: number;
+      maxCampaigns: number;
+      maxAutomations: number;
+    };
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -379,22 +346,17 @@ export const saveSaasPlan = createServerFn(
     });
 
     return data;
-  }
-);
+  });
 
 // ============================================================================
 // 9. LIST SUBSCRIPTIONS - Listar suscripciones
 // ============================================================================
 
-export const listSubscriptions = createServerFn(
-  { method: "GET" },
-  async (
-    _input: {
-      limit?: number;
-      offset?: number;
-    },
-    { context }
-  ) => {
+export const listSubscriptions = createServerFn({ method: "GET" })
+  .handler(async ({ context }, _input: {
+    limit?: number;
+    offset?: number;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -427,24 +389,19 @@ export const listSubscriptions = createServerFn(
     });
 
     return data || [];
-  }
-);
+  });
 
 // ============================================================================
 // 10. SAVE SUBSCRIPTION - Crear o actualizar suscripción
 // ============================================================================
 
-export const saveSubscription = createServerFn(
-  { method: "POST" },
-  async (
-    _input: {
-      orgId: string;
-      planId: string;
-      status: "active" | "trial" | "suspended" | "expired";
-      renews_at?: string;
-    },
-    { context }
-  ) => {
+export const saveSubscription = createServerFn({ method: "POST" })
+  .handler(async ({ context }, _input: {
+    orgId: string;
+    planId: string;
+    status: "active" | "trial" | "suspended" | "expired";
+    renews_at?: string;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -480,16 +437,14 @@ export const saveSubscription = createServerFn(
     });
 
     return data;
-  }
-);
+  });
 
 // ============================================================================
 // 11. LIST GLOBAL SESSIONS - Sesiones activas globales
 // ============================================================================
 
-export const listGlobalSessions = createServerFn(
-  { method: "GET" },
-  async (_input, { context }) => {
+export const listGlobalSessions = createServerFn({ method: "GET" })
+  .handler(async ({ context }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -516,21 +471,16 @@ export const listGlobalSessions = createServerFn(
     });
 
     return data || [];
-  }
-);
+  });
 
 // ============================================================================
 // 12. MANAGE GLOBAL SESSION - Terminar sesión global (suplantación)
 // ============================================================================
 
-export const manageGlobalSession = createServerFn(
-  { method: "POST" },
-  async (
-    _input: {
-      impersonationId: string;
-    },
-    { context }
-  ) => {
+export const manageGlobalSession = createServerFn({ method: "POST" })
+  .handler(async ({ context }, _input: {
+    impersonationId: string;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -554,23 +504,18 @@ export const manageGlobalSession = createServerFn(
     });
 
     return data;
-  }
-);
+  });
 
 // ============================================================================
 // 13. LIST SAAS AUDIT - Logs de auditoría
 // ============================================================================
 
-export const listSaasAudit = createServerFn(
-  { method: "GET" },
-  async (
-    _input: {
-      limit?: number;
-      offset?: number;
-      action?: string;
-    },
-    { context }
-  ) => {
+export const listSaasAudit = createServerFn({ method: "GET" })
+  .handler(async ({ context }, _input: {
+    limit?: number;
+    offset?: number;
+    action?: string;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -589,40 +534,33 @@ export const listSaasAudit = createServerFn(
     if (error) throw error;
 
     return data || [];
-  }
-);
+  });
 
 // ============================================================================
 // 14. GET GLOBAL SETTINGS - Obtener configuración global
 // ============================================================================
 
-export const getGlobalSettingsFn = createServerFn(
-  { method: "GET" },
-  async (_input, { context }) => {
+export const getGlobalSettingsFn = createServerFn({ method: "GET" })
+  .handler(async ({ context }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
     const settings = await getGlobalSettings();
 
     return settings;
-  }
-);
+  });
 
 // ============================================================================
 // 15. SAVE GLOBAL SETTINGS - Guardar configuración global
 // ============================================================================
 
-export const saveGlobalSettings = createServerFn(
-  { method: "POST" },
-  async (
-    _input: {
-      platformName?: string;
-      primaryColor?: string;
-      globalLimits?: Record<string, any>;
-      aiConfig?: Record<string, any>;
-    },
-    { context }
-  ) => {
+export const saveGlobalSettings = createServerFn({ method: "POST" })
+  .handler(async ({ context }, _input: {
+    platformName?: string;
+    primaryColor?: string;
+    globalLimits?: Record<string, any>;
+    aiConfig?: Record<string, any>;
+  }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Unauthorized");
 
@@ -647,6 +585,4 @@ export const saveGlobalSettings = createServerFn(
     });
 
     return data;
-  }
-);
-
+  });
