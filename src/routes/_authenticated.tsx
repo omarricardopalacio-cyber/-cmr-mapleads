@@ -43,8 +43,10 @@ function AppSidebar() {
   const { data: saasAccess, isLoading, isError, error } = useQuery({
     queryKey: ["saasAccess"],
     queryFn: async () => {
+      console.log("[Query FN] getSaasAccessFn type:", typeof getSaasAccessFn, "value:", getSaasAccessFn);
       const result = await getSaasAccessFn({});
-      console.log("[Query FN] result:", result);
+      console.log("[Query FN] result type:", typeof result, "value:", result);
+      console.log("[Query FN] result.isSuperAdmin:", result?.isSuperAdmin);
       return result;
     },
     retry: false,
