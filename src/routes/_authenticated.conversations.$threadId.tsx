@@ -136,7 +136,9 @@ function ThreadPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => list({ data: { threadId } }),
-    refetchInterval: 8000,
+    // Realtime (supabase.channel('thread-${threadId}')) is the primary source.
+    // We keep a 30s polling fallback in case WebSocket fails.
+    refetchInterval: 30000,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
     retry: false,

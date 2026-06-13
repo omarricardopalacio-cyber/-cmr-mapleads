@@ -51,7 +51,7 @@ function ConversationsLayout() {
   const { data, isLoading } = useQuery({
     queryKey: ["threads", filterTab],
     queryFn: () => fn({ data: { filter: filterTab } }),
-    refetchInterval: 5000,
+    refetchInterval: 2500,
   });
   const params = useParams({ strict: false }) as { threadId?: string };
   const activeId = params.threadId;
@@ -262,7 +262,7 @@ function DiagnosticsPanel() {
   const { data: stats, isLoading } = useQuery({
     queryKey: ["orgStats"],
     queryFn: () => statsFn({}),
-    refetchInterval: 10000,
+    refetchInterval: 15000,
   });
 
   const invalidateAll = () => {

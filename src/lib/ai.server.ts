@@ -459,7 +459,7 @@ export async function callVertexAI(opts: {
             location: opts.location,
           });
           lastError = err;
-          const backoffMs = 1000 * Math.pow(2, attempt - 1);
+          const backoffMs = 500 * Math.pow(2, attempt - 1);
           await new Promise((resolve) => setTimeout(resolve, backoffMs));
           continue;
         }
@@ -497,7 +497,7 @@ export async function callVertexAI(opts: {
             location: opts.location,
           });
           lastError = err instanceof Error ? err : new Error(errMsg);
-          const backoffMs = 1000 * Math.pow(2, attempt - 1);
+          const backoffMs = 500 * Math.pow(2, attempt - 1);
           await new Promise((resolve) => setTimeout(resolve, backoffMs));
           continue;
         }

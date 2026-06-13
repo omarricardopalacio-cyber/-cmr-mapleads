@@ -12,13 +12,13 @@ export const CONSTANTS = {
   RATE_LIMIT_PER_MINUTE: 30,
 
   // Polling
-  POLLING_INTERVAL_MS: 3000,
+  POLLING_INTERVAL_MS: 1000,
   HEARTBEAT_INTERVAL_MS: 15000,
   HEARTBEAT_TIMEOUT_MS: 45000,
 
   // Batch
   BATCH_MAX_SIZE: 50,
-  BATCH_FLUSH_INTERVAL_MS: 5000,
+  BATCH_FLUSH_INTERVAL_MS: 1500,
   /** Above this base64 length, upload to Storage before queuing (avoids DB timeout). */
   MEDIA_INLINE_MAX_LEN: 48_000,
 
