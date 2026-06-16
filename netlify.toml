@@ -1,12 +1,6 @@
 [build]
   command = "npm run build"
-  publish = ".start"
+  publish = ".output/public"
 
-[functions]
-  node_bundler = "esbuild"
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-  force = false
+[build.environment]
+  NODE_VERSION = "20"
