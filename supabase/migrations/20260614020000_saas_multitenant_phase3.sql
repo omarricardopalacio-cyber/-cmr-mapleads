@@ -7,6 +7,33 @@
 
 BEGIN;
 
+-- Ensure current_org_id() and is_super_admin() overload exist (needed by this migration)
+CREATE OR REPLACE FUNCTION public.current_org_id()
+RETURNS UUID
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT org_id FROM public.user_roles WHERE user_id = auth.uid() LIMIT 1;
+$$;
+
+REVOKE ALL ON FUNCTION public.current_org_id() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.current_org_id() TO authenticated, service_role;
+
+-- Ensure is_super_admin() without args exists (overload used by this migration)
+CREATE OR REPLACE FUNCTION public.is_super_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.is_super_admin(auth.uid());
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_super_admin() TO authenticated, service_role;
+
 DO $$
 DECLARE
   private_tables text[] := ARRAY[
@@ -161,10 +188,12 @@ BEGIN
     RAISE NOTICE '✅  public.auto_reply_triggers child policy applied';
   END IF;
 
-  UPDATE global.config_version
-  SET version = version + 1,
-      bumped_at = now()
-  WHERE id = true;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'global' AND table_name = 'config_version') THEN
+    UPDATE global.config_version
+    SET version = version + 1,
+        bumped_at = now()
+    WHERE id = true;
+  END IF;
 
   RAISE NOTICE '============================================================';
   RAISE NOTICE '✅  FASE 3 completada. global.config_version bump enviado.';

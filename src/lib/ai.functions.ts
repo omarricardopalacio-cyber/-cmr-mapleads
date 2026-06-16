@@ -19,10 +19,10 @@ async function getUserOrg(userId: string) {
 
 const DEFAULT_CFG = {
   enabled: false,
-  provider: "lovable" as const,
-  selected_provider: "lovable" as const,
-  fallback_provider: "lovable" as const,
-  model: "google/gemini-2.5-flash",
+  provider: "" as const,
+  selected_provider: "" as const,
+  fallback_provider: "none" as const,
+  model: "gpt-4o-mini",
   system_prompt: "Eres un asistente de ventas amable y conciso. Responde en español.",
   knowledge_base: "",
   respond_to: "all" as const,
@@ -67,8 +67,8 @@ export const getAiConfig = createServerFn({ method: "GET" })
 
 const SaveSchema = z.object({
   enabled: z.boolean(),
-  provider: z.enum(["lovable", "vertex", "openai", "grok"]),
-  selected_provider: z.enum(["lovable", "vertex", "openai", "grok"]).optional(),
+  provider: z.string().min(0),
+  selected_provider: z.string().optional(),
   fallback_provider: z.enum(["lovable", "vertex", "openai", "grok", "none"]).nullable().optional(),
   model: z.string().min(1).max(100),
   system_prompt: z.string().max(8000),

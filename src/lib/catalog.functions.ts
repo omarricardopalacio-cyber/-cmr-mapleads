@@ -255,8 +255,17 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
         });
         if (!res.ok && res.status !== 206) throw new Error(`Error al obtener página ${page}: HTTP ${res.status}`);
         const rows: any[] = await res.json();
+        const status = res.status;
 
-        if (!rows.length) { hasMore = false; break; }
+        if (!rows.length) {
+          console.warn(`[SYNC] página ${page} vacía (HTTP ${status}), deteniendo paginación`);
+          hasMore = false; break;
+        }
+
+        if (page === 0) {
+          console.log(`[SYNC] primera fila de página 0:`, JSON.stringify({ ...rows[0], raw: '...' }).slice(0, 500));
+          console.log(`[SYNC] external_id mapeado:`, mapRow(rows[0]).external_id);
+        }
 
         const upsertRows = rows.map((r) => ({
           ...mapRow(r),
@@ -265,15 +274,17 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
           updated_at: new Date().toISOString(),
         }));
 
-        const { error: upsertErr } = await (supabaseAdmin as any)
+        const { error: upsertErr, data: upsertData } = await (supabaseAdmin as any)
           .from("products")
-          .upsert(upsertRows, { onConflict: "org_id,integration_id,external_id", ignoreDuplicates: false });
+          .upsert(upsertRows, { onConflict: "org_id,integration_id,external_id", ignoreDuplicates: false })
+          .select("id, external_id");
 
         if (upsertErr) {
           failed += rows.length;
-          console.error("[SYNC] upsert error:", upsertErr.message);
+          console.error(`[SYNC] upsert error (página ${page}):`, upsertErr.message, "sample external_id:", upsertRows[0]?.external_id);
         } else {
-          synced += rows.length;
+          synced += upsertData?.length ?? rows.length;
+          console.log(`[SYNC] página ${page}: ${upsertData?.length ?? rows.length} productos insertados/actualizados`);
         }
 
         hasMore = rows.length === PAGE_SIZE;

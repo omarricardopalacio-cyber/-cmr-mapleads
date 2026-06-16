@@ -169,7 +169,11 @@ function CatalogIntegrationsPage() {
     setSyncingId(id);
     try {
       const r: any = await syncFn({ data: { id } });
-      toast.success(`Sincronizado: ${r.synced} productos`);
+      if (r.failed > 0) {
+        toast.warning(`Sincronizado: ${r.synced} productos (${r.failed} fallos)`);
+      } else {
+        toast.success(`Sincronizado: ${r.synced} productos`);
+      }
       qc.invalidateQueries({ queryKey: ["catalog-integrations"] });
       qc.invalidateQueries({ queryKey: ["catalog-diag"] });
     } catch (e: any) {

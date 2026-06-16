@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS public.flows (
 );
 
 ALTER TABLE public.flows ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can manage flows for their org" ON public.flows FOR ALL USING (public.is_member(org_id));
+CREATE POLICY "Users can manage flows for their org" ON public.flows FOR ALL USING (public.is_member(auth.uid(), org_id));
 
 CREATE TABLE IF NOT EXISTS public.flow_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS public.flow_steps (
 
 ALTER TABLE public.flow_steps ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can manage flow_steps for their org" ON public.flow_steps FOR ALL USING (
-    public.is_member((SELECT org_id FROM public.flows WHERE id = flow_id))
+    public.is_member(auth.uid(), (SELECT org_id FROM public.flows WHERE id = flow_id))
 );
 
 CREATE TABLE IF NOT EXISTS public.flow_runs (
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS public.flow_runs (
 );
 
 ALTER TABLE public.flow_runs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can manage flow_runs for their org" ON public.flow_runs FOR ALL USING (public.is_member(org_id));
+CREATE POLICY "Users can manage flow_runs for their org" ON public.flow_runs FOR ALL USING (public.is_member(auth.uid(), org_id));
 
 CREATE INDEX IF NOT EXISTS idx_flow_runs_next_exec ON public.flow_runs(status, next_execution_at);
 CREATE INDEX IF NOT EXISTS idx_flow_runs_flow_contact ON public.flow_runs(flow_id, contact_id);

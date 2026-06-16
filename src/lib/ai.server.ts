@@ -150,35 +150,12 @@ export const CATALOG_TOOLS = [
    2. LOW-LEVEL PROVIDER CALLS
    ============================================================ */
 
-export async function callLovableAI(opts: {
+export async function callLovableAI(_opts: {
   model: string;
   messages: Msg[];
   tools?: any[];
 }): Promise<{ text: string; toolCalls?: any[] }> {
-  const key = process.env.LOVABLE_API_KEY;
-  if (!key) throw new Error("LOVABLE_API_KEY no configurada");
-  const body: any = { model: opts.model, messages: opts.messages };
-  if (opts.tools?.length) body.tools = opts.tools;
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Lovable-API-Key": key,
-      "X-Lovable-AIG-SDK": "vercel-ai-sdk",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Lovable AI ${res.status}: ${text.slice(0, 300)}`);
-  }
-  const j: any = await res.json();
-  const message = j.choices?.[0]?.message;
-  return {
-    text: message?.content ?? "",
-    toolCalls: message?.tool_calls ?? undefined,
-  };
+  throw new Error("Proveedor Lovable no disponible. Configura OpenAI, Groq o Vertex en Ajustes > IA.");
 }
 
 export async function callOpenAI(opts: {
@@ -529,13 +506,10 @@ export async function getAiConfigFromDb(orgId: string) {
    ============================================================ */
 const hasOpenAICredentials = (cfg: Record<string, unknown>) => !!(cfg.openai_api_key as string);
 const hasGrokCredentials = (cfg: Record<string, unknown>) => !!(cfg.grok_api_key as string);
-const hasLovableCredentials = () => !!process.env.LOVABLE_API_KEY;
 const normalizeOpenAIModel = (model?: string) =>
   model?.startsWith("gpt-") ? model : "gpt-4o-mini";
 const normalizeGrokModel = (model?: string) =>
   /^(llama|gemma|mixtral|compound)/i.test(model ?? "") ? model! : "llama-3.1-8b-instant";
-const normalizeLovableModel = (model?: string) =>
-  model?.includes("/") ? model : "google/gemini-3-flash-preview";
 
 const validateCredentials = (provider: string, cfg: Record<string, unknown>) => {
   if (provider === "openai" && !cfg.openai_api_key) throw new Error("Falta openai_api_key");
@@ -579,7 +553,7 @@ const callProviderByName = async (
       maxAttempts: 1,
     });
   }
-  return callLovableAI({ model: normalizeLovableModel(model), messages, tools });
+  throw new Error(`Proveedor "${provider}" no reconocido o no configurado`);
 };
 
 const fallbackVertexProvider = async (
@@ -587,9 +561,9 @@ const fallbackVertexProvider = async (
   messages: Msg[],
   tools?: any[],
 ) => {
-  const fallback = (cfg.fallback_provider as string) || "lovable";
-  if (fallback === "none" || fallback === "vertex") {
-    return callLovableAI({ model: normalizeLovableModel(cfg.model as string), messages, tools });
+  const fallback = (cfg.fallback_provider as string) || "";
+  if (!fallback || fallback === "none" || fallback === "vertex") {
+    throw new Error("Vertex AI fallback no disponible. Configura otro proveedor en Ajustes > IA.");
   }
   try {
     validateCredentials(fallback, cfg);
@@ -599,7 +573,7 @@ const fallbackVertexProvider = async (
       `[fallbackVertexProvider] Fallback provider ${fallback} failed or lacks credentials:`,
       err,
     );
-    return callLovableAI({ model: normalizeLovableModel(cfg.model as string), messages, tools });
+    throw err;
   }
 };
 
@@ -609,8 +583,8 @@ export async function callAiProvider(
   tools?: any[],
   onRetry?: (attempt: number) => Promise<void>,
 ): Promise<{ text: string; toolCalls?: any[]; retryAttempt?: number }> {
-  const provider = (cfg.selected_provider as string) || (cfg.provider as string) || "lovable";
-  const fallback = (cfg.fallback_provider as string) || "lovable";
+  const provider = (cfg.selected_provider as string) || (cfg.provider as string);
+  const fallback = (cfg.fallback_provider as string) || "none";
 
   try {
     validateCredentials(provider, cfg);
@@ -628,13 +602,14 @@ export async function callAiProvider(
         return await callProviderByName(fallback, cfg, messages, tools, onRetry);
       } catch (fallbackErr) {
         console.warn(
-          `[callAiProvider] Fallback provider ${fallback} also failed, falling back to lovable. Error:`,
+          `[callAiProvider] Fallback provider ${fallback} also failed. Error:`,
           fallbackErr,
         );
+        throw fallbackErr;
       }
     }
 
-    return callLovableAI({ model: normalizeLovableModel(cfg.model as string), messages, tools });
+    throw err;
   }
 }
 
@@ -3299,7 +3274,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
    ============================================================ */
 export async function generateReply(
   cfg: {
-    provider: "lovable" | "vertex" | string;
+    provider?: string;
     model: string;
     system_prompt: string;
     knowledge_base: string;

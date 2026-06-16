@@ -7,6 +7,30 @@
 
 BEGIN;
 
+-- Ensure global schema exists
+CREATE SCHEMA IF NOT EXISTS global;
+
+-- Ensure global.config_version and bump function exist
+CREATE TABLE IF NOT EXISTS global.config_version (
+  id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+  version BIGINT NOT NULL DEFAULT 0,
+  bumped_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO global.config_version (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION global.bump_config_version()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE global.config_version
+  SET version = version + 1,
+      bumped_at = now()
+  WHERE id = true;
+  RETURN NULL;
+END;
+$$;
+
 DO $$
 DECLARE
   v_tbl text;

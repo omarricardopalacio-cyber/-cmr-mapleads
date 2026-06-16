@@ -7,19 +7,19 @@ ON CONFLICT (id) DO UPDATE SET
   public = true,
   file_size_limit = 52428800;
 
--- Política para permitir lectura pública del bucket media
+DROP POLICY IF EXISTS "Media bucket is publicly readable" ON storage.objects;
 CREATE POLICY "Media bucket is publicly readable"
 ON storage.objects FOR SELECT
 TO public
 USING (bucket_id = 'media');
 
--- Política para permitir upload autenticado al bucket media
+DROP POLICY IF EXISTS "Authenticated users can upload to media" ON storage.objects;
 CREATE POLICY "Authenticated users can upload to media"
 ON storage.objects FOR INSERT
 TO authenticated
 WITH CHECK (bucket_id = 'media');
 
--- Política para permitir a los usuarios actualizar sus propios archivos
+DROP POLICY IF EXISTS "Users can update their own media" ON storage.objects;
 CREATE POLICY "Users can update their own media"
 ON storage.objects FOR UPDATE
 TO authenticated
