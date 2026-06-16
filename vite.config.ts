@@ -9,6 +9,11 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 export default defineConfig({
   nitro: {
     preset: "netlify",
+    output: {
+      dir: ".netlify/functions-internal",
+      serverDir: ".netlify/functions-internal/server",
+      publicDir: "dist",
+    },
   },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
