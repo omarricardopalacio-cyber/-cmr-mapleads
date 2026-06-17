@@ -6,6 +6,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { nodeRealtimeWebSocket } from "../integrations/supabase/node-websocket-transport";
 import type {
   Database,
   SaasPlan,
@@ -21,6 +22,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // Crear cliente - en Lovable, si no hay service_role, usar el cliente normal
 // Las RLS policies protegen los datos
 export let supabaseAdmin: any;
+const supabaseRealtimeOptions = nodeRealtimeWebSocket ? { realtime: { transport: nodeRealtimeWebSocket } } : {};
 
 try {
   if (supabaseUrl && supabaseServiceKey) {
@@ -32,6 +34,7 @@ try {
           persistSession: false,
           autoRefreshToken: false,
         },
+        ...supabaseRealtimeOptions,
       }
     );
   } else if (supabaseUrl) {
@@ -44,6 +47,7 @@ try {
           persistSession: false,
           autoRefreshToken: false,
         },
+        ...supabaseRealtimeOptions,
       }
     );
     console.warn("[supabase-admin] Using public key - RLS policies protect data");

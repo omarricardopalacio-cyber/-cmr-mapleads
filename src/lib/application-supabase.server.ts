@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './application-database.types';
+import { nodeRealtimeWebSocket } from '../integrations/supabase/node-websocket-transport';
 
 function createSupabaseAdminClient() {
   const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -20,7 +21,8 @@ function createSupabaseAdminClient() {
       storage: undefined,
       persistSession: false,
       autoRefreshToken: false,
-    }
+    },
+    realtime: nodeRealtimeWebSocket ? { transport: nodeRealtimeWebSocket } : undefined,
   });
 }
 

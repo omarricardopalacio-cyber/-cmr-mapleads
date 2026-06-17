@@ -3,6 +3,7 @@ import { createMiddleware } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from './types'
+import { nodeRealtimeWebSocket } from './node-websocket-transport'
 
 
 
@@ -66,6 +67,7 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
           persistSession: false,
           autoRefreshToken: false,
         },
+        realtime: nodeRealtimeWebSocket ? { transport: nodeRealtimeWebSocket } : undefined,
       }
     );
 
