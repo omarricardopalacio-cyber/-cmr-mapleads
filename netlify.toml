@@ -7,7 +7,6 @@
   from = "/*"
   to = "/.netlify/functions/server"
   status = 200
-  force = true
 
 [build.environment]
   NODE_VERSION = "20"
