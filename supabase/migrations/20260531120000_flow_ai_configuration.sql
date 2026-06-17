@@ -86,6 +86,7 @@ $$;
 
 -- Agregar columnas de configuración IA
 ALTER TABLE public.flows
+ADD COLUMN IF NOT EXISTS description TEXT,
 ADD COLUMN IF NOT EXISTS ai_mode TEXT DEFAULT 'none' CHECK (ai_mode IN (
     'none',                    -- Opción 1: No activar IA
     'on_completion',           -- Opción 2: IA activa al finalizar flujo

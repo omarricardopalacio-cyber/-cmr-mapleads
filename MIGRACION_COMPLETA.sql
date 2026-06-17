@@ -698,6 +698,7 @@ CREATE TABLE IF NOT EXISTS public.flows (
     name TEXT NOT NULL,
     trigger_type TEXT NOT NULL CHECK (trigger_type IN ('keyword', 'tag_added', 'new_contact')),
     trigger_value TEXT,
+    description TEXT,
     is_active BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT now()
 );
@@ -1023,6 +1024,7 @@ CREATE TABLE IF NOT EXISTS public.flows (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+ALTER TABLE public.flows ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE public.flows ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage flows for their org" ON public.flows;
 CREATE POLICY "Users can manage flows for their org" ON public.flows FOR ALL USING (public.is_member(auth.uid(), org_id));
