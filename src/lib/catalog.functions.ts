@@ -181,19 +181,41 @@ export const testCatalogIntegration = createServerFn({ method: "POST" })
   });
 
 /** Mapa alias para columnas del catálogo externo */
-function mapRow(row: any): Record<string, any> {
+function normalizeNumber(value: any): number | null {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, "").replace(/,/g, "");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeBoolean(value: any): boolean {
+  if (value === false || value === 0 || value === "0" || value === "false") return false;
+  if (value === true || value === 1 || value === "1" || value === "true") return true;
+  return true;
+}
+
+function mapRow(row: any): Record<string, any> | null {
+  const externalId = row.id ?? row.external_id;
+  if (externalId == null || externalId === "") {
+    return null;
+  }
+
   return {
-    external_id: row.id ?? row.external_id,
-    name: row.name ?? row.title ?? "",
+    external_id: String(externalId),
+    name: String(row.name ?? row.title ?? externalId ?? ""),
     description: row.long_description ?? row.description ?? null,
-    price: row.base_price ?? row.price ?? null,
-    stock: row.warehouse_stock ?? row.stock ?? null,
+    price: normalizeNumber(row.base_price ?? row.price),
+    stock: normalizeNumber(row.warehouse_stock ?? row.stock),
     image_url: row.main_image_url ?? row.image_url ?? null,
     video_url: row.main_video_url ?? row.video_url ?? (Array.isArray(row.videos) && row.videos[0]?.url) ?? null,
     slug: row.slug ?? null,
     sku: row.sku ?? null,
     badge: row.badge ?? null,
-    is_active: row.is_active ?? true,
+    is_active: normalizeBoolean(row.is_active ?? true),
     raw: row,
   };
 }
@@ -267,12 +289,33 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
           console.log(`[SYNC] external_id mapeado:`, mapRow(rows[0]).external_id);
         }
 
-        const upsertRows = rows.map((r) => ({
-          ...mapRow(r),
+        const mappedRows = rows.map((r) => mapRow(r));
+        const invalidRows = mappedRows
+          .map((mapped, idx) => ({ mapped, raw: rows[idx] }))
+          .filter((item) => item.mapped === null);
+        const validRows = mappedRows.filter((mapped): mapped is Record<string, any> => mapped !== null);
+
+        if (invalidRows.length > 0) {
+          failed += invalidRows.length;
+          console.warn(
+            `[SYNC] página ${page}: ${invalidRows.length} filas inválidas filtradas (missing external_id)`,
+            invalidRows.slice(0, 3).map((item) => item.raw),
+          );
+        }
+
+        const upsertRows = validRows.map((mapped) => ({
+          ...mapped,
           org_id: orgId,
           integration_id: data.id,
           updated_at: new Date().toISOString(),
         }));
+
+        if (upsertRows.length === 0) {
+          console.warn(`[SYNC] página ${page}: ninguna fila válida para upsert, saltando página`);
+          hasMore = rows.length === PAGE_SIZE;
+          page++;
+          continue;
+        }
 
         const { error: upsertErr, data: upsertData } = await (supabaseAdmin as any)
           .from("products")
@@ -280,11 +323,11 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
           .select("id, external_id");
 
         if (upsertErr) {
-          failed += rows.length;
+          failed += upsertRows.length;
           console.error(`[SYNC] upsert error (página ${page}):`, upsertErr.message, "sample external_id:", upsertRows[0]?.external_id);
         } else {
-          synced += upsertData?.length ?? rows.length;
-          console.log(`[SYNC] página ${page}: ${upsertData?.length ?? rows.length} productos insertados/actualizados`);
+          synced += upsertData?.length ?? upsertRows.length;
+          console.log(`[SYNC] página ${page}: ${upsertData?.length ?? upsertRows.length} productos insertados/actualizados`);
         }
 
         hasMore = rows.length === PAGE_SIZE;
