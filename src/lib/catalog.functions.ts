@@ -216,7 +216,6 @@ function mapRow(row: any): Record<string, any> | null {
     sku: row.sku ?? null,
     badge: row.badge ?? null,
     is_active: normalizeBoolean(row.is_active ?? true),
-    raw: row,
   };
 }
 
