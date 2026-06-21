@@ -17,7 +17,7 @@ export const Route = createFileRoute('/api/internal/no-response-worker')({
   async loader({ request }) {
     // Protección: sólo llamadas internas con el secret
     const authHeader = request.headers.get('Authorization') ?? ''
-    const cronSecret = process.env.CRON_SECRET ?? ''
+    const cronSecret = process.env.CRON_SECRET || process.env.SUPABASE_ANON_KEY || ''
     if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       return new Response('Unauthorized', { status: 401 })
     }

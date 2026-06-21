@@ -41,8 +41,8 @@ function timingSafeStringEqual(a: string, b: string): boolean {
 }
 
 async function handler({ request }: { request: Request }) {
-  const CRON_SECRET = process.env.CRON_SECRET;
-  if (!CRON_SECRET) return json(500, { error: "server not configured: CRON_SECRET missing" });
+  const CRON_SECRET = process.env.CRON_SECRET || process.env.SUPABASE_ANON_KEY;
+  if (!CRON_SECRET) return json(500, { error: "server not configured: CRON_SECRET/SUPABASE_ANON_KEY missing" });
   const raw = request.headers.get("apikey") ?? request.headers.get("authorization") ?? "";
   const apikey = raw.replace(/^Bearer\s+/i, "").trim();
   if (!apikey || !timingSafeStringEqual(apikey, CRON_SECRET)) {
