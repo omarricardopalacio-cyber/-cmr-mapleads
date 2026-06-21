@@ -155,6 +155,12 @@ function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
+          <SidebarGroupLabel>Búsqueda de clientes</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderItems(leads)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
           <SidebarGroupLabel>Principal</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(main)}</SidebarMenu>
@@ -170,12 +176,6 @@ function AppSidebar() {
           <SidebarGroupLabel>Configuración IA</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderItems(aiConfig)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Búsqueda de clientes</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderItems(leads)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
