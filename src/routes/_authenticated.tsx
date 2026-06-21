@@ -67,7 +67,7 @@ function AppSidebar() {
   const aiConfig = [
     { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
     // { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
-    { title: "Integración Catálogo", url: "/catalog-integrations", icon: Store },
+    // { title: "Integración Catálogo", url: "/catalog-integrations", icon: Store },
   ];
 
   const leads = [
