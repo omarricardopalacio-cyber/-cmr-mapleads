@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import {
   listAutoReplies,
@@ -65,6 +65,12 @@ function CooldownInput({
   const display = toDisplayCooldown(value);
   const [num, setNum] = useState(display.value);
   const [unit, setUnit] = useState<CooldownUnit>(display.unit);
+
+  useEffect(() => {
+    const display = toDisplayCooldown(value);
+    setNum(display.value);
+    setUnit(display.unit);
+  }, [value]);
 
   function update(n: number, u: CooldownUnit) {
     setNum(n);

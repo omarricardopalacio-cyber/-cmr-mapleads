@@ -71,6 +71,35 @@ export async function cloneTemplateAiConfigToOrg(orgId: string) {
   }
 }
 
+export async function ensureDefaultPipelineStages(orgId: string) {
+  const { count, error: countErr } = await supabaseAdmin
+    .from("pipeline_stages")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId);
+
+  if (countErr) {
+    console.error(`[PIPELINE STAGES CHECK ERROR] error checking pipeline stages:`, countErr.message);
+    return;
+  }
+
+  if (count && count > 0) return;
+
+  const defaultStages = [
+    { org_id: orgId, name: "Prospecto", color: "#3B82F6", position: 1 },
+    { org_id: orgId, name: "Contactado", color: "#F59E0B", position: 2 },
+    { org_id: orgId, name: "Propuesta", color: "#10B981", position: 3 },
+    { org_id: orgId, name: "Cierre", color: "#8B5CF6", position: 4 },
+  ];
+
+  const { error } = await supabaseAdmin
+    .from("pipeline_stages")
+    .insert(defaultStages);
+
+  if (error) {
+    console.error(`[PIPELINE STAGES CLONE ERROR] No se pudieron crear etapas para org ${orgId}:`, error.message);
+  }
+}
+
 async function fetchOrphanIds(table: "wa_sessions" | "threads" | "contacts", orgId: string): Promise<string[]> {
   const nullRes: any = await (supabaseAdmin as any).from(table).select("id").is("org_id", null);
   const diffRes: any = await (supabaseAdmin as any).from(table).select("id").neq("org_id", orgId);
@@ -115,7 +144,16 @@ async function syncOrphanDataToOrg(userId: string, orgId: string) {
 
 export async function ensureUserOrg(userId: string): Promise<string> {
   let orgId = await getUserOrg(userId);
-  if (orgId) return orgId;
+  if (orgId) {
+    // Auto-heal missing configurations
+    await cloneTemplateAiConfigToOrg(orgId).catch((error) => {
+      console.error(`[AI CONFIG CLONE ERROR] No se pudo clonar la config AI para org ${orgId}:`, (error as Error).message);
+    });
+    await ensureDefaultPipelineStages(orgId).catch((error) => {
+      console.error(`[PIPELINE STAGES CLONE ERROR] No se pudieron crear etapas para org ${orgId}:`, (error as Error).message);
+    });
+    return orgId;
+  }
 
   const templateOrgId = await getTemplateOrgId();
   if (templateOrgId) {

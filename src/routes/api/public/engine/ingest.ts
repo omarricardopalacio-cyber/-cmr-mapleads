@@ -534,11 +534,31 @@ async function maybeAiReply(
   // NOTE: auto-replies already awaited their steps synchronously, so NO extra delay needed here.
   // The autoRepliesWereSent flag is enough to signal contextual-entry mode.
 
-  const { data: cfg } = await supabaseAdmin
+  const scheduleAt = delayAfterAutoReplies > 0
+    ? new Date(Date.now() + (delayAfterAutoReplies + 2) * 1000).toISOString()
+    : null;
+
+  let { data: cfg } = await supabaseAdmin
     .from('ai_configs')
     .select('*')
     .eq('org_id', orgId)
     .maybeSingle()
+
+  if (!cfg) {
+    try {
+      const { cloneTemplateAiConfigToOrg } = await import('@/lib/org-helpers')
+      await cloneTemplateAiConfigToOrg(orgId)
+      const { data: newCfg } = await supabaseAdmin
+        .from('ai_configs')
+        .select('*')
+        .eq('org_id', orgId)
+        .maybeSingle()
+      cfg = newCfg
+    } catch (cloneErr: any) {
+      console.error('[ingest] Failed to clone AI config on-the-fly:', cloneErr.message)
+    }
+  }
+
   if (!cfg || !cfg.enabled) return
 
   if (cfg.respond_to === 'new') {
@@ -625,6 +645,7 @@ async function maybeAiReply(
       type: 'SEND_MESSAGE',
       payload: { chatId, text: finalReply },
       status: 'pending',
+      scheduled_for: scheduleAt,
     })
   } catch (err) {
     let errMsg = err instanceof Error ? err.message : String(err);
@@ -683,6 +704,7 @@ async function maybeAiReply(
         type: 'SEND_MESSAGE',
         payload: { chatId, text: errorMessage },
         status: 'pending',
+        scheduled_for: scheduleAt,
       })
     }
   }
@@ -1119,13 +1141,13 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 if (process.env.ASYNC_AI_REPLY === 'true') {
                   // Asynchronous execution (optimizado)
                   console.log('[ingest] Despachando maybeAiReply en segundo plano (asíncrono)');
-                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, 0, autoRepliesWereSent).catch((err) => {
+                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent).catch((err) => {
                     console.error('[ingest] Error en maybeAiReply asíncrono:', err);
                   });
                 } else {
                   // Fallback síncrono (reversión a comportamiento anterior)
                   console.log('[ingest] Ejecutando maybeAiReply de forma síncrona (rollback/legacy)');
-                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, 0, autoRepliesWereSent);
+                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent);
                 }
               }
 
