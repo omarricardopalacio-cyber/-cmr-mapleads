@@ -1116,7 +1116,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 // auto-replies already ran synchronously above, so AI enters right after.
                 // Pass autoRepliesWereSent so the AI uses contextual-entry mode.
                 const autoRepliesWereSent = totalDelaySec > 0;
-                if (process.env.ASYNC_AI_REPLY !== 'false') {
+                if (process.env.ASYNC_AI_REPLY === 'true') {
                   // Asynchronous execution (optimizado)
                   console.log('[ingest] Despachando maybeAiReply en segundo plano (asíncrono)');
                   maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, 0, autoRepliesWereSent).catch((err) => {
