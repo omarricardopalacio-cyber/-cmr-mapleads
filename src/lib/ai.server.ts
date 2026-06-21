@@ -2934,6 +2934,32 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     });
   };
 
+  const getAccumulatedOrderData = () => {
+    const visibleHistory = messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
+      .filter((m) => !m.content.trim().startsWith("[INSTRUCCIÓN DEL SISTEMA"));
+    
+    const structured: Record<string, string> = {};
+    
+    for (const m of visibleHistory) {
+      if (m.role === "user") {
+        const ext = extractStructuredOrderData(m.content || "");
+        Object.assign(structured, ext);
+      }
+    }
+
+    const lastAssistant = [...visibleHistory]
+      .reverse()
+      .find((m) => m.role === "assistant")
+      ?.content?.trim() ?? "";
+    if (lastAssistant) {
+      const ext = extractStructuredOrderData(lastAssistant);
+      Object.assign(structured, ext);
+    }
+    
+    return structured;
+  };
+
   const isDataDump = () => {
     const visibleHistory = messages
       .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
@@ -2985,7 +3011,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         .find((m) => m.role === "assistant")
         ?.content?.trim() ?? "";
 
-    const structured = extractStructuredOrderData(lastUser);
+    const structured = getAccumulatedOrderData();
 
     // Fallback para Producto y Valor si la recuperación automática no los extrajo
     if (!structured["Producto"] || !structured["Valor"]) {
@@ -3081,11 +3107,19 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     const isExplicitConf = isExplicitCustomerConfirmation(lastUser);
     const isDump = isCollectingOrder && isDataDump();
 
+    if (isDump) return true;
+
+    // Solo permitir confirmación determinista si el cliente dice "sí" Y el historial reciente
+    // contiene un prompt de confirmación Y tenemos todos los campos requeridos completados
+    // en los datos acumulados de la conversación.
+    const accumulated = getAccumulatedOrderData();
+    const hasRequired = hasAllRequiredFields(accumulated);
+
     return (
-      (isExplicitConf &&
-        (confirmationPrompt.test(recentAssistantPrompts) ||
-          orderContextPrompt.test(recentAssistantPrompts))) ||
-      isDump
+      isExplicitConf &&
+      hasRequired &&
+      (confirmationPrompt.test(recentAssistantPrompts) ||
+        orderContextPrompt.test(recentAssistantPrompts))
     );
   };
 
