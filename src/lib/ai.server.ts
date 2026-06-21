@@ -2871,7 +2871,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .trim();
 
   // Intenta estructurar un mensaje libre del cliente en los campos del pedido.
-  const extractStructuredOrderData = (text: string): Record<string, string> => {
+  const extractStructuredOrderData = (text: string, onlyLabelled = false): Record<string, string> => {
     const out: Record<string, string> = {};
     if (!text?.trim()) return out;
     const fieldNames = orderFields.map((f: any) => String(f.name));
@@ -2892,6 +2892,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       });
       if (field && !out[field]) out[field] = value;
     }
+
+    if (onlyLabelled) return out;
+
     // 2) Volcado separado por "/" o "," mapeado posicionalmente a los campos.
     if (Object.keys(out).length < Math.min(2, fieldNames.length) && /[\/,]/.test(text)) {
       const sep = text.includes("/") ? "/" : ",";
@@ -2953,7 +2956,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .find((m) => m.role === "assistant")
       ?.content?.trim() ?? "";
     if (lastAssistant) {
-      const ext = extractStructuredOrderData(lastAssistant);
+      const ext = extractStructuredOrderData(lastAssistant, true);
       Object.assign(structured, ext);
     }
     
