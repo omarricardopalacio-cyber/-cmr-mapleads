@@ -10,22 +10,17 @@
  * The @theme inline block maps CSS custom properties to Tailwind utility
  * classes (e.g. --color-primary -> bg-primary, text-primary).
  *
- * The :root and .dark blocks define the actual color values using oklch.
- * All colors MUST use oklch format.
- *
- * To add a new semantic color:
- * 1. Add the variable to :root (light value) and .dark (dark value)
- * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ * The :root and .dark blocks define the actual color values.
  */
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
-  --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
+  --radius-xl: var(--radius);
+  --radius-2xl: calc(var(--radius) + 4px);
+  --radius-3xl: calc(var(--radius) + 8px);
+  --radius-4xl: calc(var(--radius) + 12px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -62,39 +57,39 @@
 }
 
 :root, .dark {
-  --radius: 16px;
-  --background: #0A0A0A;
+  --radius: 18px;
+  --background: #020817;
   --foreground: #FFFFFF;
-  --card: #121212;
+  --card: rgba(255, 255, 255, 0.03);
   --card-foreground: #FFFFFF;
-  --popover: #121212;
+  --popover: #041226;
   --popover-foreground: #FFFFFF;
-  --primary: #E50914;
+  --primary: #0A84FF;
   --primary-foreground: #FFFFFF;
-  --secondary: #8B0000;
+  --secondary: #0057D9;
   --secondary-foreground: #FFFFFF;
-  --muted: #1A1A1A;
-  --muted-foreground: #BDBDBD;
-  --accent: #E50914;
+  --muted: rgba(255, 255, 255, 0.02);
+  --muted-foreground: #94A3B8;
+  --accent: #0A84FF;
   --accent-foreground: #FFFFFF;
-  --destructive: #E50914;
+  --destructive: #FF453A;
   --destructive-foreground: #FFFFFF;
-  --border: rgba(110, 110, 110, 0.25);
-  --input: #121212;
-  --ring: #E50914;
-  --chart-1: #E50914;
-  --chart-2: #8B0000;
-  --chart-3: #BDBDBD;
-  --chart-4: #6E6E6E;
-  --chart-5: #1A1A1A;
-  --sidebar: #0A0A0A;
-  --sidebar-foreground: #BDBDBD;
-  --sidebar-primary: #E50914;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.03);
+  --ring: #0A84FF;
+  --chart-1: #0A84FF;
+  --chart-2: #0077FF;
+  --chart-3: #0057D9;
+  --chart-4: #94A3B8;
+  --chart-5: #041226;
+  --sidebar: #041226;
+  --sidebar-foreground: #94A3B8;
+  --sidebar-primary: #0A84FF;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: rgba(229, 9, 20, 0.15);
+  --sidebar-accent: rgba(10, 132, 255, 0.15);
   --sidebar-accent-foreground: #FFFFFF;
-  --sidebar-border: rgba(110, 110, 110, 0.15);
-  --sidebar-ring: #E50914;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #0A84FF;
 }
 
 @layer base {
@@ -109,51 +104,51 @@
 }
 
 /* ==========================================
-   PREMIUM DARK RED CRM THEME CUSTOM STYLES
+   PREMIUM BLUE CRM THEME CUSTOM STYLES
    ========================================== */
 
 /* Main layout / body overrides */
 html, body, #app {
-  background-color: #0A0A0A !important;
+  background-color: #020817 !important;
   color: #FFFFFF !important;
 }
 
 /* Card custom design & animations */
 .card, [class*="rounded-xl"], [class*="border bg-card"] {
-  background-color: #121212 !important;
-  border: 1px solid rgba(110, 110, 110, 0.2) !important;
-  border-radius: 16px !important;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8), 0 0 8px rgba(229, 9, 20, 0.05) !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 0 25px rgba(10, 132, 255, 0.10) !important;
+  transition: all 0.25s ease-in-out !important;
 }
 
 .card:hover, [class*="rounded-xl"]:hover, [class*="border bg-card"]:hover {
   transform: translateY(-2px) !important;
-  border-color: rgba(229, 9, 20, 0.4) !important;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.9), 0 0 15px rgba(229, 9, 20, 0.18) !important;
+  border-color: rgba(10, 132, 255, 0.25) !important;
+  box-shadow: 0 0 35px rgba(10, 132, 255, 0.20) !important;
 }
 
-/* Red glassmorphism icons inside cards */
+/* Premium blue icons inside cards */
 .card svg, [class*="border bg-card"] svg {
-  color: #E50914 !important;
+  color: #0A84FF !important;
 }
 
 /* Sidebar premium overrides */
 [data-sidebar="sidebar"] {
-  background: linear-gradient(180deg, #0A0A0A 0%, #121212 100%) !important;
-  border-right: 1px solid rgba(110, 110, 110, 0.15) !important;
+  background: linear-gradient(180deg, #041226 0%, #020817 100%) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
 }
 
-/* Active navigation item with red gradient and border radius */
+/* Active navigation item with blue gradient and border radius */
 [data-sidebar="menu-button"] {
-  transition: all 0.3s ease !important;
+  transition: all 0.25s ease-in-out !important;
 }
 
 [data-sidebar="menu-button"][data-active="true"] {
-  background: linear-gradient(90deg, #E50914 0%, #8B0000 100%) !important;
+  background: linear-gradient(90deg, #0A84FF 0%, #0057D9 100%) !important;
   color: #FFFFFF !important;
   border-radius: 12px !important;
-  box-shadow: 0 0 12px rgba(229, 9, 20, 0.35) !important;
+  box-shadow: 0 0 15px rgba(10, 132, 255, 0.35) !important;
 }
 
 [data-sidebar="menu-button"][data-active="true"] svg {
@@ -161,16 +156,16 @@ html, body, #app {
 }
 
 [data-sidebar="menu-button"]:hover:not([data-active="true"]) {
-  color: #E50914 !important;
-  background-color: rgba(229, 9, 20, 0.08) !important;
+  color: #0A84FF !important;
+  background-color: rgba(10, 132, 255, 0.08) !important;
 }
 
 [data-sidebar="menu-button"]:hover:not([data-active="true"]) svg {
-  color: #E50914 !important;
+  color: #0A84FF !important;
 }
 
 [data-sidebar="group-label"] {
-  color: #6E6E6E !important;
+  color: #94A3B8 !important;
   font-weight: 600 !important;
   text-transform: uppercase !important;
   letter-spacing: 0.05em !important;
@@ -182,38 +177,38 @@ button, .btn {
 }
 
 /* Primary buttons */
-.bg-primary, [class*="bg-primary"], button[class*="bg-primary"], [class*="bg-destructive"] {
-  background-color: #E50914 !important;
+.bg-primary, [class*="bg-primary"], button[class*="bg-primary"] {
+  background-color: #0A84FF !important;
   color: #FFFFFF !important;
-  box-shadow: 0 2px 10px rgba(229, 9, 20, 0.25) !important;
+  box-shadow: 0 2px 10px rgba(10, 132, 255, 0.25) !important;
   border: none !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition: all 0.25s ease-in-out !important;
 }
 
-.bg-primary:hover, [class*="bg-primary"]:hover, button[class*="bg-primary"]:hover, [class*="bg-destructive"]:hover {
-  background-color: #f70a16 !important;
-  box-shadow: 0 0 18px rgba(229, 9, 20, 0.6) !important;
+.bg-primary:hover, [class*="bg-primary"]:hover, button[class*="bg-primary"]:hover {
+  background-color: #0077FF !important;
+  box-shadow: 0 0 18px rgba(10, 132, 255, 0.6) !important;
   transform: translateY(-1px) !important;
 }
 
 /* Forms & Inputs */
 input, textarea, select {
-  background-color: #121212 !important;
-  border: 1px solid rgba(110, 110, 110, 0.3) !important;
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
   color: #FFFFFF !important;
   border-radius: 8px !important;
-  transition: all 0.3s ease !important;
+  transition: all 0.25s ease-in-out !important;
 }
 
 input:focus, textarea:focus, select:focus {
-  border-color: #E50914 !important;
-  box-shadow: 0 0 8px rgba(229, 9, 20, 0.35) !important;
+  border-color: #0A84FF !important;
+  box-shadow: 0 0 8px rgba(10, 132, 255, 0.35) !important;
   outline: none !important;
 }
 
 /* Tables */
 table, tr, th, td {
-  border-color: rgba(110, 110, 110, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
 }
 
 tr {
@@ -221,11 +216,11 @@ tr {
 }
 
 tr:hover {
-  background-color: rgba(229, 9, 20, 0.03) !important;
+  background-color: rgba(10, 132, 255, 0.03) !important;
 }
 
 th {
-  color: #BDBDBD !important;
+  color: #94A3B8 !important;
   font-weight: 600 !important;
 }
 
@@ -236,14 +231,14 @@ th {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0A0A0A;
+  background: #020817;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2D2D2D;
+  background: #1e293b;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #E50914;
+  background: #0A84FF;
 }
