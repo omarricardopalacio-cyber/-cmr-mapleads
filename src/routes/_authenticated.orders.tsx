@@ -285,13 +285,13 @@ function OrdersModule() {
 
     const FIELD_ALIASES: Record<string, string[]> = {
       Nombre: ['nombre', 'nombre completo', 'cliente', 'nombre del cliente', 'name'],
-      'Teléfono': ['telefono', 'teléfono', 'celular', 'movil', 'móvil', 'whatsapp'],
-      Ciudad: ['ciudad', 'municipio', 'localidad'],
-      Barrio: ['barrio', 'sector'],
-      'Dirección': ['direccion', 'dirección', 'domicilio', 'dir'],
-      Producto: ['producto', 'productos', 'articulo', 'artículo', 'pedido', 'referencia'],
-      Valor: ['valor', 'precio', 'total', 'monto', 'costo'],
-      Cantidad: ['cantidad', 'unidades', 'qty'],
+      'Teléfono': ['telefono', 'teléfono', 'celular', 'cel', 'tel', 'phone', 'movil', 'móvil', 'whatsapp'],
+      Ciudad: ['ciudad', 'municipio', 'localidad', 'city'],
+      Barrio: ['barrio', 'sector', 'neighborhood'],
+      'Dirección': ['direccion', 'dirección', 'domicilio', 'dir', 'address'],
+      Producto: ['producto', 'productos', 'product', 'item', 'articulo', 'artículo', 'pedido', 'referencia'],
+      Valor: ['valor', 'precio', 'total', 'monto', 'costo', 'price', 'value'],
+      Cantidad: ['cantidad', 'unidades', 'qty', 'cant', 'quantity'],
     }
 
     const normalize = (value: string) =>

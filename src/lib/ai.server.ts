@@ -1102,7 +1102,7 @@ function hasOrderProduct(data: Record<string, unknown>): boolean {
   return Object.entries(data || {}).some(([k, v]) => {
     const nk = normFieldKey(k);
     return (
-      /(producto|articulo|art[ií]culo|item|referencia)/.test(nk) &&
+      /(producto|product|articulo|art[ií]culo|item|referencia)/.test(nk) &&
       String(v ?? "").trim().length > 0
     );
   });
@@ -1111,7 +1111,7 @@ function hasOrderProduct(data: Record<string, unknown>): boolean {
 function hasOrderValue(data: Record<string, unknown>): boolean {
   return Object.entries(data || {}).some(([k, v]) => {
     const nk = normFieldKey(k);
-    return /(valor|precio|total|monto)/.test(nk) && String(v ?? "").trim().length > 0;
+    return /(valor|value|precio|price|total|monto|costo)/.test(nk) && String(v ?? "").trim().length > 0;
   });
 }
 
@@ -2856,11 +2856,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const FIELD_ALIASES: Record<string, string[]> = {
     nombre: ["nombre", "cliente", "name"],
-    telefono: ["telefono", "teléfono", "celular", "movil", "móvil", "whatsapp", "tel"],
-    ciudad: ["ciudad", "municipio", "localidad"],
-    barrio: ["barrio", "sector"],
-    direccion: ["direccion", "dirección", "domicilio", "dir"],
-    cantidad: ["cantidad", "unidades", "qty", "cant"],
+    telefono: ["telefono", "teléfono", "celular", "cel", "tel", "phone", "movil", "móvil", "whatsapp"],
+    ciudad: ["ciudad", "municipio", "localidad", "city"],
+    barrio: ["barrio", "sector", "neighborhood"],
+    direccion: ["direccion", "dirección", "domicilio", "dir", "address"],
+    cantidad: ["cantidad", "unidades", "qty", "cant", "quantity"],
   };
   const normKey = (s: string) =>
     s
@@ -2884,7 +2884,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       if (!value) continue;
       const field = fieldNames.find((fn) => {
         const nk = normKey(fn);
-        return nk === key || (FIELD_ALIASES[nk] ?? [nk]).some((a) => normKey(a) === key);
+        if (nk === key) return true;
+        return Object.values(FIELD_ALIASES).some((aliases) => {
+          const normAliases = aliases.map(normKey);
+          return normAliases.includes(nk) && normAliases.includes(key);
+        });
       });
       if (field && !out[field]) out[field] = value;
     }
@@ -2982,6 +2986,54 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         ?.content?.trim() ?? "";
 
     const structured = extractStructuredOrderData(lastUser);
+
+    // Fallback para Producto y Valor si la recuperación automática no los extrajo
+    if (!structured["Producto"] || !structured["Valor"]) {
+      let productFromHist: string | undefined;
+      let priceFromHist: string | undefined;
+
+      for (const m of [...visibleHistory].reverse()) {
+        if (m.role !== "assistant") continue;
+        const text = m.content || "";
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const cleaned = line.replace(/^[\s*·•\-📦💲]+/g, '').trim();
+          
+          const nameMatch = cleaned.match(/^(nombre|producto|articulo|referencia|item)\s*[:\-]\s*(.+)$/i);
+          if (nameMatch && !productFromHist) {
+            const val = nameMatch[2].trim().replace(/^[\*\s]+|[\*\s]+$/g, '');
+            if (val.length > 2 && val.length < 50) {
+              productFromHist = val;
+            }
+          }
+          
+          const priceMatch = cleaned.match(/^(precio|valor|costo|total)\s*[:\-]\s*(.+)$/i);
+          if (priceMatch && !priceFromHist) {
+            priceFromHist = priceMatch[2].trim().replace(/^[\*\s]+|[\*\s]+$/g, '');
+            
+            if (!productFromHist && i > 0) {
+              const prevLine = lines[i - 1].replace(/^[\s*·•\-📦]+/g, '').trim();
+              if (prevLine.length > 2 && prevLine.length < 40 && !prevLine.includes(':') && !prevLine.includes('-')) {
+                productFromHist = prevLine;
+              }
+            }
+          }
+        }
+        
+        if (productFromHist || priceFromHist) {
+          break;
+        }
+      }
+
+      if (productFromHist && !structured["Producto"]) {
+        structured["Producto"] = productFromHist;
+      }
+      if (priceFromHist && !structured["Valor"]) {
+        structured["Valor"] = priceFromHist;
+      }
+    }
 
     return {
       Origen:
