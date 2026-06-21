@@ -11,6 +11,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
   SidebarFooter,
+  SidebarHeader,
 } from "@/components/ui/sidebar";
 import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -67,7 +68,7 @@ function AppSidebar() {
   const aiConfig = [
     { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
     // { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
-    // { title: "Integración Catálogo", url: "/catalog-integrations", icon: Store },
+    { title: "Integración Catálogo", url: "/catalog-integrations", icon: Store },
   ];
 
   const leads = [
@@ -98,6 +99,15 @@ function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
+      <SidebarHeader className="p-3 border-b border-sidebar-border/10">
+        <div className="flex items-center gap-2 px-2 py-1">
+          <img 
+            src="/diselec-logo.png" 
+            alt="Ferreteria Diselec SAS Logo" 
+            className="h-10 w-auto object-contain max-w-full transition-all duration-300 group-data-[collapsible=icon]:h-6" 
+          />
+        </div>
+      </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Principal</SidebarGroupLabel>
