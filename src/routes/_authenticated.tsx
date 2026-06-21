@@ -100,12 +100,57 @@ function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-3 border-b border-sidebar-border/10">
-        <div className="flex items-center gap-2 px-2 py-1">
-          <img 
-            src="/diselec-logo.png" 
-            alt="Ferreteria Diselec SAS Logo" 
-            className="h-10 w-auto object-contain max-w-full transition-all duration-300 group-data-[collapsible=icon]:h-6" 
-          />
+        <div className="flex items-center gap-2.5 px-2 py-1 select-none">
+          <svg
+            width="34"
+            height="34"
+            viewBox="0 0 100 100"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            className="shrink-0 transition-transform duration-300 hover:scale-105"
+          >
+            {/* Map Pin Background (Blue Gradient) */}
+            <path
+              d="M50 5C28 5 10 23 10 45C10 70 50 95 50 95C50 95 90 70 90 45C90 23 72 5 50 5Z"
+              fill="url(#pinGrad)"
+            />
+            
+            {/* Connections */}
+            <line x1="50" y1="25" x2="30" y2="45" stroke="#FFFFFF" strokeWidth="3" />
+            <line x1="50" y1="25" x2="70" y2="45" stroke="#FFFFFF" strokeWidth="3" />
+            <line x1="30" y1="45" x2="40" y2="65" stroke="#FFFFFF" strokeWidth="3" />
+            <line x1="70" y1="45" x2="60" y2="65" stroke="#FFFFFF" strokeWidth="3" />
+            <line x1="40" y1="65" x2="60" y2="65" stroke="#FFFFFF" strokeWidth="3" />
+            <line x1="50" y1="25" x2="40" y2="65" stroke="#FFFFFF" strokeWidth="3" />
+            <line x1="50" y1="25" x2="60" y2="65" stroke="#FFFFFF" strokeWidth="3" />
+
+            {/* Network Nodes inside Pin */}
+            <circle cx="50" cy="25" r="5.5" fill="#FFFFFF" />
+            <circle cx="30" cy="45" r="5.5" fill="#FFFFFF" />
+            <circle cx="70" cy="45" r="5.5" fill="#FFFFFF" />
+            <circle cx="40" cy="65" r="5.5" fill="#FFFFFF" />
+            <circle cx="60" cy="65" r="5.5" fill="#FFFFFF" />
+            
+            {/* Bottom-Right Download Badge */}
+            <circle cx="76" cy="74" r="17" fill="#FFFFFF" stroke="#0077FF" strokeWidth="3" />
+            <path
+              d="M76 64V80M76 80L70 74M76 80L82 74"
+              stroke="#0077FF"
+              strokeWidth="4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+
+            <defs>
+              <linearGradient id="pinGrad" x1="50" y1="5" x2="50" y2="95" gradientUnits="userSpaceOnUse">
+                <stop stopColor="#0A84FF" />
+                <stop offset="1" stopColor="#0057D9" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <span className="text-xl font-bold tracking-tight text-white group-data-[collapsible=icon]:hidden">
+            Map<span className="text-[#0A84FF]">Leads</span>
+          </span>
         </div>
       </SidebarHeader>
       <SidebarContent>
