@@ -7,7 +7,7 @@ import { listThreads } from "@/lib/crm.functions";
 import { sendDirectMessage } from "@/lib/messaging.functions";
 import { listSessions } from "@/lib/sessions.functions";
 import { getOrgStats, syncWaSessions, syncThreads, syncContacts } from "@/lib/org.functions";
-import { listTags, createTag } from "@/lib/tags.functions";
+import { listTags, createTag, deleteTag } from "@/lib/tags.functions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,7 +30,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search, Trash2, Inbox, User, Users, AlertTriangle, RefreshCw } from "lucide-react";
+import { Plus, Search, Trash2, Inbox, User, Users, AlertTriangle, RefreshCw, X } from "lucide-react";
 import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -42,6 +42,7 @@ function ConversationsLayout() {
   const fn = useServerFn(listThreads);
   const listTagsFn = useServerFn(listTags);
   const createTagFn = useServerFn(createTag);
+  const deleteTagFn = useServerFn(deleteTag);
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [filterTab, setFilterTab] = useState<"all" | "mine" | "unassigned">("all");
@@ -67,6 +68,15 @@ function ConversationsLayout() {
       setNewTagName("");
       qc.invalidateQueries({ queryKey: ["conversationTags"] });
       toast.success("Etiqueta creada");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const deleteTagMut = useMutation({
+    mutationFn: (vars: { tagId: string }) => deleteTagFn({ data: vars }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["conversationTags"] });
+      toast.success("Etiqueta eliminada");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -120,10 +130,22 @@ function ConversationsLayout() {
             {(tagsData?.tags ?? []).map((tag: { id: string; name: string; color: string }) => (
               <span
                 key={tag.id}
-                className="text-[10px] px-2 py-1 rounded-full border"
+                className="text-[10px] pl-2 pr-1 py-1 rounded-full border flex items-center gap-1 group"
                 style={{ borderColor: tag.color, color: tag.color, backgroundColor: `${tag.color}20` }}
               >
-                {tag.name}
+                <span>{tag.name}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`¿Estás seguro de que deseas eliminar la etiqueta "${tag.name}"?`)) {
+                      deleteTagMut.mutate({ tagId: tag.id });
+                    }
+                  }}
+                  className="hover:bg-foreground/10 rounded-full p-0.5 transition-colors opacity-60 hover:opacity-100 flex items-center justify-center"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
               </span>
             ))}
             {(tagsData?.tags ?? []).length === 0 && (
