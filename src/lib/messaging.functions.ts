@@ -18,22 +18,6 @@ async function downloadMediaFromStorage(
   return { base64, mimeType };
 }
 
-async function getMediaSizeAndType(url: string): Promise<{ size: number; mimeType: string | null }> {
-  try {
-    const res = await fetch(url, { method: "HEAD" });
-    if (!res.ok) return { size: 0, mimeType: null };
-    const contentLength = res.headers.get("content-length");
-    const mimeType = res.headers.get("content-type");
-    return {
-      size: contentLength ? parseInt(contentLength, 10) : 0,
-      mimeType,
-    };
-  } catch (err) {
-    console.error("[resolveMediaForCommand] Error getting media info via HEAD:", err);
-    return { size: 0, mimeType: null };
-  }
-}
-
 async function resolveMediaForCommand(opts: {
   media_url?: string | null;
   media_base64?: string | null;
@@ -56,31 +40,6 @@ async function resolveMediaForCommand(opts: {
     opts.media_storage_path ||
     (opts.media_url ? storagePathFromMediaUrl(opts.media_url) : null);
 
-  if (storagePath || opts.media_url) {
-    // 1. Obtener la URL pública del recurso
-    const publicUrl = storagePath
-      ? supabaseAdmin.storage.from("media").getPublicUrl(storagePath).data.publicUrl
-      : opts.media_url!;
-
-    // 2. Consultar tamaño y tipo vía HEAD request (rápido, sin descargar el cuerpo)
-    const { size, mimeType } = await getMediaSizeAndType(publicUrl);
-    const resolvedMime = opts.mime_type || mimeType || "";
-    const isVideo = resolvedMime.startsWith("video/");
-    
-    // Definimos "video grande" como un video de más de 3MB
-    // O cualquier otro archivo de más de 5MB que pueda tumbar el servidor serverless
-    const isLargeVideoOrFile = (isVideo && size > 3 * 1024 * 1024) || size > 5 * 1024 * 1024;
-
-    if (isLargeVideoOrFile) {
-      console.log(`[resolveMediaForCommand] Media grande detectada (tamaño: ${size} bytes, tipo: ${resolvedMime}). Usando envío por URL.`);
-      return {
-        media: publicUrl,
-        caption,
-      };
-    }
-  }
-
-  // Comportamiento original para archivos pequeños: descargar y codificar a base64
   if (storagePath) {
     const { base64, mimeType } = await downloadMediaFromStorage(storagePath);
     return {
