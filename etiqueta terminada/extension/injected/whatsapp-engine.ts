@@ -115,10 +115,12 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     switch (cmdEvent) {
       case "SEND_MESSAGE": {
         const cmdPayload = (payload ?? {}) as Record<string, unknown>;
+        const payloadMediaUrl = (cmdPayload.mediaUrl || cmdPayload.media_url) as string | undefined;
         console.log("[WhatsAppEngine] SEND_MESSAGE payload:", JSON.stringify({
           chatId: cmdPayload.chatId,
           text: cmdPayload.text,
           hasMedia: !!cmdPayload.media,
+          hasMediaUrl: !!payloadMediaUrl,
           mimeType: cmdPayload.mimeType || cmdPayload.mime_type,
         }));
 
@@ -133,11 +135,17 @@ async function handleCommands(event: MessageEvent): Promise<void> {
           (cmdPayload.mimeType as string) ||
           (cmdPayload.mime_type as string);
 
-        console.log("[WhatsAppEngine] Calling senderEngine.send with chatId:", cmdPayload.chatId);
+        // Si resolveCommandMedia no devolvió dataUri (pasa para URLs HTTP de archivos grandes),
+        // usamos la URL directamente. senderEngine.send() tiene fetchUrlAsBlob() como fallback
+        // para URLs HTTP, por lo que puede descargar el archivo directamente en el contexto
+        // inyectado de WhatsApp Web (sin limitaciones de memoria del service worker).
+        const mediaToSend: string | undefined = resolved.dataUri || payloadMediaUrl;
+
+        console.log("[WhatsAppEngine] Calling senderEngine.send with chatId:", cmdPayload.chatId, "hasMedia:", !!mediaToSend);
         const sendResult = await senderEngine.send({
           chatId: cmdPayload.chatId as string,
           text: cmdPayload.text as string | undefined,
-          media: resolved.dataUri,
+          media: mediaToSend,
           caption: cmdPayload.caption as string | undefined,
           quotedMsgId: cmdPayload.quotedMsgId as string | undefined,
           options: {
@@ -155,6 +163,7 @@ async function handleCommands(event: MessageEvent): Promise<void> {
         }
         break;
       }
+
 
       case "SEND_MEDIA": {
         // Backend envía: { chatId, mediaUrl / media_url (data URI base64 or signed URL), mimeType, caption }

@@ -272,6 +272,17 @@ async function fetchUrlToDataUri(url: string, fallbackMime?: string): Promise<{ 
   return { dataUri: `data:${mimeType};base64,${base64}`, mimeType };
 }
 
+async function getRemoteMediaSize(url: string): Promise<number> {
+  try {
+    const res = await fetch(url, { method: "HEAD" });
+    if (!res.ok) return 0;
+    const cl = res.headers.get("content-length");
+    return cl ? parseInt(cl, 10) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function resolveMediaInServiceWorker(
   payload: Record<string, unknown>
 ): Promise<{ payload: Record<string, unknown>; error?: string }> {
@@ -280,9 +291,24 @@ async function resolveMediaInServiceWorker(
     return { payload };
   }
 
+  // Para archivos grandes (>5MB), NO intentar descargar y base64-encodear en el
+  // service worker — el service worker tiene memoria limitada y puede fallar.
+  // En su lugar, pasamos la URL directa al injected script, que usará fetchUrlAsBlob()
+  // dentro de WhatsApp Web (que sí tiene acceso libre a fetch sin límites de SW).
+  const fileSize = await getRemoteMediaSize(url);
+  const mimeType = (payload.mimeType || payload.mime_type) as string | undefined;
+  const isVideo = (mimeType || "").startsWith("video/");
+  const isLarge = (isVideo && fileSize > 3 * 1024 * 1024) || fileSize > 5 * 1024 * 1024;
+
+  if (isLarge) {
+    console.log(`[ServiceWorker] Archivo grande (${fileSize} bytes, ${mimeType}), pasando URL directa al injected script.`);
+    // Dejar mediaUrl intacto — el injected script (sender-engine / whatsapp-engine)
+    // tiene lógica fetchUrlAsBlob() que lo resolverá dentro del contexto de WA Web.
+    return { payload };
+  }
+
   try {
     console.log("[ServiceWorker] Remote media URL detectada, convirtiendo a data URI:", url);
-    const mimeType = (payload.mimeType || payload.mime_type) as string | undefined;
     const { dataUri } = await fetchUrlToDataUri(url, mimeType);
     return {
       payload: {
@@ -294,7 +320,9 @@ async function resolveMediaInServiceWorker(
     };
   } catch (err: any) {
     console.error("[ServiceWorker] No se pudo convertir media remota a data URI:", err);
-    return { payload, error: err?.message || String(err) };
+    // En lugar de abortar, intentar igual con la URL directa como fallback
+    console.warn("[ServiceWorker] Fallback: pasando URL directa al injected script.");
+    return { payload };
   }
 }
 
