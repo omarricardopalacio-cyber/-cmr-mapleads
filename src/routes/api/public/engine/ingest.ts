@@ -513,6 +513,29 @@ async function loadThreadHistory(orgId: string, threadId: string, userText: stri
     : [...priorMsgs, { role: 'user' as const, content: userText }]
 }
 
+async function hasRecentPendingReply(sessionId: string, threadId: string, chatId: string, text: string, windowMs: number = 45_000) {
+  if (!sessionId || !threadId || !chatId) return false
+  const since = new Date(Date.now() - windowMs).toISOString()
+  const { data } = await supabaseAdmin
+    .from('engine_commands')
+    .select('id, payload, created_at')
+    .eq('org_id', (await supabaseAdmin.from('threads').select('org_id').eq('id', threadId).maybeSingle()).data?.org_id ?? '')
+    .eq('session_id', sessionId)
+    .eq('type', 'SEND_MESSAGE')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  const targetText = String(text ?? '').trim().toLowerCase()
+  return (data ?? []).some((cmd: any) => {
+    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+    const payloadText = String(payload.text ?? '').trim().toLowerCase()
+    const sameChat = String(payload.chatId ?? '').trim() === String(chatId).trim()
+    const sameText = payloadText && targetText && payloadText.includes(targetText)
+    return sameChat && (sameText || payloadText === targetText)
+  })
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -642,6 +665,12 @@ async function maybeAiReply(
       replyLength: finalReply.length,
     })
 
+    const duplicateReply = await hasRecentPendingReply(sessionId, threadId, chatId, finalReply)
+    if (duplicateReply) {
+      console.log('[ai-reply] skip duplicate queued reply', { threadId, chatId, finalReply })
+      return
+    }
+
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,
       session_id: sessionId,
@@ -701,14 +730,17 @@ async function maybeAiReply(
     const errorMessage = 'dame un ratito ya te envio 😉';
 
     if (sessionId && chatId) {
-      await supabaseAdmin.from('engine_commands').insert({
-        org_id: orgId,
-        session_id: sessionId,
-        type: 'SEND_MESSAGE',
-        payload: { chatId, text: errorMessage },
-        status: 'pending',
-        scheduled_for: scheduleAt,
-      })
+      const duplicateReply = await hasRecentPendingReply(sessionId, threadId, chatId, errorMessage)
+      if (!duplicateReply) {
+        await supabaseAdmin.from('engine_commands').insert({
+          org_id: orgId,
+          session_id: sessionId,
+          type: 'SEND_MESSAGE',
+          payload: { chatId, text: errorMessage },
+          status: 'pending',
+          scheduled_for: scheduleAt,
+        })
+      }
     }
   }
 }
