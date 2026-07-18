@@ -602,6 +602,37 @@ async function hasExistingAiReplyCommand(
   return Array.isArray(data) && data.length > 0
 }
 
+async function hasDuplicateOutgoingMessage(
+  threadId: string,
+  text: string | undefined,
+  media: Record<string, unknown> | undefined,
+  sentAt: string | undefined,
+) {
+  if (!threadId || !sentAt) return false
+
+  const parsedSentAt = new Date(sentAt)
+  if (Number.isNaN(parsedSentAt.getTime())) return false
+
+  const windowMs = 3000
+  const start = new Date(parsedSentAt.getTime() - windowMs).toISOString()
+  const end = new Date(parsedSentAt.getTime() + windowMs).toISOString()
+
+  let query = supabaseAdmin
+    .from('messages')
+    .select('id')
+    .eq('thread_id', threadId)
+    .eq('direction', 'out')
+    .gte('sent_at', start)
+    .lte('sent_at', end)
+    .limit(1)
+
+  if (text) query = query.eq('text', text)
+  if (media) query = query.not('media', 'is', null)
+
+  const { data } = await query
+  return Array.isArray(data) && data.length > 0
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -1183,6 +1214,18 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 continue
               }
               if (recentOut && e.waMessageId && recentOut.wa_message_id === e.waMessageId) {
+                continue
+            }
+
+            if (e.direction === 'out' && e.sentAt) {
+              const duplicateOutgoing = await hasDuplicateOutgoingMessage(thread.id, e.text, enrichedMedia as Record<string, unknown> | undefined, e.sentAt)
+              if (duplicateOutgoing) {
+                console.log('[ingest] skip duplicate outgoing message by sentAt/text/media match', {
+                  threadId: thread.id,
+                  waMessageId: e.waMessageId,
+                  sentAt: e.sentAt,
+                  text: e.text,
+                })
                 continue
               }
             }
