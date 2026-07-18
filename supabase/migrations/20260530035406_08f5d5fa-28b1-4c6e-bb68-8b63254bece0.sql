@@ -1,0 +1,1 @@
+ALTER TABLE public.wa_sessions ADD COLUMN IF NOT EXISTS me_wa_id text;

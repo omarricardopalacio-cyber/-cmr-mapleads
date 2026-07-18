@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "MAPLE WA Engine",
+  "version": "1.0.1",
+  "description": "WhatsApp Web Bridge Engine for Cloud CRM - Contact Enricher for LID resolution",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "tabs",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://*.maple-crm.com/*",
+    "https://*.lovable.dev/*",
+    "https://*.lovable.app/*",
+    "https://*.supabase.co/*",
+    "https://*.supabase.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content/index.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "injected/*.js",
+        "assets/*"
+      ],
+      "matches": ["https://web.whatsapp.com/*"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/index.html"
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://*.maple-crm.com/*",
+      "https://*.lovable.dev/*",
+      "https://*.lovable.app/*",
+      "https://localhost:*/*"
+    ]
+  }
+}

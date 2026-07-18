@@ -1,0 +1,244 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+  --radius-2xl: calc(var(--radius) + 4px);
+  --radius-3xl: calc(var(--radius) + 8px);
+  --radius-4xl: calc(var(--radius) + 12px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root, .dark {
+  --radius: 18px;
+  --background: #020817;
+  --foreground: #FFFFFF;
+  --card: rgba(255, 255, 255, 0.03);
+  --card-foreground: #FFFFFF;
+  --popover: #041226;
+  --popover-foreground: #FFFFFF;
+  --primary: #0A84FF;
+  --primary-foreground: #FFFFFF;
+  --secondary: #0057D9;
+  --secondary-foreground: #FFFFFF;
+  --muted: rgba(255, 255, 255, 0.02);
+  --muted-foreground: #94A3B8;
+  --accent: #0A84FF;
+  --accent-foreground: #FFFFFF;
+  --destructive: #FF453A;
+  --destructive-foreground: #FFFFFF;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.03);
+  --ring: #0A84FF;
+  --chart-1: #0A84FF;
+  --chart-2: #0077FF;
+  --chart-3: #0057D9;
+  --chart-4: #94A3B8;
+  --chart-5: #041226;
+  --sidebar: #041226;
+  --sidebar-foreground: #94A3B8;
+  --sidebar-primary: #0A84FF;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: rgba(10, 132, 255, 0.15);
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #0A84FF;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+/* ==========================================
+   PREMIUM BLUE CRM THEME CUSTOM STYLES
+   ========================================== */
+
+/* Main layout / body overrides */
+html, body, #app {
+  background-color: #020817 !important;
+  color: #FFFFFF !important;
+}
+
+/* Card custom design & animations */
+.card, [class*="rounded-xl"], [class*="border bg-card"] {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 0 25px rgba(10, 132, 255, 0.10) !important;
+  transition: all 0.25s ease-in-out !important;
+}
+
+.card:hover, [class*="rounded-xl"]:hover, [class*="border bg-card"]:hover {
+  transform: translateY(-2px) !important;
+  border-color: rgba(10, 132, 255, 0.25) !important;
+  box-shadow: 0 0 35px rgba(10, 132, 255, 0.20) !important;
+}
+
+/* Premium blue icons inside cards */
+.card svg, [class*="border bg-card"] svg {
+  color: #0A84FF !important;
+}
+
+/* Sidebar premium overrides */
+[data-sidebar="sidebar"] {
+  background: linear-gradient(180deg, #041226 0%, #020817 100%) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Active navigation item with blue gradient and border radius */
+[data-sidebar="menu-button"] {
+  transition: all 0.25s ease-in-out !important;
+}
+
+[data-sidebar="menu-button"][data-active="true"] {
+  background: linear-gradient(90deg, #0A84FF 0%, #0057D9 100%) !important;
+  color: #FFFFFF !important;
+  border-radius: 12px !important;
+  box-shadow: 0 0 15px rgba(10, 132, 255, 0.35) !important;
+}
+
+[data-sidebar="menu-button"][data-active="true"] svg {
+  color: #FFFFFF !important;
+}
+
+[data-sidebar="menu-button"]:hover:not([data-active="true"]) {
+  color: #0A84FF !important;
+  background-color: rgba(10, 132, 255, 0.08) !important;
+}
+
+[data-sidebar="menu-button"]:hover:not([data-active="true"]) svg {
+  color: #0A84FF !important;
+}
+
+[data-sidebar="group-label"] {
+  color: #94A3B8 !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* Premium Buttons overrides */
+button, .btn {
+  border-radius: 12px !important;
+}
+
+/* Primary buttons */
+.bg-primary, [class*="bg-primary"], button[class*="bg-primary"] {
+  background-color: #0A84FF !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 10px rgba(10, 132, 255, 0.25) !important;
+  border: none !important;
+  transition: all 0.25s ease-in-out !important;
+}
+
+.bg-primary:hover, [class*="bg-primary"]:hover, button[class*="bg-primary"]:hover {
+  background-color: #0077FF !important;
+  box-shadow: 0 0 18px rgba(10, 132, 255, 0.6) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Forms & Inputs */
+input, textarea, select {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #FFFFFF !important;
+  border-radius: 8px !important;
+  transition: all 0.25s ease-in-out !important;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: #0A84FF !important;
+  box-shadow: 0 0 8px rgba(10, 132, 255, 0.35) !important;
+  outline: none !important;
+}
+
+/* Tables */
+table, tr, th, td {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+tr {
+  transition: background-color 0.2s ease !important;
+}
+
+tr:hover {
+  background-color: rgba(10, 132, 255, 0.03) !important;
+}
+
+th {
+  color: #94A3B8 !important;
+  font-weight: 600 !important;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #020817;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #0A84FF;
+}

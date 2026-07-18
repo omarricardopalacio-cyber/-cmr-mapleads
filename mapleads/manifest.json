@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Mapleads (Backend Sync)",
+  "description": "Leads locales desde datos publicos en Google Maps, arquitectura modular y escalable.",
+  "version": "2.1.0",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "downloads",
+    "activeTab",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://www.google.com/maps/*",
+    "http://localhost:3000/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Maps Lead Studio",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.google.com/maps/*"
+      ],
+      "js": [
+        "src/utils/text.js",
+        "src/core/filters.js",
+        "src/core/scoring.js",
+        "src/core/license.js",
+        "src/core/storage.js",
+        "src/core/scraper.js",
+        "src/core/messageGenerator.js",
+        "src/core/backendSync.js",
+        "src/content/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

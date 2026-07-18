@@ -1,0 +1,3 @@
+DELETE FROM public.messages WHERE thread_id IN (SELECT id FROM public.threads WHERE contact_id IN (SELECT id FROM public.contacts WHERE wa_id ~ '@' OR wa_id !~ '^[0-9]+$' OR wa_id = '21917838930175'));
+DELETE FROM public.threads WHERE contact_id IN (SELECT id FROM public.contacts WHERE wa_id ~ '@' OR wa_id !~ '^[0-9]+$' OR wa_id = '21917838930175');
+DELETE FROM public.contacts WHERE wa_id ~ '@' OR wa_id !~ '^[0-9]+$' OR wa_id = '21917838930175';

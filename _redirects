@@ -1,0 +1,2 @@
+# Fallback to Netlify Function for SSR while preserving static assets
+/* /.netlify/functions/server 200

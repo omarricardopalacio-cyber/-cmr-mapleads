@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "src/lib/catalog.server.ts",
+    "src/lib/ai.server.ts",
+    "src/lib/catalog-search.ts",
+    "src/lib/intent-classifier.ts"
+  ]
+}
