@@ -536,6 +536,43 @@ async function hasRecentPendingReply(sessionId: string, threadId: string, chatId
   })
 }
 
+function normalizeForReplyDedup(text: string) {
+  return String(text ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+async function hasRecentQueuedReply(
+  orgId: string,
+  sessionId: string,
+  chatId: string,
+  text: string,
+  windowMs = 120_000,
+) {
+  if (!orgId || !sessionId || !chatId || !text?.trim()) return false
+  const since = new Date(Date.now() - windowMs).toISOString()
+  const normalizedText = normalizeForReplyDedup(text)
+
+  const { data } = await supabaseAdmin
+    .from('engine_commands')
+    .select('id, type, payload, status, scheduled_for, created_at')
+    .eq('org_id', orgId)
+    .eq('session_id', sessionId)
+    .in('type', ['SEND_MESSAGE', 'send_message'])
+    .in('status', ['pending', 'delivered'])
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(40)
+
+  return (data ?? []).some((cmd: any) => {
+    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+    const payloadText = normalizeForReplyDedup(String(payload.text ?? ''))
+    const payloadChat = String(payload.chatId ?? '').trim()
+    return payloadChat === String(chatId).trim() && payloadText === normalizedText
+  })
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -665,7 +702,7 @@ async function maybeAiReply(
       replyLength: finalReply.length,
     })
 
-    const duplicateReply = await hasRecentPendingReply(sessionId, threadId, chatId, finalReply)
+    const duplicateReply = await hasRecentQueuedReply(orgId, sessionId, chatId, finalReply)
     if (duplicateReply) {
       console.log('[ai-reply] skip duplicate queued reply', { threadId, chatId, finalReply })
       return
@@ -730,7 +767,7 @@ async function maybeAiReply(
     const errorMessage = 'dame un ratito ya te envio 😉';
 
     if (sessionId && chatId) {
-      const duplicateReply = await hasRecentPendingReply(sessionId, threadId, chatId, errorMessage)
+      const duplicateReply = await hasRecentQueuedReply(orgId, sessionId, chatId, errorMessage)
       if (!duplicateReply) {
         await supabaseAdmin.from('engine_commands').insert({
           org_id: orgId,
