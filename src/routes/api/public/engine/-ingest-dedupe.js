@@ -24,16 +24,26 @@ export function buildInboundDedupKey({ sessionId, chatId, waMessageId, direction
   ].join('|')
 }
 
-export function buildAiReplyDedupKey({ sessionId, threadId, text, waMessageId }) {
-  const normalizedText = normalizeDedupText(text).slice(0, 180)
+export function buildAiReplyDedupKey({ sessionId, threadId, text, waMessageId, sentAt, chatId }) {
   const normalizedWaMessageId = String(waMessageId ?? '').trim().toLowerCase()
-  return [
+  const normalizedSentAt = sentAt ? String(sentAt).trim() : ''
+  const normalizedChatId = String(chatId ?? '').trim().toLowerCase()
+  const normalizedText = normalizeDedupText(text).slice(0, 180)
+
+  const baseKey = [
     'ai-reply',
     String(sessionId ?? ''),
     String(threadId ?? ''),
     normalizedWaMessageId || 'no-wa-id',
-    normalizedText || 'no-text',
-  ].join('|')
+    normalizedChatId || 'no-chat',
+    normalizedSentAt || 'no-time',
+  ]
+
+  if (normalizedWaMessageId || normalizedSentAt) {
+    return baseKey.join('|')
+  }
+
+  return [...baseKey, normalizedText || 'no-text'].join('|')
 }
 
 export function createDedupTracker(ttlMs = 45_000) {

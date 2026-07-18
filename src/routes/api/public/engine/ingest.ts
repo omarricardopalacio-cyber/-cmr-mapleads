@@ -573,6 +573,35 @@ async function hasRecentQueuedReply(
   })
 }
 
+async function hasExistingAiReplyCommand(
+  orgId: string,
+  sessionId: string,
+  dedupeKey: string,
+) {
+  if (!orgId || !sessionId || !dedupeKey) return false
+
+  const { data, error } = await supabaseAdmin
+    .from('engine_commands')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('session_id', sessionId)
+    .contains('payload', { dedupeKey })
+    .in('status', ['pending', 'delivered', 'acked'])
+    .limit(1)
+
+  if (error) {
+    console.warn('[ai-reply] failed to query existing AI reply command', {
+      orgId,
+      sessionId,
+      dedupeKey,
+      error,
+    })
+    return false
+  }
+
+  return Array.isArray(data) && data.length > 0
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -582,6 +611,7 @@ async function maybeAiReply(
   text: string,
   delayAfterAutoReplies: number = 0,
   autoRepliesWereSent: boolean = false,
+  aiReplyDedupeKey?: string,
 ) {
   const { data: thread } = await supabaseAdmin
     .from('threads')
@@ -702,17 +732,19 @@ async function maybeAiReply(
       replyLength: finalReply.length,
     })
 
-    const duplicateReply = await hasRecentQueuedReply(orgId, sessionId, chatId, finalReply)
-    if (duplicateReply) {
-      console.log('[ai-reply] skip duplicate queued reply', { threadId, chatId, finalReply })
-      return
+    if (aiReplyDedupeKey) {
+      const duplicateReply = await hasExistingAiReplyCommand(orgId, sessionId, aiReplyDedupeKey)
+      if (duplicateReply) {
+        console.log('[ai-reply] skip duplicate queued reply by dedupeKey', { threadId, chatId, aiReplyDedupeKey })
+        return
+      }
     }
 
     await supabaseAdmin.from('engine_commands').insert({
       org_id: orgId,
       session_id: sessionId,
       type: 'SEND_MESSAGE',
-      payload: { chatId, text: finalReply },
+      payload: { chatId, text: finalReply, dedupeKey: aiReplyDedupeKey },
       status: 'pending',
       scheduled_for: scheduleAt,
     })
@@ -1229,19 +1261,24 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   threadId: thread.id,
                   text: e.text,
                   waMessageId: e.waMessageId,
+                  sentAt: e.sentAt,
+                  chatId: sendChatId,
                 })
-                if (!aiReplyDedupe.shouldProcess(aiReplyDedupKey)) {
+                const alreadyQueued = await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey)
+                if (alreadyQueued) {
+                  console.log('[ingest] skip duplicate AI reply by persisted command', { aiReplyDedupKey, threadId: thread.id, chatId: sendChatId })
+                } else if (!aiReplyDedupe.shouldProcess(aiReplyDedupKey)) {
                   console.log('[ingest] skip duplicate AI reply', { aiReplyDedupKey, threadId: thread.id, chatId: sendChatId })
                 } else if (process.env.ASYNC_AI_REPLY === 'true') {
-                  // Asynchronous execution (optimizado)
+                  // Asynchronous ejecución (optimizado)
                   console.log('[ingest] Despachando maybeAiReply en segundo plano (asíncrono)');
-                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent).catch((err) => {
+                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey).catch((err) => {
                     console.error('[ingest] Error en maybeAiReply asíncrono:', err);
                   });
                 } else {
                   // Fallback síncrono (reversión a comportamiento anterior)
                   console.log('[ingest] Ejecutando maybeAiReply de forma síncrona (rollback/legacy)');
-                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent);
+                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey);
                 }
               }
 

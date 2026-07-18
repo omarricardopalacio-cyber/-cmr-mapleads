@@ -3,6 +3,35 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import { runAiAgent } from '@/lib/ai.server'
 import { getPendingRetryRequests, updateFailedRequest } from '@/lib/retry-manager.server'
 
+async function hasExistingEngineCommand(
+  orgId: string,
+  sessionId: string,
+  dedupeKey: string,
+) {
+  if (!orgId || !sessionId || !dedupeKey) return false
+
+  const { data, error } = await supabaseAdmin
+    .from('engine_commands')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('session_id', sessionId)
+    .contains('payload', { dedupeKey })
+    .in('status', ['pending', 'delivered', 'acked'])
+    .limit(1)
+
+  if (error) {
+    console.warn('[retry-processor] failed to query existing engine command', {
+      orgId,
+      sessionId,
+      dedupeKey,
+      error,
+    })
+    return false
+  }
+
+  return Array.isArray(data) && data.length > 0
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -144,13 +173,22 @@ async function processRetries() {
         }
 
         // Enviar respuesta al usuario
-        await supabaseAdmin.from('engine_commands').insert({
-          org_id: req.org_id,
-          session_id: req.session_id,
-          type: 'SEND_MESSAGE',
-          payload: { chatId: req.chat_id, text: finalReply },
-          status: 'pending',
-        })
+        const retryResponseDedupeKey = `retry-response:${req.id}`
+        const duplicateRetryResponse = await hasExistingEngineCommand(
+          req.org_id,
+          req.session_id,
+          retryResponseDedupeKey,
+        )
+
+        if (!duplicateRetryResponse) {
+          await supabaseAdmin.from('engine_commands').insert({
+            org_id: req.org_id,
+            session_id: req.session_id,
+            type: 'SEND_MESSAGE',
+            payload: { chatId: req.chat_id, text: finalReply, dedupeKey: retryResponseDedupeKey },
+            status: 'pending',
+          })
+        }
 
         // Marcar como resuelto
         await updateFailedRequest(req.id!, {
@@ -191,16 +229,26 @@ async function processRetries() {
           })
 
           // Enviar mensaje final de error
-          await supabaseAdmin.from('engine_commands').insert({
-            org_id: req.org_id,
-            session_id: req.session_id,
-            type: 'SEND_MESSAGE',
-            payload: {
-              chatId: req.chat_id,
-              text: 'Lo sentimos, estamos teniendo dificultades técnicas. Por favor, intenta más tarde o contáctanos directamente.',
-            },
-            status: 'pending',
-          })
+          const retryFailureDedupeKey = `retry-failure:${req.id}`
+          const duplicateRetryFailure = await hasExistingEngineCommand(
+            req.org_id,
+            req.session_id,
+            retryFailureDedupeKey,
+          )
+
+          if (!duplicateRetryFailure) {
+            await supabaseAdmin.from('engine_commands').insert({
+              org_id: req.org_id,
+              session_id: req.session_id,
+              type: 'SEND_MESSAGE',
+              payload: {
+                chatId: req.chat_id,
+                text: 'Lo sentimos, estamos teniendo dificultades técnicas. Por favor, intenta más tarde o contáctanos directamente.',
+                dedupeKey: retryFailureDedupeKey,
+              },
+              status: 'pending',
+            })
+          }
         }
 
         processed++
