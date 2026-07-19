@@ -2083,7 +2083,20 @@ function findRelevantMediaKnowledgeSource(text: string, sources: any[]): any | n
   const scored = searchSources
     .map((source) => ({ source, score: scoreKnowledgeSource(source, terms) }))
     .sort((a, b) => b.score - a.score);
-  return scored[0]?.score > 0 ? scored[0].source : null;
+  if (scored[0]?.score > 0) return scored[0].source;
+
+  const normalizedQuery = normalizeSearchText(text);
+  const textMatch = searchSources.find((source) => {
+    const haystack = [source.name, source.content]
+      .filter(isNonEmptyString)
+      .map(normalizeSearchText)
+      .join(" ");
+    return terms.every((term) => haystack.includes(term));
+  });
+  if (textMatch) return textMatch;
+
+  if (searchSources.length === 1) return searchSources[0];
+  return null;
 }
 
 function isPlanOrServiceRequest(text: string): boolean {
