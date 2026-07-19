@@ -1237,42 +1237,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (e.waMessageId) {
               const { data } = await supabaseAdmin
                 .from('messages')
-                .select('id, wa_message_id, media, text, sent_at')
+                .select('id, media, text')
                 .eq('thread_id', thread.id)
                 .eq('wa_message_id', e.waMessageId)
                 .maybeSingle();
               existingMessage = data;
-
-              if (!existingMessage) {
-                let candidateQuery = supabaseAdmin
-                  .from('messages')
-                  .select('id, wa_message_id, media, text, sent_at')
-                  .eq('thread_id', thread.id)
-                  .eq('direction', direction)
-                  .is('wa_message_id', null);
-
-                if (e.text) {
-                  candidateQuery = candidateQuery.eq('text', e.text);
-                }
-                if (enrichedMedia) {
-                  candidateQuery = candidateQuery.not('media', 'is', null);
-                } else {
-                  candidateQuery = candidateQuery.is('media', null);
-                }
-
-                if (e.sentAt) {
-                  const parsed = new Date(e.sentAt);
-                  if (!Number.isNaN(parsed.getTime())) {
-                    const windowMs = 5000;
-                    const start = new Date(parsed.getTime() - windowMs).toISOString();
-                    const end = new Date(parsed.getTime() + windowMs).toISOString();
-                    candidateQuery = candidateQuery.gte('sent_at', start).lte('sent_at', end);
-                  }
-                }
-
-                const { data: candidate } = await candidateQuery.order('sent_at', { ascending: false }).limit(1).maybeSingle();
-                existingMessage = candidate;
-              }
             }
 
             if (existingMessage) {
@@ -1280,26 +1249,20 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               if (typeof existingMediaObj === 'string') {
                 try { existingMediaObj = JSON.parse(existingMediaObj); } catch {}
               }
-
               const existingMissing = !existingMediaObj || !existingMediaObj.url || existingMediaObj.missing_media;
               const newHasUrl = enrichedMedia && !!enrichedMedia.url;
-              const updatePayload: Record<string, unknown> = {};
 
-              if (e.waMessageId && existingMessage.wa_message_id !== e.waMessageId) {
-                updatePayload.wa_message_id = e.waMessageId;
-              }
               if (existingMissing && newHasUrl) {
-                updatePayload.media = enrichedMedia as any;
-                updatePayload.text = e.text ?? existingMessage.text;
-              }
-              if (Object.keys(updatePayload).length > 0) {
-                console.log('[ingest] Actualizando mensaje existente con datos nuevos:', e.waMessageId ?? existingMessage.wa_message_id);
+                console.log('[ingest] Actualizando mensaje existente con media recuperada:', e.waMessageId);
                 await supabaseAdmin
                   .from('messages')
-                  .update(updatePayload)
+                  .update({
+                    media: enrichedMedia as any,
+                    text: e.text ?? existingMessage.text,
+                  })
                   .eq('id', existingMessage.id);
               } else {
-                console.log('[ingest] Mensaje duplicado recibido, ignorando inserción:', e.waMessageId ?? existingMessage.id);
+                console.log('[ingest] Mensaje duplicado recibido, ignorando inserción:', e.waMessageId);
               }
               continue;
             }

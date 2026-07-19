@@ -9,7 +9,7 @@ export function normalizeDedupText(value) {
 
 export function buildInboundDedupKey({ sessionId, chatId, waMessageId, direction, text, sentAt, waId }) {
   const normalizedText = normalizeDedupText(text).slice(0, 180)
-  const normalizedChatId = normalizeWaKey(chatId ?? waId ?? '') ?? ''
+  const normalizedChatId = String(chatId ?? waId ?? '').trim().toLowerCase()
   const normalizedSentAt = sentAt ? String(sentAt).trim() : ''
   const normalizedWaMessageId = String(waMessageId ?? '').trim().toLowerCase()
 
