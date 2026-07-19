@@ -602,6 +602,37 @@ async function hasExistingAiReplyCommand(
   return Array.isArray(data) && data.length > 0
 }
 
+async function hasDuplicateIncomingMessage(
+  threadId: string,
+  text: string | undefined,
+  media: Record<string, unknown> | undefined,
+  sentAt: string | undefined,
+) {
+  if (!threadId || !sentAt) return false
+
+  const parsedSentAt = new Date(sentAt)
+  if (Number.isNaN(parsedSentAt.getTime())) return false
+
+  const windowMs = 3000
+  const start = new Date(parsedSentAt.getTime() - windowMs).toISOString()
+  const end = new Date(parsedSentAt.getTime() + windowMs).toISOString()
+
+  let query = supabaseAdmin
+    .from('messages')
+    .select('id')
+    .eq('thread_id', threadId)
+    .eq('direction', 'in')
+    .gte('sent_at', start)
+    .lte('sent_at', end)
+    .limit(1)
+
+  if (text) query = query.eq('text', text)
+  if (media) query = query.not('media', 'is', null)
+
+  const { data } = await query
+  return Array.isArray(data) && data.length > 0
+}
+
 async function hasDuplicateOutgoingMessage(
   threadId: string,
   text: string | undefined,
@@ -1265,6 +1296,25 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.log('[ingest] Mensaje duplicado recibido, ignorando inserción:', e.waMessageId);
               }
               continue;
+            }
+
+            const messageDirection = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
+            if (messageDirection === 'in' && e.sentAt) {
+              const duplicateIncoming = await hasDuplicateIncomingMessage(
+                thread.id,
+                e.text,
+                enrichedMedia as Record<string, unknown> | undefined,
+                e.sentAt,
+              )
+              if (duplicateIncoming) {
+                console.log('[ingest] skip duplicate incoming message by sentAt/text/media match', {
+                  threadId: thread.id,
+                  waMessageId: e.waMessageId,
+                  sentAt: e.sentAt,
+                  text: e.text,
+                })
+                continue
+              }
             }
 
             await supabaseAdmin.from('messages').insert({
