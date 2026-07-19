@@ -2014,6 +2014,82 @@ function isMediaRequest(text: string): boolean {
   return /\b(video|videos|foto|fotos|imagen|imagenes)\b/.test(t);
 }
 
+function normalizeSearchText(text: string): string {
+  return (text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitSearchTerms(text: string): string[] {
+  return normalizeSearchText(text).split(" ").filter((w) => w.length >= 3);
+}
+
+function getKnowledgeSourceKeywords(source: any): string[] {
+  const keywords: string[] = [];
+  if (typeof source.name === "string") keywords.push(...splitSearchTerms(source.name));
+  if (typeof source.content === "string") {
+    const contentTerms = splitSearchTerms(source.content).slice(0, 40);
+    keywords.push(...contentTerms);
+  }
+  if (source.metadata && Array.isArray(source.metadata.keywords)) {
+    keywords.push(
+      ...source.metadata.keywords
+        .filter((k: unknown): k is string => typeof k === "string")
+        .flatMap((k: string) => splitSearchTerms(k)),
+    );
+  }
+  return Array.from(new Set(keywords));
+}
+
+function scoreKnowledgeSource(source: any, queryTerms: string[]): number {
+  const terms = getKnowledgeSourceKeywords(source);
+  let score = 0;
+  for (const queryTerm of queryTerms) {
+    if (terms.includes(queryTerm)) score += 2;
+    else if (terms.some((term) => term.includes(queryTerm) || queryTerm.includes(term))) score += 1;
+  }
+  if (source.source_type === "services" || source.source_type === "products") score += 1;
+  return score;
+}
+
+function findRelevantKnowledgeSourceByMetadata(text: string, sources: any[]): any | null {
+  if (!text || !sources.length) return null;
+  const terms = splitSearchTerms(text);
+  if (!terms.length) return null;
+  const scored = sources
+    .map((source) => ({ source, score: scoreKnowledgeSource(source, terms) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return scored[0]?.source ?? null;
+}
+
+function isPlanOrServiceRequest(text: string): boolean {
+  return /\b(plan|planes|servicio|servicios|módulo|modulo|combo|paquete|paquetes|promocion|promoción|promociones|paquetes|evento|bodas|bodas|decoracion|decoración)\b/i.test(
+    text || "",
+  );
+}
+
+function selectKnowledgeSourceMedia(source: any, wantsVideo: boolean): { kind: "video" | "image"; url: string } | null {
+  const imageUrls = Array.isArray(source.metadata?.image_urls)
+    ? source.metadata.image_urls.filter((url: unknown): url is string => typeof url === "string" && url.trim() !== "")
+    : [];
+  const videoUrls = Array.isArray(source.metadata?.video_urls)
+    ? source.metadata.video_urls.filter((url: unknown): url is string => typeof url === "string" && url.trim() !== "")
+    : [];
+  if (wantsVideo) {
+    if (videoUrls.length) return { kind: "video", url: videoUrls[0] };
+    if (imageUrls.length) return { kind: "image", url: imageUrls[0] };
+    return null;
+  }
+  if (imageUrls.length) return { kind: "image", url: imageUrls[0] };
+  if (videoUrls.length) return { kind: "video", url: videoUrls[0] };
+  return null;
+}
+
 /**
  * Extrae posibles referencias de producto (SKU/modelo o nombre destacado) de un texto.
  */
@@ -2212,6 +2288,12 @@ export async function runAiAgent({
   const currentCatalogQuery = normalizeCatalogQuery(lastUserText);
   const wantsMoreProducts = isMoreProductsRequest(lastUserText);
   const mediaRequest = isMediaRequest(lastUserText);
+  const planMediaSource = !isCollectingOrder && isPlanOrServiceRequest(lastUserText)
+    ? findRelevantKnowledgeSourceByMetadata(lastUserText, Array.isArray(knowledgeSourcesData) ? knowledgeSourcesData : [])
+    : null;
+  const planMediaSelection = planMediaSource
+    ? selectKnowledgeSourceMedia(planMediaSource, /\b(video|videos)\b/i.test(lastUserText))
+    : null;
 
   const assistantIsCollecting = (() => {
     const lastAssistantMsg = [...visibleChat].reverse().find((m) => m.role === "assistant");
@@ -2348,7 +2430,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   try {
     const result = await supabaseAdmin
       .from("knowledge_sources")
-      .select("name, source_type, content")
+      .select("id, name, source_type, content, metadata")
       .eq("org_id", orgId)
       .eq("is_active", true);
     knowledgeSourcesData = result.data;
@@ -2511,6 +2593,30 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   let orderConfirmed = false;
   let lastText = "";
   let deliveredProductMedia = false;
+
+  // Cortocircuito determinista de media: si el cliente pide ver VIDEO/FOTO de un plan o servicio
+  if (!isCollectingOrder && planMediaSelection && planMediaSource) {
+    const caption = `${planMediaSource.name} — ${planMediaSelection.kind === "video" ? "Video" : "Imagen"}`;
+    const dedupeKey = `plan_media:${planMediaSource.id}:${planMediaSelection.kind}`;
+    const mediaResult = await queueOutgoingMedia(
+      ctx,
+      planMediaSelection.kind,
+      planMediaSelection.url,
+      caption,
+      dedupeKey,
+    );
+
+    if (/omitido|duplicado/i.test(mediaResult)) {
+      return {
+        reply: `Ya envié ese ${planMediaSelection.kind === "video" ? "video" : "archivo"} del ${planMediaSource.name} recientemente. Si quieres, puedo enviarte otra información o ayudarte a agendarlo.`,
+        actions: ["send_media"],
+      };
+    }
+    return {
+      reply: `Aquí tienes ${planMediaSelection.kind === "video" ? "el video" : "la imagen"} del ${planMediaSource.name}. ¿Quieres más detalles o quieres agendar este plan? 😊`,
+      actions: ["send_media"],
+    };
+  }
 
   // Cortocircuito determinista de media: si el cliente pide ver VIDEO/FOTO de un producto
   if (

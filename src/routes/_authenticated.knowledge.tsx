@@ -8,6 +8,7 @@ import {
   upsertKnowledgeSource,
   deleteKnowledgeSource,
 } from "@/lib/automations.functions";
+import { uploadMedia } from "@/lib/upload-media";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,6 +81,13 @@ function SourceCard({ source, onEdit }: { source: KnowledgeSource; onEdit: () =>
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground truncate">{sourceLabels[source.source_type] ?? source.source_type}</p>
+          {((Array.isArray(source.metadata?.image_urls) ? source.metadata.image_urls.length : 0) +
+            (Array.isArray(source.metadata?.video_urls) ? source.metadata.video_urls.length : 0)) > 0 && (
+            <p className="text-xs text-muted-foreground truncate">
+              {`${(Array.isArray(source.metadata?.image_urls) ? source.metadata.image_urls.length : 0) +
+                (Array.isArray(source.metadata?.video_urls) ? source.metadata.video_urls.length : 0)} media`}
+            </p>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -127,11 +135,53 @@ const sourceIcons: Record<string, React.ReactNode> = {
 function SourceEditor({ source, onClose }: { source: KnowledgeSource; onClose: () => void }) {
   const qc = useQueryClient();
   const upsertFn = useServerFn(upsertKnowledgeSource);
+  const [uploading, setUploading] = useState(false);
 
   const [name, setName] = useState(source.name);
   const [sourceType, setSourceType] = useState(source.source_type);
   const [content, setContent] = useState(source.content);
   const [isActive, setIsActive] = useState(source.is_active);
+  const [keywords, setKeywords] = useState(
+    Array.isArray(source.metadata?.keywords)
+      ? source.metadata.keywords.join(", ")
+      : String(source.metadata?.keywords ?? ""),
+  );
+  const [imageUrls, setImageUrls] = useState<string[]>(
+    Array.isArray(source.metadata?.image_urls)
+      ? (source.metadata.image_urls as string[])
+      : [],
+  );
+  const [videoUrls, setVideoUrls] = useState<string[]>(
+    Array.isArray(source.metadata?.video_urls)
+      ? (source.metadata.video_urls as string[])
+      : [],
+  );
+
+  const normalizeUrlList = (urls: string[]): string[] =>
+    urls
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0);
+
+  const handleUploadFiles = async (files: FileList | null, kind: "image" | "video") => {
+    if (!files?.length) return;
+    setUploading(true);
+    try {
+      const uploads = Array.from(files);
+      for (const file of uploads) {
+        const { url } = await uploadMedia(file);
+        if (kind === "image") {
+          setImageUrls((prev) => [...prev, url]);
+        } else {
+          setVideoUrls((prev) => [...prev, url]);
+        }
+      }
+      toast.success("Archivo(s) subido(s)");
+    } catch (err: any) {
+      toast.error("Error al subir media: " + (err?.message || "falló"));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const saveSource = async () => {
     const res = await upsertFn({
@@ -141,7 +191,14 @@ function SourceEditor({ source, onClose }: { source: KnowledgeSource; onClose: (
         source_type: sourceType,
         content,
         is_active: isActive,
-        metadata: {},
+        metadata: {
+          keywords: keywords
+            .split(",")
+            .map((k) => k.trim())
+            .filter((k) => k.length > 0),
+          image_urls: normalizeUrlList(imageUrls),
+          video_urls: normalizeUrlList(videoUrls),
+        },
       },
     });
     const saved = (res as any)?.item;
@@ -162,7 +219,7 @@ function SourceEditor({ source, onClose }: { source: KnowledgeSource; onClose: (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="space-y-1">
           <Label className="text-xs">Nombre</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Preguntas frecuentes" />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Plan Golden" />
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Tipo</Label>
@@ -183,16 +240,63 @@ function SourceEditor({ source, onClose }: { source: KnowledgeSource; onClose: (
           </Select>
         </div>
       </div>
+
       <div className="space-y-1">
         <Label className="text-xs">Contenido</Label>
         <Textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Añade el contenido de la fuente de conocimiento..." rows={6} />
       </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">Palabras clave</Label>
+        <Input
+          value={keywords}
+          onChange={(e) => setKeywords(e.target.value)}
+          placeholder="plan boda, decoración, montaje"
+        />
+        <p className="text-xs text-muted-foreground">Separadas por comas. Ayudan a que la IA identifique de qué plan se trata.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label className="text-xs">URLs de imágenes</Label>
+          <Textarea
+            value={imageUrls.join("\n")}
+            onChange={(e) => setImageUrls(e.target.value.split("\n"))}
+            placeholder="Una URL por línea"
+            rows={4}
+          />
+          <Input
+            type="file"
+            accept="image/*"
+            multiple
+            disabled={uploading}
+            onChange={(e) => handleUploadFiles(e.target.files, "image")}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label className="text-xs">URLs de videos</Label>
+          <Textarea
+            value={videoUrls.join("\n")}
+            onChange={(e) => setVideoUrls(e.target.value.split("\n"))}
+            placeholder="Una URL por línea"
+            rows={4}
+          />
+          <Input
+            type="file"
+            accept="video/*"
+            multiple
+            disabled={uploading}
+            onChange={(e) => handleUploadFiles(e.target.files, "video")}
+          />
+        </div>
+      </div>
+
       <div className="flex items-center gap-2">
         <Switch checked={isActive} onCheckedChange={setIsActive} />
         <Label className="text-xs">Activo</Label>
       </div>
       <div className="flex gap-2">
-        <Button size="sm" onClick={saveSource}>
+        <Button size="sm" onClick={saveSource} disabled={uploading}>
           <Save className="h-4 w-4 mr-1" /> Guardar
         </Button>
         <Button size="sm" variant="outline" onClick={onClose}>
