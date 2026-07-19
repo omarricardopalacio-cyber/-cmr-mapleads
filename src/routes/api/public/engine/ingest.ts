@@ -125,6 +125,33 @@ function pickDisplayName(name: unknown, waId?: string, phone?: string): string |
   return phone ?? waId?.replace(/@lid$/, '')
 }
 
+function isUsefulDisplayName(name: unknown, phone?: string, waId?: string): boolean {
+  if (typeof name !== 'string') return false
+  const clean = name.trim()
+  if (!clean) return false
+  const lower = clean.toLowerCase()
+  if (lower === 'unknown') return false
+  if (phone && clean === phone) return false
+  if (waId && clean === waId.replace(/@lid$/, '')) return false
+  if (clean.startsWith('Cliente')) return false
+  return true
+}
+
+function canCreateContactRecord({
+  waId,
+  phone,
+  displayName,
+}: {
+  waId: string
+  phone?: string | null
+  displayName?: string | null
+}) {
+  if (phone) return true
+  if (!waId) return false
+  if (!isLidKey(waId) && Boolean(digits(waId))) return true
+  return isUsefulDisplayName(displayName, phone ?? undefined, waId)
+}
+
 function extractSessionTelemetry(rawEvent: z.infer<typeof EventSchema>) {
   const p = (rawEvent.payload as Record<string, unknown> | undefined) ?? (rawEvent.raw as Record<string, unknown> | undefined) ?? {}
   const device = (p.device as Record<string, unknown> | undefined) ?? (p.deviceInfo as Record<string, unknown> | undefined) ?? {}
@@ -1033,19 +1060,37 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (!contactId) {
               const { data: byWa } = await supabaseAdmin
                 .from('contacts')
-                .upsert(
-                  {
-                    org_id: session.org_id,
-                    wa_id: waId,
-                    display_name: e.contact?.displayName ?? phone ?? waId.replace(/@lid$/, ''),
-                    phone,
-                    profile_picture_url: e.contact?.profilePictureUrl,
-                  },
-                  { onConflict: 'org_id,wa_id' },
-                )
                 .select('id')
-                .single()
+                .eq('org_id', session.org_id)
+                .eq('wa_id', waId)
+                .maybeSingle()
               contactId = byWa?.id ?? null
+            }
+
+            if (!contactId) {
+              const shouldCreateContact = canCreateContactRecord({
+                waId,
+                phone,
+                displayName: e.contact?.displayName ?? null,
+              })
+
+              if (shouldCreateContact) {
+                const { data: newContact } = await supabaseAdmin
+                  .from('contacts')
+                  .upsert(
+                    {
+                      org_id: session.org_id,
+                      wa_id: waId,
+                      display_name: e.contact?.displayName ?? phone ?? undefined,
+                      phone,
+                      profile_picture_url: e.contact?.profilePictureUrl,
+                    },
+                    { onConflict: 'org_id,wa_id' },
+                  )
+                  .select('id')
+                  .single()
+                contactId = newContact?.id ?? null
+              }
             }
 
             if (contactId) {
