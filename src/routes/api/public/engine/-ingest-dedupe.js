@@ -7,9 +7,26 @@ export function normalizeDedupText(value) {
     .toLowerCase()
 }
 
+function normalizeWaKey(v) {
+  if (v == null) return undefined
+  const raw = String(v).trim().toLowerCase()
+  if (!raw) return undefined
+  const parts = raw.split('@')
+  const user = parts[0]
+  const domain = parts[1] || ''
+
+  if (domain === 'lid' || raw.includes('@lid')) {
+    return `${user}@lid`
+  }
+
+  const base = user.replace(/\D/g, '')
+  if (!base) return undefined
+  return base
+}
+
 export function buildInboundDedupKey({ sessionId, chatId, waMessageId, direction, text, sentAt, waId }) {
   const normalizedText = normalizeDedupText(text).slice(0, 180)
-  const normalizedChatId = String(chatId ?? waId ?? '').trim().toLowerCase()
+  const normalizedChatId = normalizeWaKey(chatId ?? waId ?? '') ?? ''
   const normalizedSentAt = sentAt ? String(sentAt).trim() : ''
   const normalizedWaMessageId = String(waMessageId ?? '').trim().toLowerCase()
 
