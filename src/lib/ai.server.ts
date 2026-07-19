@@ -2288,12 +2288,6 @@ export async function runAiAgent({
   const currentCatalogQuery = normalizeCatalogQuery(lastUserText);
   const wantsMoreProducts = isMoreProductsRequest(lastUserText);
   const mediaRequest = isMediaRequest(lastUserText);
-  const planMediaSource = !isCollectingOrder && isPlanOrServiceRequest(lastUserText)
-    ? findRelevantKnowledgeSourceByMetadata(lastUserText, Array.isArray(knowledgeSourcesData) ? knowledgeSourcesData : [])
-    : null;
-  const planMediaSelection = planMediaSource
-    ? selectKnowledgeSourceMedia(planMediaSource, /\b(video|videos)\b/i.test(lastUserText))
-    : null;
 
   const assistantIsCollecting = (() => {
     const lastAssistantMsg = [...visibleChat].reverse().find((m) => m.role === "assistant");
@@ -2445,6 +2439,13 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   );
   const sourcesToUse = intentSelection?.matched ?? (knowledgeSourcesData as any[]) ?? [];
   const hasIntentMatch = !!intentSelection;
+
+  const planMediaSource = !isCollectingOrder && isPlanOrServiceRequest(lastUserText)
+    ? findRelevantKnowledgeSourceByMetadata(lastUserText, (knowledgeSourcesData as any[]) ?? [])
+    : null;
+  const planMediaSelection = planMediaSource
+    ? selectKnowledgeSourceMedia(planMediaSource, /\b(video|videos)\b/i.test(lastUserText))
+    : null;
 
   const KS_PER_SOURCE = hasIntentMatch ? 1400 : promptMode === "general" ? 900 : 500;
   const KS_TOTAL = hasIntentMatch
