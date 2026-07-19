@@ -936,6 +936,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.log('[ingest] skip duplicate event', { dedupKey, type: e.type, chatId: e.chatId })
                 continue
               }
+            }
 
             const waId = e.contact?.waId ?? normalizeWaKey(e.chatId)
             if (!waId) continue
@@ -1215,18 +1216,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
               if (recentOut && e.waMessageId && recentOut.wa_message_id === e.waMessageId) {
                 continue
-            }
+              }
 
-            if (e.direction === 'out' && e.sentAt) {
-              const duplicateOutgoing = await hasDuplicateOutgoingMessage(thread.id, e.text, enrichedMedia as Record<string, unknown> | undefined, e.sentAt)
-              if (duplicateOutgoing) {
-                console.log('[ingest] skip duplicate outgoing message by sentAt/text/media match', {
-                  threadId: thread.id,
-                  waMessageId: e.waMessageId,
-                  sentAt: e.sentAt,
-                  text: e.text,
-                })
-                continue
+              if (e.direction === 'out' && e.sentAt) {
+                const duplicateOutgoing = await hasDuplicateOutgoingMessage(thread.id, e.text, enrichedMedia as Record<string, unknown> | undefined, e.sentAt)
+                if (duplicateOutgoing) {
+                  console.log('[ingest] skip duplicate outgoing message by sentAt/text/media match', {
+                    threadId: thread.id,
+                    waMessageId: e.waMessageId,
+                    sentAt: e.sentAt,
+                    text: e.text,
+                  })
+                  continue
+                }
               }
             }
 
@@ -1480,41 +1482,39 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               } catch (flowErr: any) {
                 console.error('[ingest] flow error (non-fatal):', flowErr.message);
               }
-            }
-
-          } else if (e.type === 'ack' && e.commandId) {
-            const ackStatus = e.ackStatus ?? 'ok';
-            const isFailed = ackStatus === 'failed' || ackStatus === 'error';
-            const rawPayload = (e.raw as any) ?? {};
-            const ackRecord: Record<string, any> = { status: ackStatus };
-            if (rawPayload.error) ackRecord.error = String(rawPayload.error);
-            if (rawPayload.result?.error) ackRecord.error = String(rawPayload.result.error);
-            if (rawPayload.result?.messageId) ackRecord.messageId = rawPayload.result.messageId;
-            await supabaseAdmin
-              .from('engine_commands')
-              .update({ status: isFailed ? 'failed' : 'acked', ack: ackRecord, acked_at: new Date().toISOString() })
-              .eq('id', e.commandId)
-              .eq('session_id', session.id);
-
-            // Sync broadcast_recipients if this command belongs to a broadcast
-            const { data: br } = await supabaseAdmin
-              .from('broadcast_recipients')
-              .select('id, broadcast_id')
-              .eq('command_id', e.commandId)
-              .maybeSingle();
-            if (br) {
-              const newStatus = isFailed ? 'failed' : 'sent';
+            } else if (e.type === 'ack' && e.commandId) {
+              const ackStatus = e.ackStatus ?? 'ok';
+              const isFailed = ackStatus === 'failed' || ackStatus === 'error';
+              const rawPayload = (e.raw as any) ?? {};
+              const ackRecord: Record<string, any> = { status: ackStatus };
+              if (rawPayload.error) ackRecord.error = String(rawPayload.error);
+              if (rawPayload.result?.error) ackRecord.error = String(rawPayload.result.error);
+              if (rawPayload.result?.messageId) ackRecord.messageId = rawPayload.result.messageId;
               await supabaseAdmin
+                .from('engine_commands')
+                .update({ status: isFailed ? 'failed' : 'acked', ack: ackRecord, acked_at: new Date().toISOString() })
+                .eq('id', e.commandId)
+                .eq('session_id', session.id);
+
+              // Sync broadcast_recipients if this command belongs to a broadcast
+              const { data: br } = await supabaseAdmin
                 .from('broadcast_recipients')
-                .update({ status: newStatus, sent_at: isFailed ? null : new Date().toISOString() })
-                .eq('id', br.id);
-              if (isFailed) {
-                await supabaseAdmin.rpc('increment_broadcast_failed', { p_broadcast_id: br.broadcast_id });
-              } else {
-                await supabaseAdmin.rpc('increment_broadcast_sent', { p_broadcast_id: br.broadcast_id });
+                .select('id, broadcast_id')
+                .eq('command_id', e.commandId)
+                .maybeSingle();
+              if (br) {
+                const newStatus = isFailed ? 'failed' : 'sent';
+                await supabaseAdmin
+                  .from('broadcast_recipients')
+                  .update({ status: newStatus, sent_at: isFailed ? null : new Date().toISOString() })
+                  .eq('id', br.id);
+                if (isFailed) {
+                  await supabaseAdmin.rpc('increment_broadcast_failed', { p_broadcast_id: br.broadcast_id });
+                } else {
+                  await supabaseAdmin.rpc('increment_broadcast_sent', { p_broadcast_id: br.broadcast_id });
+                }
               }
             }
-          }
           } catch (eventErr: any) {
             console.error('[ingest] Non-fatal error processing event in loop:', eventErr.message || eventErr, e);
           }
