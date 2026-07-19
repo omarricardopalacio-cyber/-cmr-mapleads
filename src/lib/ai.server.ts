@@ -2067,18 +2067,48 @@ function findRelevantKnowledgeSourceByMetadata(text: string, sources: any[]): an
   return scored[0]?.source ?? null;
 }
 
+function findRelevantMediaKnowledgeSource(text: string, sources: any[]): any | null {
+  if (!text || !sources.length) return null;
+  const mediaSources = sources.filter(sourceHasMedia);
+  if (!mediaSources.length) return null;
+
+  const exactMatch = findRelevantKnowledgeSourceByMetadata(text, mediaSources);
+  if (exactMatch) return exactMatch;
+
+  const planOrServiceSources = mediaSources.filter((source) =>
+    ["services", "products", "catalog", "internal_kb", "website"].includes(source.source_type),
+  );
+  const searchSources = planOrServiceSources.length ? planOrServiceSources : mediaSources;
+  const terms = splitSearchTerms(text);
+  const scored = searchSources
+    .map((source) => ({ source, score: scoreKnowledgeSource(source, terms) }))
+    .sort((a, b) => b.score - a.score);
+  return scored[0]?.score > 0 ? scored[0].source : null;
+}
+
 function isPlanOrServiceRequest(text: string): boolean {
   return /\b(plan|planes|servicio|servicios|módulo|modulo|combo|paquete|paquetes|promocion|promoción|promociones|paquetes|evento|bodas|bodas|decoracion|decoración)\b/i.test(
     text || "",
   );
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function sourceHasMedia(source: any): boolean {
+  return (
+    (Array.isArray(source.metadata?.image_urls) && source.metadata.image_urls.some(isNonEmptyString)) ||
+    (Array.isArray(source.metadata?.video_urls) && source.metadata.video_urls.some(isNonEmptyString))
+  );
+}
+
 function selectKnowledgeSourceMedia(source: any, wantsVideo: boolean): { kind: "video" | "image"; url: string } | null {
   const imageUrls = Array.isArray(source.metadata?.image_urls)
-    ? source.metadata.image_urls.filter((url: unknown): url is string => typeof url === "string" && url.trim() !== "")
+    ? source.metadata.image_urls.filter((url: unknown): url is string => isNonEmptyString(url))
     : [];
   const videoUrls = Array.isArray(source.metadata?.video_urls)
-    ? source.metadata.video_urls.filter((url: unknown): url is string => typeof url === "string" && url.trim() !== "")
+    ? source.metadata.video_urls.filter((url: unknown): url is string => isNonEmptyString(url))
     : [];
   if (wantsVideo) {
     if (videoUrls.length) return { kind: "video", url: videoUrls[0] };
@@ -2440,8 +2470,20 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   const sourcesToUse = intentSelection?.matched ?? (knowledgeSourcesData as any[]) ?? [];
   const hasIntentMatch = !!intentSelection;
 
-  const planMediaSource = !isCollectingOrder && isPlanOrServiceRequest(lastUserText)
-    ? findRelevantKnowledgeSourceByMetadata(lastUserText, (knowledgeSourcesData as any[]) ?? [])
+  function findLastPlanContext(): string | null {
+    if (isPlanOrServiceRequest(lastUserText)) return lastUserText;
+    if (!genericMediaReference(lastUserText)) return null;
+    const previousUserPlan = [...visibleChat]
+      .reverse()
+      .filter((m) => m.role === "user")
+      .slice(1)
+      .find((m) => isPlanOrServiceRequest(m.content));
+    return previousUserPlan?.content ?? null;
+  }
+
+  const planReferenceText = !isCollectingOrder ? findLastPlanContext() : null;
+  const planMediaSource = planReferenceText
+    ? findRelevantMediaKnowledgeSource(planReferenceText, (knowledgeSourcesData as any[]) ?? [])
     : null;
   const planMediaSelection = planMediaSource
     ? selectKnowledgeSourceMedia(planMediaSource, /\b(video|videos)\b/i.test(lastUserText))
