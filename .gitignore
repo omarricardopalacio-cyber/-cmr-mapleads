@@ -21,6 +21,14 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Migracion Supabase (binarios de PostgreSQL, secretos y dumps)
+pgsql/
+pg/
+migracion.env
+migracion-dump/
+# Secretos locales (para produccion se usan las variables de Netlify)
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

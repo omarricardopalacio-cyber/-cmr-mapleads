@@ -7,6 +7,49 @@ import { convertUrlToBase64, storagePathFromMediaUrl } from "@/lib/media";
 import { sanitizeMessageText } from "@/lib/message-text";
 import { ensureUserOrg } from "@/lib/org-helpers";
 
+/**
+ * Borra del bucket "media" los archivos referenciados por los mensajes indicados.
+ * Evita archivos huerfanos cuando se eliminan mensajes/threads/contactos.
+ * Solo borra rutas que pertenecen a ESTE proyecto (las que se pueden resolver).
+ */
+async function deleteMediaFilesForMessages(
+  orgId: string,
+  threadId?: string
+): Promise<number> {
+  let query = supabaseAdmin
+    .from("messages")
+    .select("media")
+    .eq("org_id", orgId)
+    .not("media", "is", null);
+  if (threadId) query = query.eq("thread_id", threadId);
+
+  const { data, error } = await query;
+  if (error || !data) return 0;
+
+  const paths = new Set<string>();
+  for (const row of data as Array<{ media: unknown }>) {
+    let media = row.media as Record<string, unknown> | string | null;
+    if (typeof media === "string") {
+      try { media = JSON.parse(media); } catch { media = null; }
+    }
+    if (!media || typeof media !== "object") continue;
+    const m = media as Record<string, unknown>;
+    const storagePath = typeof m.storagePath === "string" ? m.storagePath : null;
+    const url = typeof m.url === "string" ? m.url : null;
+    const path = storagePath || (url ? storagePathFromMediaUrl(url) : null);
+    if (path) paths.add(path);
+  }
+
+  const all = [...paths];
+  let removed = 0;
+  for (let i = 0; i < all.length; i += 100) {
+    const chunk = all.slice(i, i + 100);
+    const { error: rmErr } = await supabaseAdmin.storage.from("media").remove(chunk);
+    if (!rmErr) removed += chunk.length;
+  }
+  return removed;
+}
+
 async function downloadMediaFromStorage(
   path: string
 ): Promise<{ base64: string; mimeType: string }> {
@@ -359,6 +402,9 @@ export const clearThreadMessages = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
 
+    // Borrar primero los archivos de Storage de estos mensajes (evita huerfanos)
+    await deleteMediaFilesForMessages(orgId, data.threadId);
+
     const { error: messagesError } = await supabaseAdmin
       .from("messages")
       .delete()
@@ -399,6 +445,9 @@ export const clearAllChats = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await ensureUserOrg(context.userId);
+
+    // Borrar primero todos los archivos de Storage de la organizacion (evita huerfanos)
+    await deleteMediaFilesForMessages(orgId);
 
     const { error: messagesError } = await supabaseAdmin
       .from("messages")

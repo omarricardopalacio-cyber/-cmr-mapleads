@@ -40,6 +40,7 @@ import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/e
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
+import { Route as ApiPublicCronCleanupRouteImport } from './routes/api/public/cron/cleanup'
 import { Route as ApiAdminEngineFailedRequestsRouteImport } from './routes/api/admin/engine/failed-requests'
 
 const SignupRoute = SignupRouteImport.update({
@@ -208,6 +209,11 @@ const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
   path: '/api/public/cron/dispatch',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicCronCleanupRoute = ApiPublicCronCleanupRouteImport.update({
+  id: '/api/public/cron/cleanup',
+  path: '/api/public/cron/cleanup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAdminEngineFailedRequestsRoute =
   ApiAdminEngineFailedRequestsRouteImport.update({
     id: '/api/admin/engine/failed-requests',
@@ -240,6 +246,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
+  '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
@@ -272,6 +279,7 @@ export interface FileRoutesByTo {
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
+  '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
@@ -307,6 +315,7 @@ export interface FileRoutesById {
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
+  '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
@@ -342,6 +351,7 @@ export interface FileRouteTypes {
     | '/api/internal/no-response-worker'
     | '/conversations/'
     | '/api/admin/engine/failed-requests'
+    | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
@@ -374,6 +384,7 @@ export interface FileRouteTypes {
     | '/api/internal/no-response-worker'
     | '/conversations'
     | '/api/admin/engine/failed-requests'
+    | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
@@ -408,6 +419,7 @@ export interface FileRouteTypes {
     | '/api/internal/no-response-worker'
     | '/_authenticated/conversations/'
     | '/api/admin/engine/failed-requests'
+    | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
@@ -425,6 +437,7 @@ export interface RootRouteChildren {
   ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
   ApiInternalNoResponseWorkerRoute: typeof ApiInternalNoResponseWorkerRoute
   ApiAdminEngineFailedRequestsRoute: typeof ApiAdminEngineFailedRequestsRoute
+  ApiPublicCronCleanupRoute: typeof ApiPublicCronCleanupRoute
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
@@ -653,6 +666,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCronDispatchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/cron/cleanup': {
+      id: '/api/public/cron/cleanup'
+      path: '/api/public/cron/cleanup'
+      fullPath: '/api/public/cron/cleanup'
+      preLoaderRoute: typeof ApiPublicCronCleanupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/admin/engine/failed-requests': {
       id: '/api/admin/engine/failed-requests'
       path: '/api/admin/engine/failed-requests'
@@ -730,6 +750,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
   ApiInternalNoResponseWorkerRoute: ApiInternalNoResponseWorkerRoute,
   ApiAdminEngineFailedRequestsRoute: ApiAdminEngineFailedRequestsRoute,
+  ApiPublicCronCleanupRoute: ApiPublicCronCleanupRoute,
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,

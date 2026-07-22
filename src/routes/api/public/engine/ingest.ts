@@ -1369,7 +1369,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               direction: e.direction ?? (e.type === 'message-in' ? 'in' : 'out'),
               text: e.text ?? null,
               media: enrichedMedia as any,
-              raw: stripHeavyFieldsForDb((e.raw as any) ?? null),
+              // raw se deja vacio a proposito: el payload crudo ocupa mucho espacio,
+              // nunca se lee para features y ya queda auditado en la tabla `events`.
+              raw: null,
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
@@ -1615,12 +1617,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           }
         }
 
-        const eventRows = normalized.map((e, i) => ({
-          org_id: session.org_id,
-          session_id: session.id,
-          type: e.type,
-          payload: stripHeavyFieldsForDb(events[i]) as never,
-        }))
+        // Log de auditoria opcional. Es la tabla que mas crece; se puede
+        // desactivar con DISABLE_EVENT_AUDIT=true para ahorrar espacio.
+        const eventRows = process.env.DISABLE_EVENT_AUDIT === 'true'
+          ? []
+          : normalized.map((e, i) => ({
+              org_id: session.org_id,
+              session_id: session.id,
+              type: e.type,
+              payload: stripHeavyFieldsForDb(events[i]) as never,
+            }))
         if (eventRows.length) {
           try {
             await supabaseAdmin.from('events').insert(eventRows)
