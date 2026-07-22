@@ -125,6 +125,105 @@ export const listAiActions = createServerFn({ method: "GET" })
     return { logs: (logs ?? []) as Array<{ id: string; action_name: string; action_details: string; created_at: string }> };
   });
 
+// === RESPALDO DEL APRENDIZAJE DE LA IA (export / import) ===
+// Permite descargar todo lo que la IA aprendio de los clientes (contacts.ai_memory)
+// a un archivo JSON, y volver a cargarlo en otro equipo/entorno. El dato "vivo"
+// sigue en Supabase (pesa poquisimo); esto es respaldo y portabilidad.
+
+export const exportAiLearning = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const orgId = await getUserOrg(context.userId);
+
+    const { data, error } = await supabaseAdmin
+      .from("contacts")
+      .select("id, wa_id, phone, display_name, ai_memory")
+      .eq("org_id", orgId)
+      .not("ai_memory", "is", null);
+    if (error) throw new Error(error.message);
+
+    const contacts = (data ?? []).filter((c: any) => {
+      const m = c.ai_memory;
+      if (!m || typeof m !== "object") return false;
+      return Object.keys(m).length > 0 && JSON.stringify(m) !== "{}";
+    });
+
+    return {
+      version: 1 as const,
+      kind: "ai-learning-backup" as const,
+      exported_at: new Date().toISOString(),
+      org_id: orgId,
+      count: contacts.length,
+      contacts: contacts.map((c: any) => ({
+        contact_id: c.id as string,
+        wa_id: (c.wa_id ?? null) as string | null,
+        phone: (c.phone ?? null) as string | null,
+        display_name: (c.display_name ?? null) as string | null,
+        ai_memory: c.ai_memory,
+      })),
+    };
+  });
+
+const ImportSchema = z.object({
+  version: z.number().optional(),
+  kind: z.string().optional(),
+  contacts: z
+    .array(
+      z.object({
+        contact_id: z.string().uuid().optional().nullable(),
+        wa_id: z.string().max(128).optional().nullable(),
+        ai_memory: z.record(z.any()),
+      }),
+    )
+    .max(100000),
+});
+
+export const importAiLearning = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => ImportSchema.parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    const nowStr = new Date().toISOString();
+
+    let updated = 0;
+    let skipped = 0;
+
+    // Se procesa en lotes pequenos para no saturar la conexion.
+    for (let i = 0; i < data.contacts.length; i += 25) {
+      const chunk = data.contacts.slice(i, i + 25);
+      await Promise.all(
+        chunk.map(async (entry) => {
+          try {
+            let query = supabaseAdmin
+              .from("contacts")
+              .update({ ai_memory: entry.ai_memory, updated_at: nowStr })
+              .eq("org_id", orgId);
+
+            if (entry.contact_id) {
+              query = query.eq("id", entry.contact_id);
+            } else if (entry.wa_id) {
+              query = query.eq("wa_id", entry.wa_id);
+            } else {
+              skipped++;
+              return;
+            }
+
+            const { data: res, error } = await query.select("id");
+            if (error || !res || res.length === 0) {
+              skipped++;
+            } else {
+              updated += res.length;
+            }
+          } catch {
+            skipped++;
+          }
+        }),
+      );
+    }
+
+    return { ok: true, updated, skipped, total: data.contacts.length };
+  });
+
 export const toggleContactAi = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ threadId: z.string().uuid(), contactId: z.string().uuid(), enabled: z.boolean() }).parse(d))

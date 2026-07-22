@@ -9,6 +9,10 @@ import {
 } from "./catalog.server";
 import { resolveProductFromReference } from "./catalog-search";
 import { selectRelevantKnowledgeSources } from "./intent-classifier";
+import {
+  loadCustomerMemory,
+  formatMemoryForPrompt,
+} from "./ai/customer-memory.server";
 
 export type Msg = {
   role: "system" | "user" | "assistant" | "tool";
@@ -2249,6 +2253,28 @@ export async function runAiAgent({
   }`;
 
   const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
+
+  // === MEMORIA DEL CLIENTE (aprendizaje entre conversaciones) ===
+  // Se carga lo que la IA ya "aprendio" de este contacto y se inyecta como un
+  // bloque PEQUENO y ACOTADO (tope de caracteres) para no inflar el prompt.
+  // Se puede apagar al instante con DISABLE_AI_MEMORY=true.
+  const MEMORY_PROMPT_MAX_CHARS = 500;
+  let customerMemoryText = "";
+  if (process.env.DISABLE_AI_MEMORY !== "true" && contactId) {
+    try {
+      const memory = await loadCustomerMemory(orgId, contactId);
+      const formatted = formatMemoryForPrompt(memory).trim();
+      if (formatted) {
+        const clipped =
+          formatted.length > MEMORY_PROMPT_MAX_CHARS
+            ? formatted.slice(0, MEMORY_PROMPT_MAX_CHARS) + "…"
+            : formatted;
+        customerMemoryText = `\n\n=== MEMORIA DEL CLIENTE (lo que ya sabemos de esta persona) ===\n${clipped}\n(Usa esto para no repetir preguntas ni volver a pedir datos ya conocidos. No lo menciones explícitamente.)`;
+      }
+    } catch (err) {
+      console.error("[runAiAgent] loadCustomerMemory failed", err, { orgId, contactId });
+    }
+  }
   const visibleChat = messages.filter(
     (m) => (m.role === "user" || m.role === "assistant") && m.content?.trim(),
   );
@@ -2621,6 +2647,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     `\n\n=== MODO DE PROMPT DINÁMICO ===\nmodo: ${promptMode}\nUsa solo el contexto incluido aquí. Para detalles del producto elegido, prioriza PRODUCTO ELEGIDO y BASE DE CONOCIMIENTO relevante; no reinicies búsqueda ni envías otra ronda de imágenes salvo que el cliente pida otros productos.`,
     conversationRulesText,
+    customerMemoryText,
     selectedProductText,
     knowledgeBase ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}` : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",

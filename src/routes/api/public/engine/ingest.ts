@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import { sanitizeMessageText } from '@/lib/message-text'
 import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
 import { registerFailedAiRequest, sendSupportMessage } from '@/lib/retry-manager.server'
+import { loadCustomerMemory, extractAndSaveMemory } from '@/lib/ai/customer-memory.server'
 import { z } from 'zod'
 import { createDedupTracker, buildInboundDedupKey, buildAiReplyDedupKey } from './-ingest-dedupe'
 
@@ -837,6 +838,32 @@ async function maybeAiReply(
       status: 'pending',
       scheduled_for: scheduleAt,
     })
+
+    // === APRENDIZAJE: la IA "aprende" de este contacto a medida que atiende ===
+    // Extraccion por reglas (regex), sin llamadas extra al LLM (cero tokens).
+    // Se guarda en contacts.ai_memory (1 registro por contacto, se ACTUALIZA en
+    // sitio: no crea filas nuevas ni infla el almacenamiento). Best-effort.
+    if (process.env.DISABLE_AI_MEMORY !== 'true' && contactId) {
+      try {
+        const currentMemory = await loadCustomerMemory(orgId, contactId)
+        await extractAndSaveMemory({
+          orgId,
+          contactId,
+          userText: text,
+          assistantReply: finalReply,
+          actions,
+          currentMemory,
+          cfg: cfgFast,
+        })
+      } catch (memErr) {
+        console.warn('[ai-reply] extractAndSaveMemory failed (ignorado)', {
+          message: memErr instanceof Error ? memErr.message : String(memErr),
+          orgId,
+          threadId,
+          contactId,
+        })
+      }
+    }
   } catch (err) {
     let errMsg = err instanceof Error ? err.message : String(err);
     const errStack = err instanceof Error ? err.stack : '';

@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { getAiConfig, saveAiConfig, testAiReply } from "@/lib/ai.functions";
+import { getAiConfig, saveAiConfig, testAiReply, exportAiLearning, importAiLearning } from "@/lib/ai.functions";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, CheckCircle2, AlertCircle } from "lucide-react";
+import { Sparkles, CheckCircle2, AlertCircle, Download, Upload } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/integrations")({
   component: IntegrationsPage,
@@ -60,6 +60,8 @@ function IntegrationsPage() {
   const fetchCfg = useServerFn(getAiConfig);
   const save = useServerFn(saveAiConfig);
   const test = useServerFn(testAiReply);
+  const doExport = useServerFn(exportAiLearning);
+  const doImport = useServerFn(importAiLearning);
 
   const { data, isLoading } = useQuery({
     queryKey: ["ai-config"],
@@ -72,6 +74,9 @@ function IntegrationsPage() {
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("lovable");
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (data?.config && !form) {
@@ -139,6 +144,59 @@ function IntegrationsPage() {
     }
   };
 
+  const handleExportLearning = async () => {
+    setExporting(true);
+    try {
+      const backup = await doExport();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `aprendizaje-ia-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Aprendizaje exportado (${backup.count} contactos)`);
+    } catch (e: any) {
+      toast.error(e.message ?? "Error exportando el aprendizaje");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleImportLearning = async (file: File) => {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || !Array.isArray(parsed.contacts)) {
+        throw new Error("El archivo no tiene el formato de respaldo esperado.");
+      }
+      const res = await doImport({
+        data: {
+          version: parsed.version,
+          kind: parsed.kind,
+          contacts: parsed.contacts.map((c: any) => ({
+            contact_id: c.contact_id ?? null,
+            wa_id: c.wa_id ?? null,
+            ai_memory: c.ai_memory ?? {},
+          })),
+        },
+      });
+      toast.success(
+        `Aprendizaje importado: ${res.updated} actualizados, ${res.skipped} omitidos (de ${res.total})`,
+      );
+    } catch (e: any) {
+      toast.error(e.message ?? "Error importando el aprendizaje");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const vertexReady = !!(form.vertex_service_account_json || data?.hasVertexSecret);
 
   return (
@@ -161,6 +219,42 @@ function IntegrationsPage() {
           </div>
         </div>
         <Switch checked={form.enabled} onCheckedChange={(v) => update({ enabled: v })} />
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <div>
+          <div className="font-semibold">Respaldo del aprendizaje de la IA</div>
+          <div className="text-sm text-muted-foreground">
+            Descarga a un archivo lo que la IA aprendió de tus clientes, o cárgalo en otro
+            equipo. Los datos siguen guardándose en la nube (ocupan muy poco); esto es solo
+            respaldo y portabilidad al cambiar de PC.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Button variant="outline" onClick={handleExportLearning} disabled={exporting}>
+            <Download className="h-4 w-4 mr-2" />
+            {exporting ? "Exportando…" : "Exportar aprendizaje"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing}
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            {importing ? "Importando…" : "Importar aprendizaje"}
+          </Button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleImportLearning(file);
+              e.target.value = "";
+            }}
+          />
+        </div>
       </Card>
 
       <Card className="p-5 space-y-4">
