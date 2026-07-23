@@ -13,6 +13,7 @@ import {
   loadCustomerMemory,
   formatMemoryForPrompt,
 } from "./ai/customer-memory.server";
+import { startFlowForContact } from "./flow-trigger.server";
 
 export type Msg = {
   role: "system" | "user" | "assistant" | "tool";
@@ -82,6 +83,33 @@ export const CRM_TOOLS = [
           },
         },
         required: ["form_data"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "list_flows",
+      description:
+        "Lista los PAQUETES que puedes ofrecer al cliente (con su id, nombre y descripción). Úsala si no recuerdas cuáles hay disponibles antes de activar uno.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "activate_flow",
+      description:
+        "Activa un PAQUETE para el cliente actual cuando su interés coincide con el tema del paquete (ej. 'fiestas infantiles'). El sistema enviará automáticamente todo el contenido del paquete en orden (textos, fotos, videos). NO escribas ni describas tú ese contenido: solo activa el paquete. Después quédate atendiendo dudas. Pasa el id exacto del paquete (o su nombre).",
+      parameters: {
+        type: "object",
+        properties: {
+          flow_id: { type: "string", description: "id (UUID) del paquete a activar. Preferido." },
+          flow_name: {
+            type: "string",
+            description: "Nombre del paquete si no tienes el id (ej. 'Fiestas Infantiles').",
+          },
+        },
       },
     },
   },
@@ -1959,6 +1987,67 @@ export async function executeToolCall(
         details = result;
       }
     }
+  } else if (name === "list_flows") {
+    try {
+      const { data: flows } = await (supabaseAdmin as any)
+        .from("flows")
+        .select("id, name, description")
+        .eq("org_id", orgId)
+        .eq("is_active", true)
+        .eq("ai_selectable", true);
+      if (!flows || flows.length === 0) {
+        result = "No hay paquetes disponibles para ofrecer.";
+      } else {
+        result = flows
+          .map((f: any) => `- ${f.name}${f.description ? `: ${f.description}` : ""} (id: ${f.id})`)
+          .join("\n");
+      }
+      details = `list_flows: ${flows?.length ?? 0} paquetes`;
+    } catch (e) {
+      result = `No se pudieron listar los paquetes: ${(e as Error).message}`;
+      details = result;
+    }
+  } else if (name === "activate_flow") {
+    try {
+      if (!contactId) {
+        result = "No se puede activar el paquete: falta el contacto.";
+      } else {
+        let flowId = typeof args.flow_id === "string" ? args.flow_id.trim() : "";
+        const flowName = typeof args.flow_name === "string" ? args.flow_name.trim() : "";
+
+        // Si no vino id, resolver por nombre entre los paquetes ofertables.
+        if (!flowId && flowName) {
+          const { data: cand } = await (supabaseAdmin as any)
+            .from("flows")
+            .select("id, name")
+            .eq("org_id", orgId)
+            .eq("is_active", true)
+            .eq("ai_selectable", true);
+          const list = (cand ?? []) as Array<{ id: string; name: string }>;
+          const lc = flowName.toLowerCase();
+          const exact = list.find((f) => f.name.toLowerCase() === lc);
+          const partial = list.find(
+            (f) => f.name.toLowerCase().includes(lc) || lc.includes(f.name.toLowerCase()),
+          );
+          flowId = (exact || partial)?.id || "";
+          if (!flowId) {
+            result =
+              "No encontré ese paquete. Usa list_flows para ver los nombres exactos disponibles.";
+          }
+        }
+
+        if (flowId) {
+          const r = await startFlowForContact({ orgId, contactId, flowId });
+          result = r.message;
+          details = `activate_flow: ${flowId} (${r.started ? "iniciado" : "no iniciado"})`;
+        } else if (!result) {
+          result = "Indica el id o el nombre del paquete a activar.";
+        }
+      }
+    } catch (e) {
+      result = `No se pudo activar el paquete: ${(e as Error).message}`;
+      details = result;
+    }
   } else {
     result = `Herramienta desconocida: ${name}`;
     details = `Intento usar herramienta desconocida: ${name}`;
@@ -2274,6 +2363,32 @@ export async function runAiAgent({
     } catch (err) {
       console.error("[runAiAgent] loadCustomerMemory failed", err, { orgId, contactId });
     }
+  }
+
+  // === PAQUETES QUE LA IA PUEDE OFRECER (flujos ai_selectable) ===
+  // Lista compacta y acotada para que la IA reconozca la intención del cliente
+  // y active el paquete correcto con la herramienta activate_flow.
+  let salesPackagesText = "";
+  try {
+    const { data: pkgs } = await (supabaseAdmin as any)
+      .from("flows")
+      .select("id, name, description")
+      .eq("org_id", orgId)
+      .eq("is_active", true)
+      .eq("ai_selectable", true)
+      .limit(20);
+    if (pkgs && pkgs.length) {
+      const lines = pkgs
+        .map((p: any) => `- ${p.name}${p.description ? `: ${p.description}` : ""} (id: ${p.id})`)
+        .join("\n");
+      salesPackagesText =
+        `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nCuando el interés del cliente coincida con uno de estos temas, actívalo con la herramienta activate_flow (pasa el id). El sistema enviará TODO el contenido en orden; tú NO lo describas ni lo reenvíes. Luego quédate respondiendo dudas usando el historial y la base de conocimiento.\n${lines}`.slice(
+          0,
+          900,
+        );
+    }
+  } catch (err) {
+    console.error("[runAiAgent] load sales packages failed", err, { orgId });
   }
   const visibleChat = messages.filter(
     (m) => (m.role === "user" || m.role === "assistant") && m.content?.trim(),
@@ -2648,6 +2763,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     `\n\n=== MODO DE PROMPT DINÁMICO ===\nmodo: ${promptMode}\nUsa solo el contexto incluido aquí. Para detalles del producto elegido, prioriza PRODUCTO ELEGIDO y BASE DE CONOCIMIENTO relevante; no reinicies búsqueda ni envías otra ronda de imágenes salvo que el cliente pida otros productos.`,
     conversationRulesText,
     customerMemoryText,
+    salesPackagesText,
     selectedProductText,
     knowledgeBase ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}` : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",

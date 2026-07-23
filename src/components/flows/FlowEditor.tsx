@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Save, ArrowLeft, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -62,6 +63,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [aiSelectable, setAiSelectable] = useState(false);
   const [triggerType, setTriggerType] = useState("manual");
   const [triggerValue, setTriggerValue] = useState("");
   const [steps, setSteps] = useState<any[]>([]);
@@ -73,6 +75,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
       const f = (flowData as any).flow;
       setName(f.name || "");
       setDescription(f.description || "");
+      setAiSelectable(!!f.ai_selectable);
       setTriggerType(f.trigger_type || "manual");
       setTriggerValue(f.trigger_value || "");
     }
@@ -97,6 +100,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
           id: isNew ? undefined : flowId,
           name,
           description,
+          ai_selectable: aiSelectable,
           trigger_type: triggerType,
           trigger_value: triggerValue || null,
         }
@@ -283,8 +287,19 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
                 onChange={(e) => setDescription(e.target.value)} 
                 rows={3} 
                 className="resize-none text-sm"
-                placeholder="¿Qué hace este flujo?"
+                placeholder="¿Qué hace este flujo? La IA usa esta descripción para saber cuándo ofrecerlo."
               />
+            </div>
+
+            <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label className="text-sm">La IA puede ofrecer este paquete</Label>
+                <p className="text-xs text-muted-foreground">
+                  Si está activo, la IA puede activar este flujo por sí misma cuando el
+                  cliente muestre interés en su tema (ej. "fiestas infantiles").
+                </p>
+              </div>
+              <Switch checked={aiSelectable} onCheckedChange={setAiSelectable} />
             </div>
           </div>
         </div>

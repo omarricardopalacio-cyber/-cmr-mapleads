@@ -802,42 +802,58 @@ async function maybeAiReply(
     let actions = firstAttempt.actions ?? []
     let finalReply = firstAttempt.reply?.trim() || ''
 
+    // Si la IA activó un PAQUETE (flujo), el propio flujo envía el contenido en
+    // orden. No mandamos una respuesta de texto de la IA para no duplicar ni
+    // pisar ese contenido; la IA queda igual atendiendo dudas en los siguientes turnos.
+    const activatedFlow = actions?.includes('activate_flow')
 
-    if (!finalReply) {
-      const sentImage = actions?.includes('send_product_image') || actions?.includes('send_product_video')
-      if (sentImage) {
-        finalReply = '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
-      } else {
-        finalReply = 'Un momento por favor… ¿me confirmas qué producto te interesa?'
+    if (!activatedFlow) {
+      if (!finalReply) {
+        const sentImage = actions?.includes('send_product_image') || actions?.includes('send_product_video')
+        if (sentImage) {
+          finalReply = '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
+        } else {
+          finalReply = 'Un momento por favor… ¿me confirmas qué producto te interesa?'
+        }
       }
-    }
 
-    console.info('[ai-reply] finalReply', {
-      orgId,
-      threadId,
-      chatId,
-      sessionId,
-      finalReply,
-      actions,
-      replyLength: finalReply.length,
-    })
+      console.info('[ai-reply] finalReply', {
+        orgId,
+        threadId,
+        chatId,
+        sessionId,
+        finalReply,
+        actions,
+        replyLength: finalReply.length,
+      })
 
-    if (aiReplyDedupeKey) {
-      const duplicateReply = await hasExistingAiReplyCommand(orgId, sessionId, aiReplyDedupeKey)
-      if (duplicateReply) {
-        console.log('[ai-reply] skip duplicate queued reply by dedupeKey', { threadId, chatId, aiReplyDedupeKey })
-        return
+      let skipQueue = false
+      if (aiReplyDedupeKey) {
+        const duplicateReply = await hasExistingAiReplyCommand(orgId, sessionId, aiReplyDedupeKey)
+        if (duplicateReply) {
+          console.log('[ai-reply] skip duplicate queued reply by dedupeKey', { threadId, chatId, aiReplyDedupeKey })
+          skipQueue = true
+        }
       }
-    }
 
-    await supabaseAdmin.from('engine_commands').insert({
-      org_id: orgId,
-      session_id: sessionId,
-      type: 'SEND_MESSAGE',
-      payload: { chatId, text: finalReply, dedupeKey: aiReplyDedupeKey },
-      status: 'pending',
-      scheduled_for: scheduleAt,
-    })
+      if (!skipQueue) {
+        await supabaseAdmin.from('engine_commands').insert({
+          org_id: orgId,
+          session_id: sessionId,
+          type: 'SEND_MESSAGE',
+          payload: { chatId, text: finalReply, dedupeKey: aiReplyDedupeKey },
+          status: 'pending',
+          scheduled_for: scheduleAt,
+        })
+      }
+    } else {
+      console.info('[ai-reply] paquete activado por la IA; se omite respuesta de texto', {
+        orgId,
+        threadId,
+        chatId,
+        actions,
+      })
+    }
 
     // === APRENDIZAJE: la IA "aprende" de este contacto a medida que atiende ===
     // Extraccion por reglas (regex), sin llamadas extra al LLM (cero tokens).

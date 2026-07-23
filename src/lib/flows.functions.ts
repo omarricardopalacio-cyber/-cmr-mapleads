@@ -61,6 +61,7 @@ export const upsertFlow = createServerFn({ method: "POST" })
     trigger_value: z.string().nullable().optional(),
     description: z.string().nullable().optional(),
     is_active: z.boolean().optional().default(false),
+    ai_selectable: z.boolean().optional(),
   }).passthrough().parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
