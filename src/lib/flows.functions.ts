@@ -60,7 +60,9 @@ export const upsertFlow = createServerFn({ method: "POST" })
     }),
     trigger_value: z.string().nullable().optional(),
     description: z.string().nullable().optional(),
-    is_active: z.boolean().optional().default(false),
+    // Sin default: si el editor no envía is_active, NO se toca el estado actual
+    // del flujo (antes un default:false lo apagaba al guardar/editar).
+    is_active: z.boolean().optional(),
     ai_selectable: z.boolean().optional(),
   }).passthrough().parse(d))
   .handler(async ({ context, data }) => {
