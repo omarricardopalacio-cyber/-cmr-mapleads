@@ -11,23 +11,26 @@ const WPP_LOCAL = resolve(__dirname, "public", "vendor", "wppconnect-wa.min.js")
 const WPP_DIST = resolve(__dirname, "dist", "vendor", "wppconnect-wa.min.js");
 
 async function ensureWppJs() {
-  if (fs.existsSync(WPP_LOCAL)) {
-    console.log("✅ WA-JS ya descargado localmente");
-    return;
-  }
-  console.log("📥 Descargando WA-JS desde CDN...");
+  // Siempre intenta bajar la ÚLTIMA versión de WA-JS. WhatsApp Web cambia sus
+  // módulos internos con frecuencia; si se reutiliza una copia vieja, el engine
+  // deja de encontrar módulos (isAuthenticated, ChatStore, MsgStore...) y no
+  // recibe mensajes. Si no hay internet, se usa la copia local existente.
+  console.log("📥 Descargando WA-JS (última versión) desde CDN...");
   try {
     const res = await fetch(WPP_CDN);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
     fs.mkdirSync(dirname(WPP_LOCAL), { recursive: true });
     fs.writeFileSync(WPP_LOCAL, text, "utf-8");
-    console.log(`✅ WA-JS descargado (${(text.length / 1024).toFixed(1)} KB)`);
+    console.log(`✅ WA-JS actualizado (${(text.length / 1024).toFixed(1)} KB)`);
   } catch (err) {
+    if (fs.existsSync(WPP_LOCAL)) {
+      console.warn("⚠️ No se pudo actualizar WA-JS; se usa la copia local existente:", err.message);
+      return;
+    }
     console.error("❌ No se pudo descargar WA-JS:", err.message);
     console.error("   La extensión necesita WA-JS para funcionar.");
-    console.error("   Descárgalo manualmente de:");
-    console.error("   " + WPP_CDN);
+    console.error("   Descárgalo manualmente de: " + WPP_CDN);
     console.error("   Y guárdalo en: public/vendor/wppconnect-wa.min.js");
     throw err;
   }

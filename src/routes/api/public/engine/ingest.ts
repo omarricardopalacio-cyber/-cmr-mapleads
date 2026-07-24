@@ -5,6 +5,7 @@ import { sanitizeMessageText } from '@/lib/message-text'
 import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
 import { registerFailedAiRequest, sendSupportMessage } from '@/lib/retry-manager.server'
 import { loadCustomerMemory, extractAndSaveMemory } from '@/lib/ai/customer-memory.server'
+import { transcribeAudioFromUrl } from '@/lib/ai/transcribe.server'
 import { z } from 'zod'
 import { createDedupTracker, buildInboundDedupKey, buildAiReplyDedupKey } from './-ingest-dedupe'
 
@@ -1021,6 +1022,25 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
         const meWaId = session.me_wa_id ?? null
         const normalized = events.map((ev) => normalizeEvent(ev, meWaId))
 
+        // Key de Groq para transcribir audios (se carga una sola vez, on-demand).
+        // Reutiliza la misma API de Groq configurada en Ajustes > IA; si no está,
+        // cae al env GROQ_API_KEY. undefined = aún no consultada.
+        let groqApiKeyCache: string | null | undefined = undefined
+        const getGroqApiKey = async (): Promise<string | null> => {
+          if (groqApiKeyCache !== undefined) return groqApiKeyCache
+          try {
+            const { data } = await supabaseAdmin
+              .from('ai_configs')
+              .select('grok_api_key')
+              .eq('org_id', session.org_id)
+              .maybeSingle()
+            groqApiKeyCache = ((data as any)?.grok_api_key as string) || process.env.GROQ_API_KEY || null
+          } catch {
+            groqApiKeyCache = process.env.GROQ_API_KEY || null
+          }
+          return groqApiKeyCache
+        }
+
         for (const e of normalized) {
           try {
             if ((e.type === 'message-in' || e.type === 'message-out') && (e.waMessageId || e.chatId || e.text)) {
@@ -1251,6 +1271,56 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 waMessageId: e.waMessageId,
                 textLen: e.text?.length,
               });
+            }
+
+            // === AUDIOS: transcribir notas de voz entrantes para que la IA las entienda ===
+            // Si es un audio ENTRANTE y no trae texto, lo transcribimos con Groq (Whisper)
+            // y guardamos el resultado como `e.text`. Así el resto del flujo (historial,
+            // IA, herramientas, flujos) funciona igual y la IA puede responderlo.
+            // No infla el almacenamiento (el texto pesa casi nada) ni el prompt.
+            const incomingDirection = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
+            if (
+              process.env.DISABLE_AUDIO_TRANSCRIPTION !== 'true' &&
+              incomingDirection === 'in' &&
+              !e.text?.trim() &&
+              enrichedMedia &&
+              typeof (enrichedMedia as any).url === 'string'
+            ) {
+              const mt = String(
+                (enrichedMedia as any).mimeType || (enrichedMedia as any).mime_type || '',
+              ).toLowerCase();
+              const rawType = String((e.media as any)?.type || '').toLowerCase();
+              const isAudio = mt.startsWith('audio/') || rawType === 'ptt' || rawType === 'audio';
+              if (isAudio) {
+                try {
+                  const groqKey = await getGroqApiKey();
+                  if (groqKey) {
+                    const transcript = await transcribeAudioFromUrl(
+                      (enrichedMedia as any).url as string,
+                      groqKey,
+                    );
+                    if (transcript?.trim()) {
+                      e.text = transcript.trim();
+                      console.log('[ingest] 🎤 audio transcrito', {
+                        threadId: thread.id,
+                        waMessageId: e.waMessageId,
+                        length: e.text.length,
+                      });
+                    } else {
+                      console.log('[ingest] 🎤 audio sin transcripción utilizable', {
+                        waMessageId: e.waMessageId,
+                      });
+                    }
+                  } else {
+                    console.warn('[ingest] 🎤 no hay grok_api_key/GROQ_API_KEY para transcribir audio');
+                  }
+                } catch (err) {
+                  console.warn(
+                    '[ingest] 🎤 transcripción de audio falló (ignorado):',
+                    (err as Error)?.message,
+                  );
+                }
+              }
             }
 
             const direction = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
