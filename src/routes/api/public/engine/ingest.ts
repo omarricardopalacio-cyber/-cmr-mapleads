@@ -923,12 +923,33 @@ async function maybeAiReply(
       }
     );
 
-    // Enviar mensaje de apoyo
+    // Enviar mensaje de apoyo (widget/notificación para el agente)
     if (requestId && sessionId) {
       await sendSupportMessage(orgId, sessionId, chatId, requestId, threadId);
     }
 
-    // Mostrar mensaje amigable mientras el sistema reintenta
+    // La IA no supo responder -> PASAR A UN AGENTE HUMANO: apagamos la IA en
+    // este hilo. Así el chat queda para atención humana y el widget de apoyo
+    // funciona como notificación para el agente. (Se puede desactivar con
+    // DISABLE_AI_HANDOFF_ON_ERROR=true para volver al comportamiento anterior.)
+    if (process.env.DISABLE_AI_HANDOFF_ON_ERROR !== 'true') {
+      try {
+        await supabaseAdmin
+          .from('threads')
+          .update({ ai_enabled: false } as unknown as Record<string, never>)
+          .eq('id', threadId)
+          .eq('org_id', orgId)
+        console.info('[ai-reply] IA no pudo responder: conversación transferida a humano (ai_enabled=false)', {
+          orgId,
+          threadId,
+          chatId,
+        })
+      } catch (handoffErr) {
+        console.warn('[ai-reply] no se pudo transferir a humano (ai_enabled puede no existir):', (handoffErr as Error)?.message)
+      }
+    }
+
+    // Mostrar mensaje amigable al cliente mientras un agente toma el chat
     const errorMessage = 'dame un ratito ya te envio 😉';
 
     if (sessionId && chatId) {

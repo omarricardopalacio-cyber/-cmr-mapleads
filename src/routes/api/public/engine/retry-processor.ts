@@ -77,6 +77,24 @@ async function processRetries() {
           processed++
           continue
         }
+
+        // Si la conversación ya fue transferida a un humano (IA apagada en el
+        // hilo, ya sea por fallo previo o manualmente), NO reintentamos ni
+        // enviamos respuesta automática: la maneja el agente.
+        const { data: threadRow } = await (supabaseAdmin as any)
+          .from('threads')
+          .select('ai_enabled')
+          .eq('id', req.thread_id)
+          .maybeSingle()
+        if (threadRow?.ai_enabled === false) {
+          console.info('[retry-processor] skip retry: conversación transferida a humano (ai_enabled=false)', {
+            requestId: req.id,
+            threadId: req.thread_id,
+          })
+          await updateFailedRequest(req.id!, { status: 'resolved' })
+          processed++
+          continue
+        }
         // Si el cliente ya respondió después del fallo, no reintentamos en silencio.
         if (req.created_at) {
           const { data: laterUserMsgs, error: laterError } = await supabaseAdmin
