@@ -2024,10 +2024,12 @@ export async function executeToolCall(
             .eq("is_active", true)
             .eq("ai_selectable", true);
           const list = (cand ?? []) as Array<{ id: string; name: string }>;
-          const lc = flowName.toLowerCase();
-          const exact = list.find((f) => f.name.toLowerCase() === lc);
+          const norm = (s: string) =>
+            s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const lc = norm(flowName);
+          const exact = list.find((f) => norm(f.name) === lc);
           const partial = list.find(
-            (f) => f.name.toLowerCase().includes(lc) || lc.includes(f.name.toLowerCase()),
+            (f) => norm(f.name).includes(lc) || lc.includes(norm(f.name)),
           );
           flowId = (exact || partial)?.id || "";
           if (!flowId) {
@@ -2376,16 +2378,19 @@ export async function runAiAgent({
       .eq("org_id", orgId)
       .eq("is_active", true)
       .eq("ai_selectable", true)
-      .limit(20);
+      .limit(30);
     if (pkgs && pkgs.length) {
+      // IMPORTANTE: siempre incluir nombre + id de TODOS los paquetes; solo se
+      // recorta la descripción de cada uno. Antes se recortaba la lista completa
+      // (tope de caracteres) y se perdían paquetes, confundiendo a la IA.
       const lines = pkgs
-        .map((p: any) => `- ${p.name}${p.description ? `: ${p.description}` : ""} (id: ${p.id})`)
+        .map((p: any) => {
+          const desc = String(p.description || "").replace(/\s+/g, " ").trim().slice(0, 160);
+          return `- ${p.name} (id: ${p.id})${desc ? ` — ${desc}` : ""}`;
+        })
         .join("\n");
       salesPackagesText =
-        `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nCuando el interés del cliente coincida con uno de estos temas, actívalo con la herramienta activate_flow (pasa el id). El sistema enviará TODO el contenido en orden; tú NO lo describas ni lo reenvíes. Luego quédate respondiendo dudas usando el historial y la base de conocimiento.\n${lines}`.slice(
-          0,
-          900,
-        );
+        `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nActiva con activate_flow el paquete cuyo TEMA coincida con lo que pide el cliente, pasando el id EXACTO de la lista. NO actives un paquete de otro tema. El sistema envía su contenido en orden; tú NO lo describas ni lo reenvíes. Después responde dudas con el historial y la base de conocimiento.\n${lines}`;
     }
   } catch (err) {
     console.error("[runAiAgent] load sales packages failed", err, { orgId });
