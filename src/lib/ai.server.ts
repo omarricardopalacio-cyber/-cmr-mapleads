@@ -2378,7 +2378,7 @@ export async function runAiAgent({
       .eq("org_id", orgId)
       .eq("is_active", true)
       .eq("ai_selectable", true)
-      .limit(30);
+      .limit(100);
     if (pkgs && pkgs.length) {
       // IMPORTANTE: siempre incluir nombre + id de TODOS los paquetes; solo se
       // recorta la descripción de cada uno. Antes se recortaba la lista completa
