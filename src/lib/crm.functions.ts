@@ -28,13 +28,56 @@ export const listContacts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await ensureUserOrg(context.userId);
+
+    // Preferimos el RPC (calcula total de mensajes y estado de compra en la BD).
+    const { data: report, error: rpcError } = await supabaseAdmin.rpc("contacts_report", {
+      p_org_id: orgId,
+    });
+
+    if (!rpcError && Array.isArray(report)) {
+      return {
+        contacts: report.map((r: any) => ({
+          id: r.id,
+          wa_id: r.wa_id,
+          display_name: r.display_name,
+          phone: r.phone,
+          updated_at: r.updated_at,
+          message_count: Number(r.message_count ?? 0),
+          purchased: !!r.purchased,
+        })),
+      };
+    }
+
+    // Fallback si el RPC aún no está creado en la BD: al menos calculamos "compró"
+    // con una consulta barata a orders; el conteo de mensajes queda en null.
+    console.warn("[listContacts] contacts_report RPC no disponible, usando fallback:", rpcError?.message);
     const { data } = await supabaseAdmin
       .from("contacts")
       .select("id, wa_id, display_name, phone, updated_at")
       .eq("org_id", orgId)
       .order("updated_at", { ascending: false })
       .limit(200);
-    return { contacts: data ?? [] };
+
+    const contacts = data ?? [];
+    let purchasedSet = new Set<string>();
+    try {
+      const { data: orderRows } = await supabaseAdmin
+        .from("orders")
+        .select("contact_id")
+        .eq("org_id", orgId)
+        .not("contact_id", "is", null);
+      purchasedSet = new Set((orderRows ?? []).map((o: any) => o.contact_id as string));
+    } catch (e) {
+      // ignorar; sin datos de compra
+    }
+
+    return {
+      contacts: contacts.map((c: any) => ({
+        ...c,
+        message_count: null as number | null,
+        purchased: purchasedSet.has(c.id),
+      })),
+    };
   });
 
 export const listThreads = createServerFn({ method: "GET" })
