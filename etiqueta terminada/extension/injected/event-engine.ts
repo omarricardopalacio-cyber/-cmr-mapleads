@@ -72,6 +72,14 @@ function validateBase64Media(base64Data: string): { valid: boolean; firstBytesHe
     if (bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x00 && (bytes[3] === 0x18 || bytes[3] === 0x20) && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return { valid: true, firstBytesHex: hex, detectedType: "video/mp4" };
     if (bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) return { valid: true, firstBytesHex: hex, detectedType: "video/webm" };
 
+    // AUDIO (las notas de voz de WhatsApp son OGG/Opus)
+    if (bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return { valid: true, firstBytesHex: hex, detectedType: "audio/ogg" }; // "OggS"
+    if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return { valid: true, firstBytesHex: hex, detectedType: "audio/mpeg" }; // "ID3" (mp3)
+    if (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) return { valid: true, firstBytesHex: hex, detectedType: "audio/mpeg" }; // MP3 frame sync
+    if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return { valid: true, firstBytesHex: hex, detectedType: "audio/mp4" }; // ...ftyp (m4a/aac)
+    if (bytes[0] === 0x66 && bytes[1] === 0x4C && bytes[2] === 0x61 && bytes[3] === 0x43) return { valid: true, firstBytesHex: hex, detectedType: "audio/flac" }; // "fLaC"
+    if (bytes[0] === 0x23 && bytes[1] === 0x21 && bytes[2] === 0x41 && bytes[3] === 0x4D && bytes[4] === 0x52) return { valid: true, firstBytesHex: hex, detectedType: "audio/amr" }; // "#!AMR"
+
     return { valid: false, firstBytesHex: hex, detectedType: "unknown/encrypted" };
   } catch (e) {
     return { valid: false, firstBytesHex: "decode_error", detectedType: "error" };
@@ -415,10 +423,21 @@ async function normalizeMessage(msg: any): Promise<any> {
             approxBytes: Math.ceil(base64Data.length * 0.75),
           });
 
-          if (!validation.valid) {
+          // Las notas de voz/audio pueden venir en codecs que no siempre
+          // detectamos por firma; si el mensaje es de audio, aceptamos los bytes
+          // igual (mejor transcribir/guardar que descartar por falso negativo).
+          const isAudioMsg =
+            msg.type === "ptt" ||
+            msg.type === "audio" ||
+            String(msg.mimetype || "").toLowerCase().startsWith("audio/");
+
+          if (!validation.valid && !isAudioMsg) {
             console.warn("[MAPLE MULTIMEDIA] Base64 NO es una imagen válida. Probablemente datos encriptados o corruptos. Reintentando...");
             base64Data = null; // Forzar reintento con otro método
           } else {
+            if (!validation.valid && isAudioMsg) {
+              console.log("[MAPLE MULTIMEDIA] Audio aceptado pese a firma no reconocida:", validation.firstBytesHex);
+            }
             const approxBytes = Math.ceil(base64Data.length * 0.75);
             if (approxBytes > 20 * 1024 * 1024) {
               console.warn(
