@@ -19,8 +19,21 @@ import process from "node:process";
 export function getServerConfig() {
   return {
     nodeEnv: process.env.NODE_ENV,
-    // Add server-only values here, e.g.:
-    //   databaseUrl: process.env.DATABASE_URL,
-    //   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+    // Prompt SYSTEM: "compact" (default) | "legacy" para rollback.
+    // Equivale a AI_PROMPT_MODE=legacy  o  AI_COMPACT_PROMPT=false
+    aiPromptMode: (() => {
+      const mode = String(process.env.AI_PROMPT_MODE || "")
+        .toLowerCase()
+        .trim();
+      if (mode === "legacy" || mode === "full" || mode === "old") return "legacy" as const;
+      if (mode === "compact" || mode === "new") return "compact" as const;
+      const compact = String(process.env.AI_COMPACT_PROMPT ?? "true")
+        .toLowerCase()
+        .trim();
+      if (compact === "0" || compact === "false" || compact === "no" || compact === "off") {
+        return "legacy" as const;
+      }
+      return "compact" as const;
+    })(),
   };
 }

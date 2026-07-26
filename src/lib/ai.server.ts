@@ -19,6 +19,11 @@ import {
   formatConversationStateForPrompt,
   type PromptPlan,
 } from "./ai/conversation-state.server";
+import {
+  assembleSystemPrompt,
+  selectHistoryForPrompt,
+  getAiPromptModeLabel,
+} from "./ai/prompt-assembly.server";
 import { startFlowForContact } from "./flow-trigger.server";
 
 export type Msg = {
@@ -3063,10 +3068,16 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       }`
     : "";
 
-  const system = [
-    (cfg.system_prompt as string)?.trim() ||
+  const toolsHintLegacy =
+    activePackageName || needsPriceContext
+      ? "\n\nHay cotización o PAQUETE activo. Para precios/tarifas por ciudad prioriza TARIFAS Y PRECIOS, FUENTES y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí."
+      : "\n\nResponde con el contexto y las herramientas CRM disponibles (etiquetas, recordatorios, pedido, transferir).";
+
+  const { system, mode: promptAssemblyMode } = assembleSystemPrompt({
+    identity:
+      (cfg.system_prompt as string)?.trim() ||
       "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
-    `\n\n=== MODO DE PROMPT DINÁMICO ===\nmodo: ${promptMode}\nUsa solo el contexto incluido aquí. Para detalles del producto elegido, prioriza PRODUCTO ELEGIDO y BASE DE CONOCIMIENTO relevante; no reinicies búsqueda ni envías otra ronda de imágenes salvo que el cliente pida otros productos.`,
+    promptMode,
     conversationStateText,
     threadPromptExtensionText,
     conversationRulesText,
@@ -3074,30 +3085,45 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     salesPackagesText,
     activePackageContextText,
     selectedProductText,
-    knowledgeBase ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}` : "",
+    knowledgeBase,
     mandatoryPriceKnowledgeText,
-    activePackageName || needsPriceContext
-      ? "\n\nHay cotización o PAQUETE activo. Para precios/tarifas por ciudad prioriza TARIFAS Y PRECIOS, FUENTES y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí. Usa herramientas de catálogo solo si el cliente pide otro producto del catálogo."
-      : "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
-    "\n\n" + activeFlowGuide,
+    toolsHintLegacy,
+    activeFlowGuide,
     orderStateText,
     orderFieldsText,
     knowledgeSourcesText,
     dynamicContextText,
-  ].join("");
+    needsPriceContext,
+    isCollectingOrder,
+    startOrderFlow,
+    lastUserText,
+    hasActivePackage: !!activePackageName,
+    factCount: promptPlan?.summary
+      ? (promptPlan.summary.match(/^\d+\./gm) || []).length
+      : conversationStateText
+        ? (conversationStateText.match(/^\d+\./gm) || []).length
+        : 0,
+    fechaLine: `${fechaLegible} · ${horaActual}`,
+    recentProductsBlock: recentProductsContextBlock,
+  });
+
+  const historyForPrompt = selectHistoryForPrompt(messages, promptAssemblyMode === "legacy");
 
   const approxPromptChars =
-    system.length + messages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+    system.length + historyForPrompt.reduce((acc, m) => acc + (m.content?.length || 0), 0);
   console.info("[runAiAgent] prompt size", {
     orgId,
     threadId,
+    promptAssemblyMode,
+    promptModeLabel: getAiPromptModeLabel(),
     systemChars: system.length,
-    historyMsgs: messages.length,
+    historyMsgs: historyForPrompt.length,
+    historyMsgsLoaded: messages.length,
     approxPromptChars,
     approxTokens: Math.round(approxPromptChars / 4),
   });
 
-  const msgs: Msg[] = [{ role: "system", content: system }, ...messages];
+  const msgs: Msg[] = [{ role: "system", content: system }, ...historyForPrompt];
 
   const actions: string[] = [];
   const executedToolCalls = new Set<string>();
