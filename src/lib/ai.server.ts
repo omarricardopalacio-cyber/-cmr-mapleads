@@ -725,6 +725,84 @@ function buildProductDetailReply(product: CatalogProduct): string {
   return `${formatProductDetailsForCustomer(product)}\n\n¿Te sirve para avanzar con el pedido? 😊`;
 }
 
+/** Normaliza texto para matching de KB (sin tildes, minúsculas). */
+function normalizeKbText(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Fuente orientada a precios/tarifas (por nombre o contenido). */
+function isPriceKnowledgeSource(ks: { name?: string; content?: string }): boolean {
+  const name = normalizeKbText(String(ks.name || ""));
+  const head = normalizeKbText(String(ks.content || "").slice(0, 1200));
+  return (
+    /\b(precio|precios|tarifa|tarifas|cotiz|promocion|promociones|valor)\b/.test(name) ||
+    (/\$\s*\d/.test(String(ks.content || "")) &&
+      /\b(precio|precios|tarifa|ciudad|promocion|cop)\b/.test(name + " " + head))
+  );
+}
+
+/**
+ * Ordena fuentes: en cotización, las de precios van primero (antes se llenaba
+ * el cupo con descripción/envíos y la fuente de tarifas quedaba fuera).
+ */
+function rankKnowledgeSources(
+  sources: Array<{ name?: string; content?: string; source_type?: string }>,
+  query: string,
+  preferPrice: boolean,
+): typeof sources {
+  const terms = normalizeKbText(query)
+    .split(/[^a-z0-9$]+/)
+    .filter((w) => w.length >= 3);
+  return [...sources].sort((a, b) => {
+    const scoreOne = (ks: (typeof sources)[number]) => {
+      let score = 0;
+      const name = normalizeKbText(String(ks.name || ""));
+      const content = normalizeKbText(String(ks.content || "").slice(0, 2500));
+      if (preferPrice && isPriceKnowledgeSource(ks)) score += 100;
+      for (const t of terms) {
+        if (name.includes(t)) score += 4;
+        if (content.includes(t)) score += 1;
+      }
+      return score;
+    };
+    return scoreOne(b) - scoreOne(a);
+  });
+}
+
+/**
+ * Extrae el texto completo de fuentes de precios para inyectarlo como bloque
+ * obligatorio (historial → ciudad → tarifas), sin perderse por el tope global.
+ */
+function buildMandatoryPriceKnowledgeBlock(
+  sources: Array<{ name?: string; content?: string; source_type?: string }>,
+  maxChars = 7000,
+): string {
+  const priceSources = sources.filter(isPriceKnowledgeSource);
+  if (!priceSources.length) return "";
+  let used = 0;
+  const parts: string[] = [];
+  for (const ks of priceSources) {
+    if (used >= maxChars) break;
+    const body = String(ks.content || "").trim();
+    if (!body) continue;
+    const chunk = body.slice(0, maxChars - used);
+    parts.push(`[Fuente: ${ks.name || "precios"}]\n${chunk}`);
+    used += chunk.length;
+  }
+  if (!parts.length) return "";
+  return (
+    `\n\n=== TARIFAS Y PRECIOS (OBLIGATORIO — YA BUSCADOS EN LA BASE) ===\n` +
+    `El sistema ya leyó el historial y encontró estas tarifas. Úsalas YA.\n` +
+    `Si el cliente dio ciudad (Bogotá, Medellín, etc.), aplica la zona que corresponda ` +
+    `(entrega local vs resto del país) según este texto y responde el precio.\n` +
+    `PROHIBIDO decir que no tienes el dato, "no lo tengo a la mano" o que lo vas a verificar.\n\n` +
+    parts.join("\n\n")
+  );
+}
+
 function selectRelevantText(raw: string, query: string, maxChars: number): string {
   const text = (raw || "").trim();
   if (!text || text.length <= maxChars) return text;
@@ -2746,11 +2824,20 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     intentQuery,
     (knowledgeSourcesData as any[]) ?? [],
   );
-  // En cotización: todas las fuentes activas (no solo las del intent match).
-  const sourcesToUse = needsPriceContext
-    ? ((knowledgeSourcesData as any[]) ?? [])
-    : (intentSelection?.matched ?? (knowledgeSourcesData as any[]) ?? []);
+  // En cotización: todas las fuentes, ordenadas con precios primero.
+  // (Antes el cupo se llenaba con descripción/envíos y "precios de forros" quedaba fuera.)
+  const allKnowledgeSources = (knowledgeSourcesData as any[]) ?? [];
+  const sourcesToUse = rankKnowledgeSources(
+    needsPriceContext
+      ? allKnowledgeSources
+      : (intentSelection?.matched ?? allKnowledgeSources),
+    knowledgeRetrievalQuery,
+    needsPriceContext,
+  );
   const hasIntentMatch = !!intentSelection && !needsPriceContext;
+  const mandatoryPriceKnowledgeText = needsPriceContext
+    ? buildMandatoryPriceKnowledgeBlock(allKnowledgeSources)
+    : "";
 
   function findLastPlanContext(): string | null {
     if (isPlanOrServiceRequest(lastUserText)) return lastUserText;
@@ -2787,16 +2874,27 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           : 1500;
   const knowledgeSourcesText = (() => {
     if (!sourcesToUse.length) return "";
+    // Si ya inyectamos tarifas completas, no duplicar esas fuentes aquí.
+    const priceNames = new Set(
+      allKnowledgeSources.filter(isPriceKnowledgeSource).map((ks) => String(ks.name || "")),
+    );
+    const list = needsPriceContext
+      ? (sourcesToUse as any[]).filter((ks) => !priceNames.has(String(ks.name || "")))
+      : (sourcesToUse as any[]);
     let used = 0;
     const blocks: string[] = [];
-    for (const ks of sourcesToUse as any[]) {
+    for (const ks of list) {
       if (used >= KS_TOTAL) break;
       const remaining = KS_TOTAL - used;
-      const body = selectRelevantText(
-        String(ks.content ?? ""),
-        knowledgeRetrievalQuery,
-        Math.min(KS_PER_SOURCE, remaining),
-      );
+      // En cotización, fuentes de precio ya van completas en mandatoryPriceKnowledgeText.
+      const perSource =
+        needsPriceContext && isPriceKnowledgeSource(ks)
+          ? Math.min(4000, remaining)
+          : Math.min(KS_PER_SOURCE, remaining);
+      const body =
+        needsPriceContext && isPriceKnowledgeSource(ks)
+          ? String(ks.content ?? "").trim().slice(0, perSource)
+          : selectRelevantText(String(ks.content ?? ""), knowledgeRetrievalQuery, perSource);
       if (!body.trim()) continue;
       blocks.push(`[Tipo: ${ks.source_type} | Nombre: ${ks.name}]\n${body}`);
       used += body.length;
@@ -2851,7 +2949,8 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const conversationRulesText = `\n\n=== REGLAS DE CONVERSACIÓN (OBLIGATORIO) ===
 - Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS, las FUENTES DE CONOCIMIENTO y el prompt del sistema como referencia prioritaria antes de inventar respuestas.
-- Si el cliente da ciudad o cantidad y en la base de conocimiento hay precios/tarifas, RESPONDE el precio (o el rango) de inmediato. NUNCA digas "no tengo ese dato" / "lo verifico" si el precio aparece en el contexto.
+- Flujo de cotización: 1) lee el historial (producto/cantidad), 2) toma la ciudad del cliente, 3) usa TARIFAS Y PRECIOS / fuentes de precios. Responde el precio de una vez.
+- Si existe el bloque TARIFAS Y PRECIOS o hay precios en fuentes, está PROHIBIDO decir "no lo tengo a la mano", "no tengo ese dato", "lo verifico" o equivalentes.
 - Haz MÁXIMO UNA (1) pregunta por mensaje. NUNCA hagas dos preguntas en el mismo mensaje.
 - Antes de responder, analiza el historial completo y usa el contexto previo para validar qué producto o necesidad está preguntando el cliente.
 - Sé breve y directo. Respuestas cortas. No más de 3 líneas salvo que el cliente pida detalle.
@@ -2892,9 +2991,13 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     needsPriceContext,
     kbRawChars: knowledgeBaseRaw.length,
     kbInjectedChars: knowledgeBase.length,
-    kbHasPriceToken: /(\$|precio|precios|valor|tarifa|bogot)/i.test(knowledgeBase),
+    mandatoryPriceChars: mandatoryPriceKnowledgeText.length,
+    kbHasPriceToken: /(\$|precio|precios|valor|tarifa|bogot)/i.test(
+      knowledgeBase + mandatoryPriceKnowledgeText,
+    ),
     sourcesUsed: (sourcesToUse as any[]).length,
-    sourcesTotal: ((knowledgeSourcesData as any[]) ?? []).length,
+    sourcesTotal: allKnowledgeSources.length,
+    topSourceNames: (sourcesToUse as any[]).slice(0, 4).map((s) => s.name),
   });
 
   const contextProductForPrompt =
@@ -2920,8 +3023,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     activePackageContextText,
     selectedProductText,
     knowledgeBase ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}` : "",
-    activePackageName
-      ? "\n\nHay un PAQUETE/flujo activo. Para precios, tarifas por ciudad o datos de ese paquete, prioriza BASE DE CONOCIMIENTO y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí. Usa herramientas de catálogo solo si el cliente pide otro producto del catálogo."
+    mandatoryPriceKnowledgeText,
+    activePackageName || needsPriceContext
+      ? "\n\nHay cotización o PAQUETE activo. Para precios/tarifas por ciudad prioriza TARIFAS Y PRECIOS, FUENTES y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí. Usa herramientas de catálogo solo si el cliente pide otro producto del catálogo."
       : "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
     "\n\n" + activeFlowGuide,
     orderStateText,
