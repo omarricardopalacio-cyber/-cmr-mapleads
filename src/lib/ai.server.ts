@@ -13,6 +13,12 @@ import {
   loadCustomerMemory,
   formatMemoryForPrompt,
 } from "./ai/customer-memory.server";
+import {
+  refreshConversationStateAndPlan,
+  updateConversationStateAfterReply,
+  formatConversationStateForPrompt,
+  type PromptPlan,
+} from "./ai/conversation-state.server";
 import { startFlowForContact } from "./flow-trigger.server";
 
 export type Msg = {
@@ -2437,7 +2443,7 @@ export async function runAiAgent({
   try {
     const result = await supabaseAdmin
       .from("threads")
-      .select("purchase_intent")
+      .select("purchase_intent, ai_prompt_extension")
       .eq("id", threadId)
       .maybeSingle();
     threadRow = result.data;
@@ -2577,6 +2583,44 @@ export async function runAiAgent({
     : /^(\?+|¿\?+|\?\?|y\??|me responde\??|me confirmas\??)$/i.test(lastUserText.trim())
       ? previousDetailQuestion || lastUserText
       : lastUserText;
+
+  // === ESTADO CONSOLIDADO + PLANIFICADOR ===
+  // Mini "base" de hechos (producto, ciudad, cantidad, color, precio…) que se
+  // actualiza turno a turno y predomina en el prompt para no perder contexto.
+  const lastAssistantForPlan =
+    [...visibleChat].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
+  let conversationStateText = "";
+  let promptPlan: PromptPlan | null = null;
+  try {
+    const refreshed = await refreshConversationStateAndPlan({
+      orgId,
+      threadId,
+      contactId,
+      messages: visibleChat,
+      lastUserText,
+      lastAssistantText: lastAssistantForPlan,
+      activePackageName,
+    });
+    promptPlan = refreshed.plan;
+    conversationStateText = formatConversationStateForPrompt(refreshed.state);
+    if (conversationStateText) {
+      conversationStateText = `\n\n${conversationStateText}`;
+    }
+    console.info("[runAiAgent] conversation plan", {
+      orgId,
+      threadId,
+      intent: promptPlan.intent,
+      needsPrice: promptPlan.needsPrice,
+      facts: refreshed.state.facts.map((f) => f.key),
+    });
+  } catch (err) {
+    console.warn("[runAiAgent] conversation state/plan failed", err);
+  }
+
+  const threadPromptExtension = String((threadRow as any)?.ai_prompt_extension || "").trim();
+  const threadPromptExtensionText = threadPromptExtension
+    ? `\n\n=== INSTRUCCIONES EXTRA DE ESTE HILO ===\n${threadPromptExtension.slice(0, 1500)}`
+    : "";
 
   // Reconstruir los productos mostrados recientemente para poder resolver
   // selecciones por número ("la 3") entre turnos.
@@ -2790,8 +2834,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     .slice(0, 800);
   const lastAssistantText =
     [...visibleChat].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
-  // Cotización: el asistente pidió ciudad/precio, o el cliente mandó ciudad/cantidad corta.
+  // Cotización: planificador + paquete + ciudad/precio en historial.
   const needsPriceContext =
+    !!promptPlan?.needsPrice ||
     !!activePackageName ||
     /\b(ciudad|precio|precios|cotiz|cu[aá]nto\s+vale|cu[aá]nto\s+cuesta|tarifa)\b/i.test(
       lastAssistantText,
@@ -2802,9 +2847,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     (/^\d{1,2}$/.test(lastUserText.trim()) &&
       /\b(silla|forro|cantidad|cu[aá]nt)/i.test(lastAssistantText + "\n" + recentConversationHint));
 
-  // Para RECORTAR texto usamos historial + palabras de precio (sin "envio":
-  // esa palabra activaba intención compra_confirmacion y ocultaba tarifas).
+  // Para RECORTAR texto: query del planificador (hechos + mensaje) o fallback.
   const knowledgeRetrievalQuery = [
+    promptPlan?.retrievalQuery,
     lastUserText,
     detailQuestionText,
     activePackageName,
@@ -2827,12 +2872,16 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   // En cotización: todas las fuentes, ordenadas con precios primero.
   // (Antes el cupo se llenaba con descripción/envíos y "precios de forros" quedaba fuera.)
   const allKnowledgeSources = (knowledgeSourcesData as any[]) ?? [];
+  const rankedQuery = [
+    knowledgeRetrievalQuery,
+    ...(promptPlan?.preferredSourceHints || []),
+  ].join("\n");
   const sourcesToUse = rankKnowledgeSources(
     needsPriceContext
       ? allKnowledgeSources
       : (intentSelection?.matched ?? allKnowledgeSources),
-    knowledgeRetrievalQuery,
-    needsPriceContext,
+    rankedQuery,
+    needsPriceContext || promptPlan?.intent === "cotizar",
   );
   const hasIntentMatch = !!intentSelection && !needsPriceContext;
   const mandatoryPriceKnowledgeText = needsPriceContext
@@ -2948,8 +2997,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
 
   const conversationRulesText = `\n\n=== REGLAS DE CONVERSACIÓN (OBLIGATORIO) ===
+- El bloque CONTEXTO CONSOLIDADO DE ESTA CONVERSACIÓN tiene PRIORIDAD MÁXIMA sobre el historial suelto. No contradigas ni ignores esos hechos.
 - Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS, las FUENTES DE CONOCIMIENTO y el prompt del sistema como referencia prioritaria antes de inventar respuestas.
-- Flujo de cotización: 1) lee el historial (producto/cantidad), 2) toma la ciudad del cliente, 3) usa TARIFAS Y PRECIOS / fuentes de precios. Responde el precio de una vez.
+- Flujo de cotización: 1) lee el contexto consolidado + historial, 2) toma la ciudad del cliente, 3) usa TARIFAS Y PRECIOS / fuentes de precios. Responde el precio de una vez.
 - Si existe el bloque TARIFAS Y PRECIOS o hay precios en fuentes, está PROHIBIDO decir "no lo tengo a la mano", "no tengo ese dato", "lo verifico" o equivalentes.
 - Haz MÁXIMO UNA (1) pregunta por mensaje. NUNCA hagas dos preguntas en el mismo mensaje.
 - Antes de responder, analiza el historial completo y usa el contexto previo para validar qué producto o necesidad está preguntando el cliente.
@@ -3017,6 +3067,8 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     (cfg.system_prompt as string)?.trim() ||
       "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     `\n\n=== MODO DE PROMPT DINÁMICO ===\nmodo: ${promptMode}\nUsa solo el contexto incluido aquí. Para detalles del producto elegido, prioriza PRODUCTO ELEGIDO y BASE DE CONOCIMIENTO relevante; no reinicies búsqueda ni envías otra ronda de imágenes salvo que el cliente pida otros productos.`,
+    conversationStateText,
+    threadPromptExtensionText,
     conversationRulesText,
     customerMemoryText,
     salesPackagesText,
@@ -3554,6 +3606,17 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   };
 
   const buildSafeReply = (replyText: string) => {
+    // Consolida hechos del turno (p.ej. precio informado) para el siguiente mensaje.
+    void updateConversationStateAfterReply({
+      orgId,
+      threadId,
+      contactId,
+      userText: lastUserText,
+      assistantReply: replyText || "",
+    }).catch((err) =>
+      console.warn("[runAiAgent] updateConversationStateAfterReply failed", err),
+    );
+
     if (isOrderClaimWithoutConfirmation(replyText) && !orderConfirmed) {
       return {
         reply: "Permítame un momento, estoy confirmando su pedido. Ya casi terminamos... 😊",
