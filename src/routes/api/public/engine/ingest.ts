@@ -515,8 +515,10 @@ async function enrollContactInFlow(contactId: string, orgId: string, sessionId: 
   }
 }
 
-const HISTORY_WINDOW = 16;
-const MAX_MSG_CHARS = 1200;
+// Ventana amplia: el pitch del flujo + preguntas de cantidad/ciudad no deben
+// empujar fuera del prompt el contexto del producto cuando el cliente cotiza.
+const HISTORY_WINDOW = 30;
+const MAX_MSG_CHARS = 2000;
 const inboundEventDedupe = createDedupTracker(45_000);
 const aiReplyDedupe = createDedupTracker(60_000);
 

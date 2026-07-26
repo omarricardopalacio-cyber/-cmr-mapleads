@@ -2654,15 +2654,13 @@ MODO B — DESCUBRIENDO PRODUCTOS:
 8. Si no hay video disponible, dilo y ofrece alternativamente send_product_image o detalles en texto.
 
 MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES, DETALLES):
-1. Si el cliente pregunta por características, especificaciones, detalles técnicos o información que NO está en tu BASE DE CONOCIMIENTO:
-   a. NO inventa datos ni utiliza herramientas inexistentes.
+1. Este modo NO aplica a precios, tarifas por ciudad, cantidades ni costos de envío si aparecen en BASE DE CONOCIMIENTO, FUENTES o CONTEXTO DEL PAQUETE. En ese caso responde el precio de una vez.
+2. Si el cliente pregunta por características, especificaciones o detalles técnicos que NO están en tu contexto:
+   a. NO inventes datos ni uses herramientas inexistentes.
    b. Responde con lo que sí aparece en el catálogo / base de conocimiento.
-   c. Si el dato exacto no está cargado, dilo breve y ofrece verificarlo: "Ese dato exacto no lo tengo cargado, te lo verifico 😊".
-2. Ejemplos de preguntas que activan este modo:
-   - "¿Qué material es?" / "¿De qué color viene?" / "¿Cuánto pesa?"
-   - "¿Tiene garantía?" / "¿Cuál es la dimensión exacta?"
-   - Cualquier pregunta sobre especificaciones no listadas en el catálogo.
-3. IMPORTANTE: NUNCA pide datos de contacto al cliente cuando falta información.
+   c. Solo si ese dato técnico exacto no está cargado, dilo breve y ofrece verificarlo.
+3. Ejemplos de este modo (NO precios): material, color, peso, dimensión exacta, garantía no listada.
+4. IMPORTANTE: NUNCA pidas datos de contacto al cliente cuando falta información.
 `;
 
   const activeFlowGuide =
@@ -2712,22 +2710,47 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     .map((m) => m.content)
     .join("\n")
     .slice(0, 800);
+  const lastAssistantText =
+    [...visibleChat].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
+  // Cotización: el asistente pidió ciudad/precio, o el cliente mandó ciudad/cantidad corta.
+  const needsPriceContext =
+    !!activePackageName ||
+    /\b(ciudad|precio|precios|cotiz|cu[aá]nto\s+vale|cu[aá]nto\s+cuesta|tarifa)\b/i.test(
+      lastAssistantText,
+    ) ||
+    /\b(precio|precios|valor|costo|cotiz|cu[aá]nto|bogot|medell[ií]n|cali|barranquilla|cartagena|bucaramanga|pereira|manizales|cucuta|ibagu[eé]|neiva|villavicencio)\b/i.test(
+      lastUserText,
+    ) ||
+    (/^\d{1,2}$/.test(lastUserText.trim()) &&
+      /\b(silla|forro|cantidad|cu[aá]nt)/i.test(lastAssistantText + "\n" + recentConversationHint));
+
+  // Para RECORTAR texto usamos historial + palabras de precio (sin "envio":
+  // esa palabra activaba intención compra_confirmacion y ocultaba tarifas).
   const knowledgeRetrievalQuery = [
     lastUserText,
     detailQuestionText,
     activePackageName,
     recentConversationHint,
-    "precio precios valor costo ciudad envio",
+    "precio precios valor costo ciudad tarifa",
   ]
     .filter(Boolean)
     .join("\n");
 
+  // Para CLASIFICAR intención NO uses el historial completo (suele traer "envío",
+  // "pago", etc. y selecciona fuentes equivocadas). En cotización fuerza catálogo.
+  const intentQuery = needsPriceContext
+    ? [lastUserText, activePackageName, "precio precios producto"].filter(Boolean).join("\n")
+    : lastUserText;
+
   const intentSelection = selectRelevantKnowledgeSources(
-    knowledgeRetrievalQuery,
+    intentQuery,
     (knowledgeSourcesData as any[]) ?? [],
   );
-  const sourcesToUse = intentSelection?.matched ?? (knowledgeSourcesData as any[]) ?? [];
-  const hasIntentMatch = !!intentSelection;
+  // En cotización: todas las fuentes activas (no solo las del intent match).
+  const sourcesToUse = needsPriceContext
+    ? ((knowledgeSourcesData as any[]) ?? [])
+    : (intentSelection?.matched ?? (knowledgeSourcesData as any[]) ?? []);
+  const hasIntentMatch = !!intentSelection && !needsPriceContext;
 
   function findLastPlanContext(): string | null {
     if (isPlanOrServiceRequest(lastUserText)) return lastUserText;
@@ -2748,14 +2771,20 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     ? selectKnowledgeSourceMedia(planMediaSource, /\b(video|videos)\b/i.test(lastUserText))
     : null;
 
-  const KS_PER_SOURCE = hasIntentMatch || activePackageName ? 1800 : promptMode === "general" ? 900 : 500;
-  const KS_TOTAL = hasIntentMatch || activePackageName
-    ? 3500
-    : promptMode === "general"
-      ? 3000
-      : promptMode === "pedido"
-        ? 800
-        : 1500;
+  const KS_PER_SOURCE =
+    needsPriceContext || hasIntentMatch || activePackageName
+      ? 2200
+      : promptMode === "general"
+        ? 900
+        : 500;
+  const KS_TOTAL =
+    needsPriceContext || hasIntentMatch || activePackageName
+      ? 5000
+      : promptMode === "general"
+        ? 3000
+        : promptMode === "pedido"
+          ? 800
+          : 1500;
   const knowledgeSourcesText = (() => {
     if (!sourcesToUse.length) return "";
     let used = 0;
@@ -2832,10 +2861,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 - Si el cliente confirma la información del pedido, llama obligatoriamente la herramienta \`confirm_order\` y no digas "pedido registrado" hasta que esa herramienta se ejecute.`;
 
   const intentIsProduct = intentSelection?.intent.includes("product") ?? false;
-  const KB_MAX =
-    activePackageName
-      ? 4500
-      : hasIntentMatch && !intentIsProduct
+  const KB_MAX = needsPriceContext || activePackageName
+    ? 6000
+    : hasIntentMatch && !intentIsProduct
       ? 600
       : promptMode === "general"
         ? 4000
@@ -2846,11 +2874,28 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
             ? 2500
             : 1200;
   const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
-  const knowledgeBase = selectRelevantText(
-    knowledgeBaseRaw,
-    `${knowledgeRetrievalQuery}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`,
-    KB_MAX,
-  );
+  // En cotización no arriesgar recorte por keywords: si la KB cabe, va completa.
+  const knowledgeBase = needsPriceContext && knowledgeBaseRaw.length <= KB_MAX
+    ? knowledgeBaseRaw
+    : selectRelevantText(
+        knowledgeBaseRaw,
+        `${knowledgeRetrievalQuery}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`,
+        KB_MAX,
+      );
+
+  console.info("[runAiAgent] knowledge context", {
+    orgId,
+    threadId,
+    historyMsgs: visibleChat.length,
+    lastUserText: lastUserText.slice(0, 80),
+    activePackageName: activePackageName || null,
+    needsPriceContext,
+    kbRawChars: knowledgeBaseRaw.length,
+    kbInjectedChars: knowledgeBase.length,
+    kbHasPriceToken: /(\$|precio|precios|valor|tarifa|bogot)/i.test(knowledgeBase),
+    sourcesUsed: (sourcesToUse as any[]).length,
+    sourcesTotal: ((knowledgeSourcesData as any[]) ?? []).length,
+  });
 
   const contextProductForPrompt =
     selectedProductForDetails ??
