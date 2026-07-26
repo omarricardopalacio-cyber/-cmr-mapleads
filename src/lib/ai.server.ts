@@ -728,32 +728,65 @@ function buildProductDetailReply(product: CatalogProduct): string {
 function selectRelevantText(raw: string, query: string, maxChars: number): string {
   const text = (raw || "").trim();
   if (!text || text.length <= maxChars) return text;
-  const terms = query
+  const normalizedQuery = query
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 4);
+    .replace(/[\u0300-\u036f]/g, "");
+  // Incluir términos cortos (ciudades como "cali") y stopwords mínimas.
+  const stop = new Set([
+    "para", "como", "este", "esta", "estos", "estas", "desde", "donde",
+    "tiene", "tengo", "quiero", "puedes", "puede", "hola", "buen", "buenas",
+    "gracias", "por", "con", "una", "unos", "unas", "del", "los", "las",
+  ]);
+  const terms = normalizedQuery
+    .split(/[^a-z0-9$]+/)
+    .filter((w) => w.length >= 3 && !stop.has(w));
+  // Si el cliente menciona ciudad/cantidad/precio, priorizar bloques con tarifas.
+  const wantsPriceContext =
+    /\b(precio|precios|valor|costo|cotiz|cuanto|cuánto|ciudad|envio|envío|bogota|medellin|cali|barranquilla|cartagena)\b/i.test(
+      normalizedQuery,
+    ) || /\b\d+\b/.test(normalizedQuery);
+
   const blocks = text
-    .split(/\n{2,}|(?=Producto:|Referencia:|SKU:|Pregunta:|FAQ:)/i)
+    .split(/\n{2,}|(?=Producto:|Referencia:|SKU:|Pregunta:|FAQ:|Precio:|Ciudad:)/i)
     .map((b) => b.trim())
     .filter(Boolean);
-  const scored = blocks
-    .map((block, idx) => {
-      const normalized = block
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-      const score = terms.reduce((acc, term) => acc + (normalized.includes(term) ? 1 : 0), 0);
-      return { block, index: idx, score };
-    })
+  const scored = blocks.map((block, idx) => {
+    const normalized = block
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    let score = terms.reduce((acc, term) => acc + (normalized.includes(term) ? 2 : 0), 0);
+    if (
+      wantsPriceContext &&
+      /(\$|precio|precios|valor|costo|cotiz|envio|envío|ciudad|bogota|medellin|cali)/i.test(
+        normalized,
+      )
+    ) {
+      score += 3;
+    }
+    return { block, index: idx, score };
+  });
+  const positive = scored
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index);
-  const selected = scored.length
-    ? scored
-    : blocks.slice(0, 3).map((block, idx) => ({ block, idx, score: 0 }));
+  // Fallback: no solo los primeros 3 bloques (suelen ser descripción), también
+  // incluir bloques con precio/ciudad para no perder tarifas al responder "Bogotá".
+  const fallback = (() => {
+    if (positive.length) return positive;
+    const priceBlocks = scored.filter((x) =>
+      /(\$|precio|precios|valor|costo|ciudad|bogota|medellin|cali)/i.test(
+        x.block
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, ""),
+      ),
+    );
+    if (priceBlocks.length) return priceBlocks;
+    return blocks.slice(0, 6).map((block, idx) => ({ block, index: idx, score: 0 }));
+  })();
   let out = "";
-  for (const item of selected) {
+  for (const item of fallback) {
     if (out.length >= maxChars) break;
     out +=
       (out ? "\n\n" : "") + item.block.slice(0, Math.min(item.block.length, maxChars - out.length));
@@ -2399,7 +2432,10 @@ export async function runAiAgent({
   // === CONTEXTO DEL PAQUETE ACTIVO / RECIENTE PARA ESTE CLIENTE ===
   // Si ya se le envió (o se está enviando) un flujo con instrucciones de IA,
   // inyectarlas para que sepa cómo atender (precios, ciudad, siguiente pregunta…).
+  // También guardamos el nombre del paquete para enriquecer la búsqueda de KB
+  // (si el cliente solo responde "Bogotá", sin esto se pierden los precios).
   let activePackageContextText = "";
+  let activePackageName = "";
   if (contactId) {
     try {
       const { data: recentRun } = await (supabaseAdmin as any)
@@ -2415,11 +2451,15 @@ export async function runAiAgent({
       const flowMeta = Array.isArray(recentRun?.flows)
         ? recentRun.flows[0]
         : recentRun?.flows;
+      activePackageName = String(flowMeta?.name || "").trim();
       const instructions = String(flowMeta?.ai_instructions || "").trim();
-      if (instructions) {
-        const clipped =
-          instructions.length > 2500 ? instructions.slice(0, 2500) + "…" : instructions;
-        const pkgName = flowMeta?.name || "paquete";
+      if (activePackageName || instructions) {
+        const clipped = instructions
+          ? instructions.length > 2500
+            ? instructions.slice(0, 2500) + "…"
+            : instructions
+          : "";
+        const pkgName = activePackageName || "paquete";
         const statusHint =
           recentRun?.status === "completed"
             ? "ya se envió"
@@ -2427,7 +2467,9 @@ export async function runAiAgent({
         activePackageContextText =
           `\n\n=== CONTEXTO DEL PAQUETE ACTIVO ("${pkgName}") ===\n` +
           `Este paquete ${statusHint} para este cliente. NO reenvíes ni copies su contenido.\n` +
-          `Sigue estas instrucciones para atender, pedir datos y cotizar:\n${clipped}`;
+          `Usa la BASE DE CONOCIMIENTO y estas instrucciones para cotizar (precios por ciudad, cantidades, envío). ` +
+          `NUNCA digas que no tienes el precio si aparece en la base de conocimiento o en las instrucciones.\n` +
+          (clipped ? `Instrucciones:\n${clipped}` : "");
       }
     } catch (err) {
       console.error("[runAiAgent] load active package context failed", err, {
@@ -2663,8 +2705,25 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     knowledgeSourcesData = null;
   }
 
-  const intentSelection = selectRelevantKnowledgeSources(
+  // Query enriquecida: el cliente suele responder solo "4" o "Bogotá". Sin el
+  // historial/paquete, selectRelevantText descarta los bloques de precios.
+  const recentConversationHint = visibleChat
+    .slice(-8)
+    .map((m) => m.content)
+    .join("\n")
+    .slice(0, 800);
+  const knowledgeRetrievalQuery = [
     lastUserText,
+    detailQuestionText,
+    activePackageName,
+    recentConversationHint,
+    "precio precios valor costo ciudad envio",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const intentSelection = selectRelevantKnowledgeSources(
+    knowledgeRetrievalQuery,
     (knowledgeSourcesData as any[]) ?? [],
   );
   const sourcesToUse = intentSelection?.matched ?? (knowledgeSourcesData as any[]) ?? [];
@@ -2689,9 +2748,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     ? selectKnowledgeSourceMedia(planMediaSource, /\b(video|videos)\b/i.test(lastUserText))
     : null;
 
-  const KS_PER_SOURCE = hasIntentMatch ? 1400 : promptMode === "general" ? 900 : 500;
-  const KS_TOTAL = hasIntentMatch
-    ? 2000
+  const KS_PER_SOURCE = hasIntentMatch || activePackageName ? 1800 : promptMode === "general" ? 900 : 500;
+  const KS_TOTAL = hasIntentMatch || activePackageName
+    ? 3500
     : promptMode === "general"
       ? 3000
       : promptMode === "pedido"
@@ -2706,7 +2765,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       const remaining = KS_TOTAL - used;
       const body = selectRelevantText(
         String(ks.content ?? ""),
-        lastUserText,
+        knowledgeRetrievalQuery,
         Math.min(KS_PER_SOURCE, remaining),
       );
       if (!body.trim()) continue;
@@ -2762,7 +2821,8 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
 
   const conversationRulesText = `\n\n=== REGLAS DE CONVERSACIÓN (OBLIGATORIO) ===
-- Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS y el prompt del sistema como referencia prioritaria antes de inventar respuestas.
+- Usa siempre la BASE DE CONOCIMIENTO / PRODUCTOS, las FUENTES DE CONOCIMIENTO y el prompt del sistema como referencia prioritaria antes de inventar respuestas.
+- Si el cliente da ciudad o cantidad y en la base de conocimiento hay precios/tarifas, RESPONDE el precio (o el rango) de inmediato. NUNCA digas "no tengo ese dato" / "lo verifico" si el precio aparece en el contexto.
 - Haz MÁXIMO UNA (1) pregunta por mensaje. NUNCA hagas dos preguntas en el mismo mensaje.
 - Antes de responder, analiza el historial completo y usa el contexto previo para validar qué producto o necesidad está preguntando el cliente.
 - Sé breve y directo. Respuestas cortas. No más de 3 líneas salvo que el cliente pida detalle.
@@ -2773,7 +2833,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const intentIsProduct = intentSelection?.intent.includes("product") ?? false;
   const KB_MAX =
-    hasIntentMatch && !intentIsProduct
+    activePackageName
+      ? 4500
+      : hasIntentMatch && !intentIsProduct
       ? 600
       : promptMode === "general"
         ? 4000
@@ -2786,7 +2848,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
   const knowledgeBase = selectRelevantText(
     knowledgeBaseRaw,
-    `${detailQuestionText}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`,
+    `${knowledgeRetrievalQuery}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`,
     KB_MAX,
   );
 
@@ -2813,7 +2875,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     activePackageContextText,
     selectedProductText,
     knowledgeBase ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}` : "",
-    "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
+    activePackageName
+      ? "\n\nHay un PAQUETE/flujo activo. Para precios, tarifas por ciudad o datos de ese paquete, prioriza BASE DE CONOCIMIENTO y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí. Usa herramientas de catálogo solo si el cliente pide otro producto del catálogo."
+      : "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
     "\n\n" + activeFlowGuide,
     orderStateText,
     orderFieldsText,
