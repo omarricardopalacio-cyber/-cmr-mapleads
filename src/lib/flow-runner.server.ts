@@ -425,38 +425,22 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     // ---- NAVEGACIÓN ----
     case "goto_flow": {
       if (sd.flow_id) {
-        // En lugar de llamar trigger, simplemente encolamos el run en el otro flujo
         const { data: firstStep } = await supabaseAdmin.from("flow_steps").select("id").eq("flow_id", sd.flow_id).is("parent_step_id", null).order("step_order", { ascending: true }).limit(1).maybeSingle();
         if (firstStep) {
-          const { data: existingRun } = await supabaseAdmin
-            .from("flow_runs")
-            .select("id, status")
-            .eq("org_id", orgId)
-            .eq("flow_id", sd.flow_id)
-            .eq("contact_id", contactId)
+          const { data: targetFlow } = await supabaseAdmin
+            .from("flows")
+            .select("max_sends_per_contact")
+            .eq("id", sd.flow_id)
             .maybeSingle();
-
-          if (existingRun && ["active", "running", "wait_node", "paused"].includes(existingRun.status)) {
-            return { end: true };
-          }
-
-          if (existingRun) {
-            await supabaseAdmin.from("flow_runs").update({
-              current_step_id: firstStep.id,
-              status: "active",
-              next_execution_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }).eq("id", existingRun.id);
-          } else {
-            await supabaseAdmin.from("flow_runs").insert({
-              org_id: orgId,
-              flow_id: sd.flow_id,
-              contact_id: contactId,
-              current_step_id: firstStep.id,
-              status: "active",
-              next_execution_at: new Date().toISOString(),
-            });
-          }
+          const { ensureFlowRunForContact } = await import("./flow-trigger.server");
+          await ensureFlowRunForContact({
+            orgId,
+            contactId,
+            flowId: sd.flow_id,
+            firstStepId: firstStep.id,
+            maxSends: targetFlow?.max_sends_per_contact ?? null,
+            processNow: false,
+          });
         }
       }
       return { end: true }; // Termina este

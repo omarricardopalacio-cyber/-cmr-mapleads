@@ -2,10 +2,140 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { processRunUntilWaitOrCompleted } from "./flow-runner.server";
 
+const ACTIVE_RUN_STATUSES = ["active", "running", "wait_node", "paused"];
+
+/**
+ * NULL / <= 0 = ilimitado. Si hay tope, bloquea cuando send_count ya lo alcanzó.
+ */
+export function canSendFlowToContact(params: {
+  maxSends: number | null | undefined;
+  sendCount: number;
+  flowName?: string;
+}): { allowed: boolean; reason?: string } {
+  const max = params.maxSends;
+  if (max == null || max <= 0) return { allowed: true };
+  if ((params.sendCount ?? 0) >= max) {
+    const label = params.flowName ? `"${params.flowName}"` : "este flujo";
+    return {
+      allowed: false,
+      reason: `Ya se alcanzó el máximo de ${max} envío(s) de ${label} a este cliente.`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
+ * Inicia o reinicia un run de flujo para un contacto, respetando el límite
+ * max_sends_per_contact. No duplica si ya hay una ejecución en curso.
+ */
+export async function ensureFlowRunForContact(params: {
+  orgId: string;
+  contactId: string;
+  flowId: string;
+  firstStepId: string;
+  maxSends?: number | null;
+  flowName?: string;
+  processNow?: boolean;
+}): Promise<{ started: boolean; message: string; run?: any }> {
+  const {
+    orgId,
+    contactId,
+    flowId,
+    firstStepId,
+    maxSends = null,
+    flowName,
+    processNow = true,
+  } = params;
+
+  const { data: existingRun } = await supabaseAdmin
+    .from("flow_runs")
+    .select("id, status, send_count")
+    .eq("org_id", orgId)
+    .eq("flow_id", flowId)
+    .eq("contact_id", contactId)
+    .maybeSingle();
+
+  if (existingRun && ACTIVE_RUN_STATUSES.includes(existingRun.status)) {
+    return {
+      started: false,
+      message: flowName
+        ? `El paquete "${flowName}" ya se le está enviando al cliente.`
+        : "Este contacto ya tiene una ejecución activa para este flujo.",
+    };
+  }
+
+  const currentCount = existingRun?.send_count ?? 0;
+  const check = canSendFlowToContact({
+    maxSends,
+    sendCount: currentCount,
+    flowName,
+  });
+  if (!check.allowed) {
+    return { started: false, message: check.reason || "Límite de envíos alcanzado." };
+  }
+
+  const nowStr = new Date().toISOString();
+  let run;
+
+  if (existingRun) {
+    const { data, error } = await supabaseAdmin
+      .from("flow_runs")
+      .update({
+        current_step_id: firstStepId,
+        status: "active",
+        next_execution_at: nowStr,
+        updated_at: nowStr,
+        started_at: nowStr,
+        finished_at: null,
+        error: null,
+        send_count: currentCount + 1,
+        last_interaction_at: nowStr,
+      })
+      .eq("id", existingRun.id)
+      .select()
+      .single();
+    if (error) return { started: false, message: `No se pudo iniciar el flujo: ${error.message}` };
+    run = data;
+  } else {
+    const { data, error } = await supabaseAdmin
+      .from("flow_runs")
+      .insert({
+        org_id: orgId,
+        flow_id: flowId,
+        contact_id: contactId,
+        current_step_id: firstStepId,
+        status: "active",
+        next_execution_at: nowStr,
+        send_count: 1,
+        last_interaction_at: nowStr,
+      })
+      .select()
+      .single();
+    if (error) return { started: false, message: `No se pudo iniciar el flujo: ${error.message}` };
+    run = data;
+  }
+
+  if (run && processNow) {
+    try {
+      await processRunUntilWaitOrCompleted(run);
+    } catch (err: any) {
+      console.error("[ensureFlowRunForContact] Error procesando run", err?.message, { flowId, contactId });
+    }
+  }
+
+  return {
+    started: true,
+    message: flowName
+      ? `El paquete "${flowName}" se está enviando al cliente en orden. NO reenvíes ni describas ese contenido; el sistema ya lo envía. Quédate atento para responder dudas después.`
+      : "Flujo iniciado.",
+    run,
+  };
+}
+
 /**
  * Inicia (o reinicia) un flujo para un contacto y lo ejecuta al instante,
  * enviando sus pasos en orden. Pensado para que la IA active "paquetes".
- * No duplica si ya hay una ejecución en curso.
+ * No duplica si ya hay una ejecución en curso. Respeta max_sends_per_contact.
  */
 export async function startFlowForContact(params: {
   orgId: string;
@@ -14,10 +144,9 @@ export async function startFlowForContact(params: {
 }): Promise<{ started: boolean; message: string }> {
   const { orgId, contactId, flowId } = params;
 
-  // El flujo debe existir, estar activo y ser ofertable por la IA.
   const { data: flow } = await supabaseAdmin
     .from("flows")
-    .select("id, name, is_active, ai_selectable")
+    .select("id, name, is_active, ai_selectable, max_sends_per_contact, ai_instructions")
     .eq("org_id", orgId)
     .eq("id", flowId)
     .maybeSingle();
@@ -39,67 +168,29 @@ export async function startFlowForContact(params: {
 
   if (!firstStep) return { started: false, message: `El paquete "${flow.name}" está vacío.` };
 
-  const { data: existingRun } = await supabaseAdmin
-    .from("flow_runs")
-    .select("id, status")
-    .eq("org_id", orgId)
-    .eq("flow_id", flowId)
-    .eq("contact_id", contactId)
-    .maybeSingle();
+  const result = await ensureFlowRunForContact({
+    orgId,
+    contactId,
+    flowId,
+    firstStepId: firstStep.id,
+    maxSends: flow.max_sends_per_contact,
+    flowName: flow.name,
+    processNow: true,
+  });
 
-  // Si ya se está enviando, no lo duplicamos.
-  if (existingRun && ["active", "running", "wait_node", "paused"].includes(existingRun.status)) {
-    return { started: false, message: `El paquete "${flow.name}" ya se le está enviando al cliente.` };
+  // Si el paquete arrancó, anexar instrucciones para que la IA sepa cómo atender después.
+  const instructions = String(flow.ai_instructions || "").trim();
+  if (result.started && instructions) {
+    return {
+      ...result,
+      message:
+        `${result.message}\n\n=== INSTRUCCIONES PARA ATENDER ESTE PAQUETE ===\n` +
+        `El sistema YA está enviando el contenido del paquete al cliente. Tú NO lo reenvíes ni lo copies. ` +
+        `Usa estas instrucciones para responder dudas, pedir datos y cerrar la venta:\n${instructions}`,
+    };
   }
 
-  const nowStr = new Date().toISOString();
-  let run;
-  if (existingRun) {
-    const { data, error } = await supabaseAdmin
-      .from("flow_runs")
-      .update({
-        current_step_id: firstStep.id,
-        status: "active",
-        next_execution_at: nowStr,
-        updated_at: nowStr,
-        started_at: nowStr,
-        finished_at: null,
-        error: null,
-      })
-      .eq("id", existingRun.id)
-      .select()
-      .single();
-    if (error) return { started: false, message: `No se pudo iniciar el paquete: ${error.message}` };
-    run = data;
-  } else {
-    const { data, error } = await supabaseAdmin
-      .from("flow_runs")
-      .insert({
-        org_id: orgId,
-        flow_id: flowId,
-        contact_id: contactId,
-        current_step_id: firstStep.id,
-        status: "active",
-        next_execution_at: nowStr,
-      })
-      .select()
-      .single();
-    if (error) return { started: false, message: `No se pudo iniciar el paquete: ${error.message}` };
-    run = data;
-  }
-
-  if (run) {
-    try {
-      await processRunUntilWaitOrCompleted(run);
-    } catch (err: any) {
-      console.error("[startFlowForContact] Error procesando run", err?.message, { flowId, contactId });
-    }
-  }
-
-  return {
-    started: true,
-    message: `El paquete "${flow.name}" se está enviando al cliente en orden. NO reenvíes ni describas ese contenido; el sistema ya lo envía. Quédate atento para responder dudas después.`,
-  };
+  return result;
 }
 
 export async function triggerFlows(params: {
@@ -111,16 +202,14 @@ export async function triggerFlows(params: {
   try {
     const { orgId, triggerType, contactId, triggerValue } = params;
 
-    // Buscar flujos activos con este disparador
     let query = supabaseAdmin
       .from("flows")
-      .select("id")
+      .select("id, name, max_sends_per_contact")
       .eq("org_id", orgId)
       .eq("trigger_type", triggerType)
       .eq("is_active", true);
 
     if (triggerValue) {
-      // Comparación sensible a minúsculas por si acaso
       query = query.ilike("trigger_value", triggerValue);
     }
 
@@ -128,19 +217,6 @@ export async function triggerFlows(params: {
     if (error || !flows || flows.length === 0) return;
 
     for (const flow of flows) {
-      // Prevenir múltiples ejecuciones del mismo flujo para el mismo contacto si el flujo ya está corriendo o programado
-      const { data: existingRun } = await supabaseAdmin
-        .from("flow_runs")
-        .select("id")
-        .eq("org_id", orgId)
-        .eq("flow_id", flow.id)
-        .eq("contact_id", contactId)
-        .in("status", ["active", "running", "wait_node", "paused"])
-        .maybeSingle();
-
-      if (existingRun) continue; // Ya está en el flujo
-
-      // Obtener el primer paso del flujo
       const { data: firstStep } = await supabaseAdmin
         .from("flow_steps")
         .select("id")
@@ -152,32 +228,15 @@ export async function triggerFlows(params: {
 
       if (!firstStep) continue;
 
-      // Encolar el flujo
-      const { data: run, error: insertError } = await supabaseAdmin
-        .from("flow_runs")
-        .insert({
-          org_id: orgId,
-          flow_id: flow.id,
-          contact_id: contactId,
-          current_step_id: firstStep.id,
-          status: "active",
-          next_execution_at: new Date().toISOString(),
-        })
-        .select()
-        .single();
-
-      if (insertError) {
-        console.error("[flow-trigger] Failed to insert flow_run", insertError.message, { flowId: flow.id, contactId });
-        continue;
-      }
-
-      if (run) {
-        try {
-          await processRunUntilWaitOrCompleted(run);
-        } catch (err: any) {
-          console.error("[flow-trigger] Error processing newly triggered run", err.message, { runId: run.id });
-        }
-      }
+      await ensureFlowRunForContact({
+        orgId,
+        contactId,
+        flowId: flow.id,
+        firstStepId: firstStep.id,
+        maxSends: flow.max_sends_per_contact,
+        flowName: flow.name,
+        processNow: true,
+      });
     }
   } catch (err: any) {
     console.error(`[flow-trigger] Error triggering flow ${params.triggerType}:`, err.message);

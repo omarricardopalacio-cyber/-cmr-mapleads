@@ -5,7 +5,6 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
 import { TRIGGERS } from "@/lib/flow-blocks";
-import { processRunUntilWaitOrCompleted } from "@/lib/flow-runner.server";
 
 const FLOW_TRIGGER_TYPES = TRIGGERS.map((trigger) => trigger.id);
 
@@ -64,6 +63,9 @@ export const upsertFlow = createServerFn({ method: "POST" })
     // del flujo (antes un default:false lo apagaba al guardar/editar).
     is_active: z.boolean().optional(),
     ai_selectable: z.boolean().optional(),
+    // null / omitido = ilimitado; entero >= 1 = tope de envíos por cliente
+    max_sends_per_contact: z.number().int().min(1).nullable().optional(),
+    ai_instructions: z.string().nullable().optional(),
   }).passthrough().parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
@@ -339,7 +341,15 @@ export const runFlowManually = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
-    
+
+    const { data: flow } = await supabaseAdmin
+      .from("flows")
+      .select("id, name, max_sends_per_contact")
+      .eq("id", data.flowId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (!flow) throw new Error("Flujo no encontrado");
+
     const { data: firstStep } = await supabaseAdmin
       .from("flow_steps")
       .select("id")
@@ -348,60 +358,22 @@ export const runFlowManually = createServerFn({ method: "POST" })
       .order("step_order", { ascending: true })
       .limit(1)
       .maybeSingle();
-      
+
     if (!firstStep) throw new Error("Flujo vacío");
 
-    const { data: existingRun } = await supabaseAdmin
-      .from("flow_runs")
-      .select("id, status")
-      .eq("org_id", orgId)
-      .eq("flow_id", data.flowId)
-      .eq("contact_id", data.contactId)
-      .maybeSingle();
+    const { ensureFlowRunForContact } = await import("./flow-trigger.server");
+    const result = await ensureFlowRunForContact({
+      orgId,
+      contactId: data.contactId,
+      flowId: data.flowId,
+      firstStepId: firstStep.id,
+      maxSends: flow.max_sends_per_contact,
+      flowName: flow.name,
+      processNow: true,
+    });
 
-    if (existingRun && ["active", "running", "wait_node", "paused"].includes(existingRun.status)) {
-      throw new Error("Este contacto ya tiene una ejecución activa o pausada para este flujo.");
-    }
-
-    if (existingRun) {
-      const { data: run, error } = await supabaseAdmin
-        .from("flow_runs")
-        .update({
-          current_step_id: firstStep.id,
-          status: "active",
-          next_execution_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          started_at: new Date().toISOString(),
-        })
-        .eq("id", existingRun.id)
-        .select()
-        .single();
-
-      if (error) throw new Error(error.message);
-      if (run) {
-        await processRunUntilWaitOrCompleted(run);
-      }
-      return { run };
-    }
-
-    const { data: run, error } = await supabaseAdmin
-      .from("flow_runs")
-      .insert({
-        org_id: orgId,
-        flow_id: data.flowId,
-        contact_id: data.contactId,
-        current_step_id: firstStep.id,
-        status: "active",
-        next_execution_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-      
-    if (error) throw new Error(error.message);
-    if (run) {
-      await processRunUntilWaitOrCompleted(run);
-    }
-    return { run };
+    if (!result.started) throw new Error(result.message);
+    return { run: result.run };
   });
 
 export const listContactsLite = createServerFn({ method: "GET" })

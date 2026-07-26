@@ -30,7 +30,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search, Trash2, Inbox, User, Users, AlertTriangle, RefreshCw, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Search, Trash2, Inbox, User, Users, AlertTriangle, RefreshCw, X, ChevronDown, Tag } from "lucide-react";
 import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -126,32 +132,61 @@ function ConversationsLayout() {
               Crear
             </Button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {(tagsData?.tags ?? []).map((tag: { id: string; name: string; color: string }) => (
-              <span
-                key={tag.id}
-                className="text-[10px] pl-2 pr-1 py-1 rounded-full border flex items-center gap-1 group"
-                style={{ borderColor: tag.color, color: tag.color, backgroundColor: `${tag.color}20` }}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-9 justify-between text-xs font-normal"
               >
-                <span>{tag.name}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (confirm(`¿Estás seguro de que deseas eliminar la etiqueta "${tag.name}"?`)) {
-                      deleteTagMut.mutate({ tagId: tag.id });
-                    }
-                  }}
-                  className="hover:bg-foreground/10 rounded-full p-0.5 transition-colors opacity-60 hover:opacity-100 flex items-center justify-center"
-                >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              </span>
-            ))}
-            {(tagsData?.tags ?? []).length === 0 && (
-              <span className="text-xs text-muted-foreground">No hay etiquetas creadas aún.</span>
-            )}
-          </div>
+                <span className="flex items-center gap-2 min-w-0">
+                  <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">
+                    {(tagsData?.tags ?? []).length === 0
+                      ? "Sin etiquetas"
+                      : `Etiquetas (${(tagsData?.tags ?? []).length})`}
+                  </span>
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-[240px] max-h-64 overflow-y-auto">
+              {(tagsData?.tags ?? []).length === 0 ? (
+                <div className="px-2 py-3 text-xs text-muted-foreground text-center">
+                  No hay etiquetas creadas aún.
+                </div>
+              ) : (
+                (tagsData?.tags ?? []).map((tag: { id: string; name: string; color: string }) => (
+                  <DropdownMenuItem
+                    key={tag.id}
+                    className="flex items-center justify-between gap-2 cursor-default"
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    <span className="flex items-center gap-2 min-w-0 flex-1">
+                      <span
+                        className="h-2.5 w-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: tag.color }}
+                      />
+                      <span className="truncate text-xs">{tag.name}</span>
+                    </span>
+                    <button
+                      type="button"
+                      title={`Eliminar "${tag.name}"`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`¿Estás seguro de que deseas eliminar la etiqueta "${tag.name}"?`)) {
+                          deleteTagMut.mutate({ tagId: tag.id });
+                        }
+                      }}
+                      className="shrink-0 p-1 rounded hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         {/* DiagnosticsPanel oculto temporalmente */}
         {/* <DiagnosticsPanel /> */}

@@ -64,6 +64,9 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [aiSelectable, setAiSelectable] = useState(false);
+  const [aiInstructions, setAiInstructions] = useState("");
+  /** Vacío = ilimitado; número >= 1 = tope de envíos por cliente */
+  const [maxSendsPerContact, setMaxSendsPerContact] = useState<string>("");
   const [triggerType, setTriggerType] = useState("manual");
   const [triggerValue, setTriggerValue] = useState("");
   const [steps, setSteps] = useState<any[]>([]);
@@ -76,6 +79,12 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
       setName(f.name || "");
       setDescription(f.description || "");
       setAiSelectable(!!f.ai_selectable);
+      setAiInstructions(f.ai_instructions || "");
+      setMaxSendsPerContact(
+        f.max_sends_per_contact != null && f.max_sends_per_contact > 0
+          ? String(f.max_sends_per_contact)
+          : ""
+      );
       setTriggerType(f.trigger_type || "manual");
       setTriggerValue(f.trigger_value || "");
     }
@@ -94,6 +103,14 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
     }
 
     try {
+      const parsedMax = maxSendsPerContact.trim() === ""
+        ? null
+        : Number.parseInt(maxSendsPerContact.trim(), 10);
+      if (parsedMax != null && (!Number.isFinite(parsedMax) || parsedMax < 1)) {
+        toast.error("El máximo de envíos debe ser un número mayor o igual a 1, o vacío para ilimitado");
+        return;
+      }
+
       // 1. Guardar metadatos del flujo
       const res = await upsertFlowFn({
         data: {
@@ -101,6 +118,8 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
           name,
           description,
           ai_selectable: aiSelectable,
+          ai_instructions: aiInstructions.trim() || null,
+          max_sends_per_contact: parsedMax,
           trigger_type: triggerType,
           trigger_value: triggerValue || null,
         }
@@ -291,15 +310,59 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
               />
             </div>
 
-            <div className="flex items-start justify-between gap-3 rounded-md border p-3">
-              <div className="space-y-0.5">
-                <Label className="text-sm">La IA puede ofrecer este paquete</Label>
-                <p className="text-xs text-muted-foreground">
-                  Si está activo, la IA puede activar este flujo por sí misma cuando el
-                  cliente muestre interés en su tema (ej. "fiestas infantiles").
-                </p>
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-0.5">
+                  <Label className="text-sm">La IA puede ofrecer este paquete</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Si está activo, la IA puede activar este flujo por sí misma cuando el
+                    cliente muestre interés en su tema (ej. "fiestas infantiles").
+                  </p>
+                </div>
+                <Switch checked={aiSelectable} onCheckedChange={setAiSelectable} />
               </div>
-              <Switch checked={aiSelectable} onCheckedChange={setAiSelectable} />
+
+              {aiSelectable && (
+                <div className="space-y-2 pt-1 border-t">
+                  <Label htmlFor="ai-instructions" className="text-sm">
+                    Instrucciones para la IA
+                  </Label>
+                  <Textarea
+                    id="ai-instructions"
+                    value={aiInstructions}
+                    onChange={(e) => setAiInstructions(e.target.value)}
+                    rows={6}
+                    className="resize-none text-sm"
+                    placeholder={`Ejemplo:\n- Este paquete es de forros para silla.\n- Después de enviarlo, pregunta cuántas sillas y la ciudad.\n- Precios: Bogotá $XX, Medellín $YY.\n- Si preguntan por envío, explica plazos y costo.\n- Si ya dieron cantidad y ciudad, cotiza sin decir que no tienes el dato.`}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Contexto de cómo atender cuando se active este flujo: qué preguntar,
+                    precios, objeciones y cómo cerrar. La IA lo usa al activar el paquete
+                    y mientras el cliente sigue en esa conversación.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 rounded-md border p-3">
+              <Label htmlFor="max-sends-per-contact" className="text-sm">
+                Máx. envíos por cliente
+              </Label>
+              <Input
+                id="max-sends-per-contact"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                placeholder="Ilimitado"
+                value={maxSendsPerContact}
+                onChange={(e) => setMaxSendsPerContact(e.target.value)}
+                className="h-9"
+              />
+              <p className="text-xs text-muted-foreground">
+                Cuántas veces se puede enviar este flujo al mismo cliente. Déjalo vacío
+                para ilimitado (ej. 1 = solo una vez).
+              </p>
             </div>
           </div>
         </div>

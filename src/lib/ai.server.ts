@@ -2395,6 +2395,47 @@ export async function runAiAgent({
   } catch (err) {
     console.error("[runAiAgent] load sales packages failed", err, { orgId });
   }
+
+  // === CONTEXTO DEL PAQUETE ACTIVO / RECIENTE PARA ESTE CLIENTE ===
+  // Si ya se le envió (o se está enviando) un flujo con instrucciones de IA,
+  // inyectarlas para que sepa cómo atender (precios, ciudad, siguiente pregunta…).
+  let activePackageContextText = "";
+  if (contactId) {
+    try {
+      const { data: recentRun } = await (supabaseAdmin as any)
+        .from("flow_runs")
+        .select("id, status, updated_at, flow_id, flows(id, name, ai_instructions)")
+        .eq("org_id", orgId)
+        .eq("contact_id", contactId)
+        .in("status", ["active", "running", "wait_node", "paused", "completed"])
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const flowMeta = Array.isArray(recentRun?.flows)
+        ? recentRun.flows[0]
+        : recentRun?.flows;
+      const instructions = String(flowMeta?.ai_instructions || "").trim();
+      if (instructions) {
+        const clipped =
+          instructions.length > 2500 ? instructions.slice(0, 2500) + "…" : instructions;
+        const pkgName = flowMeta?.name || "paquete";
+        const statusHint =
+          recentRun?.status === "completed"
+            ? "ya se envió"
+            : "se está enviando o está en curso";
+        activePackageContextText =
+          `\n\n=== CONTEXTO DEL PAQUETE ACTIVO ("${pkgName}") ===\n` +
+          `Este paquete ${statusHint} para este cliente. NO reenvíes ni copies su contenido.\n` +
+          `Sigue estas instrucciones para atender, pedir datos y cotizar:\n${clipped}`;
+      }
+    } catch (err) {
+      console.error("[runAiAgent] load active package context failed", err, {
+        orgId,
+        contactId,
+      });
+    }
+  }
   const visibleChat = messages.filter(
     (m) => (m.role === "user" || m.role === "assistant") && m.content?.trim(),
   );
@@ -2769,6 +2810,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     conversationRulesText,
     customerMemoryText,
     salesPackagesText,
+    activePackageContextText,
     selectedProductText,
     knowledgeBase ? `\n\n=== BASE DE CONOCIMIENTO / PRODUCTOS ===\n${knowledgeBase}` : "",
     "\n\nTienes acceso a herramientas para ayudar al cliente. Usa SIEMPRE las herramientas de catálogo para preguntas sobre producto, precio, stock, foto o video. No respondas solo con texto si puedes enviar imagen o video.",
