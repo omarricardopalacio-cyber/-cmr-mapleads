@@ -267,6 +267,11 @@ function ConversationsLayout() {
                       {contactMeta}
                     </div>
                     <div className="flex flex-wrap gap-1 mt-1">
+                      {t.channel === "web" ? (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full border border-sky-500/40 text-sky-700 bg-sky-500/10">Web</span>
+                      ) : (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full border border-emerald-500/40 text-emerald-700 bg-emerald-500/10">WA</span>
+                      )}
                       {intent === "compro" ? (
                         <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full border border-green-500/40 text-green-700 bg-green-500/10">🛒 Compró</span>
                       ) : intent === "no_compro" ? (

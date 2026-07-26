@@ -54,6 +54,7 @@ function AppSidebar() {
   const main = [
     { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
     { title: "Chats en Vivo", url: "/conversations", icon: MessagesSquare },
+    { title: "Tienda web", url: "/store", icon: Store },
     { title: "Contactos y Clientes", url: "/contacts", icon: Users },
     { title: "Pedidos", url: "/orders", icon: ClipboardList },
   ];

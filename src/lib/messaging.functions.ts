@@ -133,7 +133,7 @@ export const listMessages = createServerFn({ method: "GET" })
 
     const { data: thread, error: threadErr } = await userSupabase
       .from("threads")
-      .select("id, contact_id, session_id, ai_enabled, purchase_intent, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
+      .select("id, contact_id, session_id, ai_enabled, purchase_intent, channel, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
@@ -166,7 +166,7 @@ export const listMessages = createServerFn({ method: "GET" })
       console.warn("[listMessages] FALLBACK a supabaseAdmin. threadRow:", !!threadRow, "messagesCount:", messages?.length ?? 0);
       const { data: adminThread } = await supabaseAdmin
         .from("threads")
-        .select("id, contact_id, session_id, ai_enabled, purchase_intent, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
+        .select("id, contact_id, session_id, ai_enabled, purchase_intent, channel, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
         .eq("id", data.threadId)
         .eq("org_id", orgId)
         .maybeSingle();
@@ -206,6 +206,7 @@ export const listMessages = createServerFn({ method: "GET" })
         contactId: threadRow.contact_id,
         aiEnabled: (threadRow as any).ai_enabled !== false, // default true si es null/undefined
         purchase_intent: (threadRow as any).purchase_intent ?? null,
+        channel: (threadRow as any).channel || "whatsapp",
         contact: {
           displayName: contact?.display_name ?? contact?.phone ?? contact?.wa_id?.replace(/@lid$/, "").replace(/@c\.us$/, "") ?? null,
           waId: contact?.wa_id ?? null,
@@ -246,12 +247,46 @@ export const sendMessage = createServerFn({ method: "POST" })
     const orgId = await ensureUserOrg(context.userId);
     const { data: thread } = await supabaseAdmin
       .from("threads")
-      .select("id, session_id, contacts(wa_id, phone)")
+      .select("id, session_id, channel, contacts(wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
+    const channel = (thread as any).channel || "whatsapp";
+
+    const displayText = sanitizeMessageText(
+      data.caption || data.text,
+      data.caption
+    );
+    const messageMedia =
+      data.media_url && data.mime_type
+        ? { url: data.media_url, mimeType: data.mime_type, mime_type: data.mime_type }
+        : data.media_url
+          ? { url: data.media_url }
+          : null;
+
+    // Canal WEB: solo DB (Realtime); sin engine_commands
+    if (channel === "web") {
+      const { error: insertErr } = await supabaseAdmin.from("messages").insert({
+        org_id: orgId,
+        thread_id: data.threadId,
+        direction: "out",
+        text: displayText,
+        media: messageMedia,
+        wa_message_id: `web-agent-${crypto.randomUUID()}`,
+        sent_at: new Date().toISOString(),
+        raw: { channel: "web", source: "agent" },
+      });
+      if (insertErr) throw new Error(`Error al guardar mensaje: ${insertErr.message}`);
+      await supabaseAdmin
+        .from("threads")
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", data.threadId)
+        .eq("org_id", orgId);
+      return { commandId: null, channel: "web" };
+    }
+
     // Preferir wa_id (puede ser LID como 123@lid) porque WhatsApp Web puede enviar usando LIDs.
     // Solo usar phone si wa_id no es un JID válido.
     const target = contact?.wa_id && contact.wa_id.includes('@')
@@ -285,18 +320,6 @@ export const sendMessage = createServerFn({ method: "POST" })
       if (resolved.caption) payload.caption = resolved.caption;
     }
 
-
-    const displayText = sanitizeMessageText(
-      data.caption || data.text,
-      data.caption
-    );
-    const messageMedia =
-      data.media_url && data.mime_type
-        ? { url: data.media_url, mimeType: data.mime_type, mime_type: data.mime_type }
-        : data.media_url
-          ? { url: data.media_url }
-          : null;
-
     // Generar un ID para el comando para poder usarlo en el wa_message_id
     const cmdId = crypto.randomUUID();
 
@@ -314,6 +337,8 @@ export const sendMessage = createServerFn({ method: "POST" })
       console.error("[sendMessage] Error inserting pending message:", insertErr);
       throw new Error(`Error al guardar mensaje pendiente: ${insertErr.message}`);
     }
+
+    if (!thread.session_id) throw new Error("Thread missing WhatsApp session");
 
     const { data: cmd, error } = await (supabaseAdmin as any)
       .from("engine_commands")
@@ -335,7 +360,7 @@ export const sendMessage = createServerFn({ method: "POST" })
       .eq("id", data.threadId)
       .eq("org_id", orgId);
 
-    return { commandId: cmd.id };
+    return { commandId: cmd.id, channel: "whatsapp" };
   });
 
 

@@ -9,43 +9,57 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SignupRouteImport } from './routes/signup'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthenticatedTransferRulesRouteImport } from './routes/_authenticated.transfer-rules'
-import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
-import { Route as AuthenticatedSaasAdminRouteImport } from './routes/_authenticated.saas-admin'
-import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
-import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
-import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated.orders'
-import { Route as AuthenticatedMapleadsRouteImport } from './routes/_authenticated.mapleads'
-import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated.knowledge'
-import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
-import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.flows'
-import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
-import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
-import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
-import { Route as AuthenticatedCatalogIntegrationsRouteImport } from './routes/_authenticated.catalog-integrations'
-import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as StoreManifestRouteImport } from './routes/store-manifest'
 import { Route as AuthenticatedAutoRepliesRouteImport } from './routes/_authenticated.auto-replies'
+import { Route as AuthenticatedBroadcastsRouteImport } from './routes/_authenticated.broadcasts'
+import { Route as AuthenticatedCatalogIntegrationsRouteImport } from './routes/_authenticated.catalog-integrations'
+import { Route as AuthenticatedContactsRouteImport } from './routes/_authenticated.contacts'
+import { Route as AuthenticatedConversationsRouteImport } from './routes/_authenticated.conversations'
+import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
+import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.flows'
+import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
+import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated.knowledge'
+import { Route as AuthenticatedMapleadsRouteImport } from './routes/_authenticated.mapleads'
+import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated.orders'
+import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
+import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
+import { Route as AuthenticatedSaasAdminRouteImport } from './routes/_authenticated.saas-admin'
+import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
+import { Route as AuthenticatedStoreRouteImport } from './routes/_authenticated.store'
+import { Route as AuthenticatedTransferRulesRouteImport } from './routes/_authenticated.transfer-rules'
+import { Route as StoreTokenRouteImport } from './routes/store.$token'
 import { Route as AuthenticatedConversationsIndexRouteImport } from './routes/_authenticated.conversations.index'
-import { Route as ApiInternalNoResponseWorkerRouteImport } from './routes/api/internal/no-response-worker'
-import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
 import { Route as AuthenticatedConversationsThreadIdRouteImport } from './routes/_authenticated.conversations.$threadId'
-import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public/mapleads/ingest'
-import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/public/engine/upload-media'
-import { Route as ApiPublicEngineRetryProcessorRouteImport } from './routes/api/public/engine/retry-processor'
-import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
-import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
-import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
-import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
-import { Route as ApiPublicCronCleanupRouteImport } from './routes/api/public/cron/cleanup'
+import { Route as ApiDebugMediaDiagRouteImport } from './routes/api/debug/media-diag'
+import { Route as ApiInternalNoResponseWorkerRouteImport } from './routes/api/internal/no-response-worker'
+import { Route as StoreTokenIndexRouteImport } from './routes/store.$token.index'
+import { Route as StoreTokenChatRouteImport } from './routes/store.$token.chat'
 import { Route as ApiAdminEngineFailedRequestsRouteImport } from './routes/api/admin/engine/failed-requests'
+import { Route as ApiPublicCronCleanupRouteImport } from './routes/api/public/cron/cleanup'
+import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
+import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
+import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
+import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
+import { Route as ApiPublicEngineRetryProcessorRouteImport } from './routes/api/public/engine/retry-processor'
+import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/public/engine/upload-media'
+import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public/mapleads/ingest'
+import { Route as ApiPublicStoreConfigRouteImport } from './routes/api/public/store/config'
+import { Route as ApiPublicStoreProductsRouteImport } from './routes/api/public/store/products'
+import { Route as StoreTokenProductProductIdRouteImport } from './routes/store.$token.product.$productId'
+import { Route as ApiPublicStoreChatMessagesRouteImport } from './routes/api/public/store/chat/messages'
+import { Route as ApiPublicStoreChatSessionRouteImport } from './routes/api/public/store/chat/session'
 
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -53,82 +67,25 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedRoute = AuthenticatedRouteImport.update({
-  id: '/_authenticated',
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const StoreManifestRoute = StoreManifestRouteImport.update({
+  id: '/store-manifest',
+  path: '/store-manifest',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedTransferRulesRoute =
-  AuthenticatedTransferRulesRouteImport.update({
-    id: '/transfer-rules',
-    path: '/transfer-rules',
+const AuthenticatedAutoRepliesRoute =
+  AuthenticatedAutoRepliesRouteImport.update({
+    id: '/auto-replies',
+    path: '/auto-replies',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedSessionsRoute = AuthenticatedSessionsRouteImport.update({
-  id: '/sessions',
-  path: '/sessions',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedSaasAdminRoute = AuthenticatedSaasAdminRouteImport.update({
-  id: '/saas-admin',
-  path: '/saas-admin',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedQuickRepliesRoute =
-  AuthenticatedQuickRepliesRouteImport.update({
-    id: '/quick-replies',
-    path: '/quick-replies',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedPipelinesRoute = AuthenticatedPipelinesRouteImport.update({
-  id: '/pipelines',
-  path: '/pipelines',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedOrdersRoute = AuthenticatedOrdersRouteImport.update({
-  id: '/orders',
-  path: '/orders',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedMapleadsRoute = AuthenticatedMapleadsRouteImport.update({
-  id: '/mapleads',
-  path: '/mapleads',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedKnowledgeRoute = AuthenticatedKnowledgeRouteImport.update({
-  id: '/knowledge',
-  path: '/knowledge',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedIntegrationsRoute =
-  AuthenticatedIntegrationsRouteImport.update({
-    id: '/integrations',
-    path: '/integrations',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedFlowsRoute = AuthenticatedFlowsRouteImport.update({
-  id: '/flows',
-  path: '/flows',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedConversationsRoute =
-  AuthenticatedConversationsRouteImport.update({
-    id: '/conversations',
-    path: '/conversations',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
-  id: '/contacts',
-  path: '/contacts',
+const AuthenticatedBroadcastsRoute = AuthenticatedBroadcastsRouteImport.update({
+  id: '/broadcasts',
+  path: '/broadcasts',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedCatalogIntegrationsRoute =
@@ -137,65 +94,132 @@ const AuthenticatedCatalogIntegrationsRoute =
     path: '/catalog-integrations',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedBroadcastsRoute = AuthenticatedBroadcastsRouteImport.update({
-  id: '/broadcasts',
-  path: '/broadcasts',
+const AuthenticatedContactsRoute = AuthenticatedContactsRouteImport.update({
+  id: '/contacts',
+  path: '/contacts',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedAutoRepliesRoute =
-  AuthenticatedAutoRepliesRouteImport.update({
-    id: '/auto-replies',
-    path: '/auto-replies',
+const AuthenticatedConversationsRoute =
+  AuthenticatedConversationsRouteImport.update({
+    id: '/conversations',
+    path: '/conversations',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedFlowsRoute = AuthenticatedFlowsRouteImport.update({
+  id: '/flows',
+  path: '/flows',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedIntegrationsRoute =
+  AuthenticatedIntegrationsRouteImport.update({
+    id: '/integrations',
+    path: '/integrations',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedKnowledgeRoute = AuthenticatedKnowledgeRouteImport.update({
+  id: '/knowledge',
+  path: '/knowledge',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedMapleadsRoute = AuthenticatedMapleadsRouteImport.update({
+  id: '/mapleads',
+  path: '/mapleads',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedOrdersRoute = AuthenticatedOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedPipelinesRoute = AuthenticatedPipelinesRouteImport.update({
+  id: '/pipelines',
+  path: '/pipelines',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedQuickRepliesRoute =
+  AuthenticatedQuickRepliesRouteImport.update({
+    id: '/quick-replies',
+    path: '/quick-replies',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedSaasAdminRoute = AuthenticatedSaasAdminRouteImport.update({
+  id: '/saas-admin',
+  path: '/saas-admin',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedSessionsRoute = AuthenticatedSessionsRouteImport.update({
+  id: '/sessions',
+  path: '/sessions',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedStoreRoute = AuthenticatedStoreRouteImport.update({
+  id: '/store',
+  path: '/store',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedTransferRulesRoute =
+  AuthenticatedTransferRulesRouteImport.update({
+    id: '/transfer-rules',
+    path: '/transfer-rules',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const StoreTokenRoute = StoreTokenRouteImport.update({
+  id: '/store/$token',
+  path: '/store/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedConversationsIndexRoute =
   AuthenticatedConversationsIndexRouteImport.update({
     id: '/',
     path: '/',
     getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
-const ApiInternalNoResponseWorkerRoute =
-  ApiInternalNoResponseWorkerRouteImport.update({
-    id: '/api/internal/no-response-worker',
-    path: '/api/internal/no-response-worker',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const ApiDebugMediaDiagRoute = ApiDebugMediaDiagRouteImport.update({
-  id: '/api/debug/media-diag',
-  path: '/api/debug/media-diag',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuthenticatedConversationsThreadIdRoute =
   AuthenticatedConversationsThreadIdRouteImport.update({
     id: '/$threadId',
     path: '/$threadId',
     getParentRoute: () => AuthenticatedConversationsRoute,
   } as any)
-const ApiPublicMapleadsIngestRoute = ApiPublicMapleadsIngestRouteImport.update({
-  id: '/api/public/mapleads/ingest',
-  path: '/api/public/mapleads/ingest',
+const ApiDebugMediaDiagRoute = ApiDebugMediaDiagRouteImport.update({
+  id: '/api/debug/media-diag',
+  path: '/api/debug/media-diag',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicEngineUploadMediaRoute =
-  ApiPublicEngineUploadMediaRouteImport.update({
-    id: '/api/public/engine/upload-media',
-    path: '/api/public/engine/upload-media',
+const ApiInternalNoResponseWorkerRoute =
+  ApiInternalNoResponseWorkerRouteImport.update({
+    id: '/api/internal/no-response-worker',
+    path: '/api/internal/no-response-worker',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiPublicEngineRetryProcessorRoute =
-  ApiPublicEngineRetryProcessorRouteImport.update({
-    id: '/api/public/engine/retry-processor',
-    path: '/api/public/engine/retry-processor',
+const StoreTokenIndexRoute = StoreTokenIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => StoreTokenRoute,
+} as any)
+const StoreTokenChatRoute = StoreTokenChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => StoreTokenRoute,
+} as any)
+const ApiAdminEngineFailedRequestsRoute =
+  ApiAdminEngineFailedRequestsRouteImport.update({
+    id: '/api/admin/engine/failed-requests',
+    path: '/api/admin/engine/failed-requests',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
-  id: '/api/public/engine/ingest',
-  path: '/api/public/engine/ingest',
+const ApiPublicCronCleanupRoute = ApiPublicCronCleanupRouteImport.update({
+  id: '/api/public/cron/cleanup',
+  path: '/api/public/cron/cleanup',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
-  id: '/api/public/engine/commands',
-  path: '/api/public/engine/commands',
+const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
+  id: '/api/public/cron/dispatch',
+  path: '/api/public/cron/dispatch',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicCronFlowSchedulerRoute =
@@ -204,20 +228,59 @@ const ApiPublicCronFlowSchedulerRoute =
     path: '/api/public/cron/flow-scheduler',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
-  id: '/api/public/cron/dispatch',
-  path: '/api/public/cron/dispatch',
+const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
+  id: '/api/public/engine/commands',
+  path: '/api/public/engine/commands',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicCronCleanupRoute = ApiPublicCronCleanupRouteImport.update({
-  id: '/api/public/cron/cleanup',
-  path: '/api/public/cron/cleanup',
+const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
+  id: '/api/public/engine/ingest',
+  path: '/api/public/engine/ingest',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiAdminEngineFailedRequestsRoute =
-  ApiAdminEngineFailedRequestsRouteImport.update({
-    id: '/api/admin/engine/failed-requests',
-    path: '/api/admin/engine/failed-requests',
+const ApiPublicEngineRetryProcessorRoute =
+  ApiPublicEngineRetryProcessorRouteImport.update({
+    id: '/api/public/engine/retry-processor',
+    path: '/api/public/engine/retry-processor',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicEngineUploadMediaRoute =
+  ApiPublicEngineUploadMediaRouteImport.update({
+    id: '/api/public/engine/upload-media',
+    path: '/api/public/engine/upload-media',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicMapleadsIngestRoute = ApiPublicMapleadsIngestRouteImport.update({
+  id: '/api/public/mapleads/ingest',
+  path: '/api/public/mapleads/ingest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicStoreConfigRoute = ApiPublicStoreConfigRouteImport.update({
+  id: '/api/public/store/config',
+  path: '/api/public/store/config',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicStoreProductsRoute = ApiPublicStoreProductsRouteImport.update({
+  id: '/api/public/store/products',
+  path: '/api/public/store/products',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StoreTokenProductProductIdRoute =
+  StoreTokenProductProductIdRouteImport.update({
+    id: '/product/$productId',
+    path: '/product/$productId',
+    getParentRoute: () => StoreTokenRoute,
+  } as any)
+const ApiPublicStoreChatMessagesRoute =
+  ApiPublicStoreChatMessagesRouteImport.update({
+    id: '/api/public/store/chat/messages',
+    path: '/api/public/store/chat/messages',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicStoreChatSessionRoute =
+  ApiPublicStoreChatSessionRouteImport.update({
+    id: '/api/public/store/chat/session',
+    path: '/api/public/store/chat/session',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -225,6 +288,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/store-manifest': typeof StoreManifestRoute
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
@@ -240,11 +304,15 @@ export interface FileRoutesByFullPath {
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/sessions': typeof AuthenticatedSessionsRoute
+  '/store': typeof AuthenticatedStoreRoute
   '/transfer-rules': typeof AuthenticatedTransferRulesRoute
+  '/store/$token': typeof StoreTokenRouteWithChildren
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
+  '/store/$token/chat': typeof StoreTokenChatRoute
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
+  '/store/$token/': typeof StoreTokenIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
@@ -254,11 +322,17 @@ export interface FileRoutesByFullPath {
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
+  '/api/public/store/config': typeof ApiPublicStoreConfigRoute
+  '/api/public/store/products': typeof ApiPublicStoreProductsRoute
+  '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
+  '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
+  '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/store-manifest': typeof StoreManifestRoute
   '/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
@@ -273,11 +347,14 @@ export interface FileRoutesByTo {
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/sessions': typeof AuthenticatedSessionsRoute
+  '/store': typeof AuthenticatedStoreRoute
   '/transfer-rules': typeof AuthenticatedTransferRulesRoute
   '/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
+  '/store/$token/chat': typeof StoreTokenChatRoute
   '/conversations': typeof AuthenticatedConversationsIndexRoute
+  '/store/$token': typeof StoreTokenIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
@@ -287,6 +364,11 @@ export interface FileRoutesByTo {
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
+  '/api/public/store/config': typeof ApiPublicStoreConfigRoute
+  '/api/public/store/products': typeof ApiPublicStoreProductsRoute
+  '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
+  '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
+  '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -294,6 +376,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/store-manifest': typeof StoreManifestRoute
   '/_authenticated/auto-replies': typeof AuthenticatedAutoRepliesRoute
   '/_authenticated/broadcasts': typeof AuthenticatedBroadcastsRoute
   '/_authenticated/catalog-integrations': typeof AuthenticatedCatalogIntegrationsRoute
@@ -309,11 +392,15 @@ export interface FileRoutesById {
   '/_authenticated/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/_authenticated/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
+  '/_authenticated/store': typeof AuthenticatedStoreRoute
   '/_authenticated/transfer-rules': typeof AuthenticatedTransferRulesRoute
+  '/store/$token': typeof StoreTokenRouteWithChildren
   '/_authenticated/conversations/$threadId': typeof AuthenticatedConversationsThreadIdRoute
   '/api/debug/media-diag': typeof ApiDebugMediaDiagRoute
   '/api/internal/no-response-worker': typeof ApiInternalNoResponseWorkerRoute
+  '/store/$token/chat': typeof StoreTokenChatRoute
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
+  '/store/$token/': typeof StoreTokenIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
@@ -323,6 +410,11 @@ export interface FileRoutesById {
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
+  '/api/public/store/config': typeof ApiPublicStoreConfigRoute
+  '/api/public/store/products': typeof ApiPublicStoreProductsRoute
+  '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
+  '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
+  '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -330,6 +422,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/store-manifest'
     | '/auto-replies'
     | '/broadcasts'
     | '/catalog-integrations'
@@ -345,11 +438,15 @@ export interface FileRouteTypes {
     | '/quick-replies'
     | '/saas-admin'
     | '/sessions'
+    | '/store'
     | '/transfer-rules'
+    | '/store/$token'
     | '/conversations/$threadId'
     | '/api/debug/media-diag'
     | '/api/internal/no-response-worker'
+    | '/store/$token/chat'
     | '/conversations/'
+    | '/store/$token/'
     | '/api/admin/engine/failed-requests'
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
@@ -359,11 +456,17 @@ export interface FileRouteTypes {
     | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
     | '/api/public/mapleads/ingest'
+    | '/api/public/store/config'
+    | '/api/public/store/products'
+    | '/store/$token/product/$productId'
+    | '/api/public/store/chat/messages'
+    | '/api/public/store/chat/session'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/signup'
+    | '/store-manifest'
     | '/auto-replies'
     | '/broadcasts'
     | '/catalog-integrations'
@@ -378,11 +481,14 @@ export interface FileRouteTypes {
     | '/quick-replies'
     | '/saas-admin'
     | '/sessions'
+    | '/store'
     | '/transfer-rules'
     | '/conversations/$threadId'
     | '/api/debug/media-diag'
     | '/api/internal/no-response-worker'
+    | '/store/$token/chat'
     | '/conversations'
+    | '/store/$token'
     | '/api/admin/engine/failed-requests'
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
@@ -392,12 +498,18 @@ export interface FileRouteTypes {
     | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
     | '/api/public/mapleads/ingest'
+    | '/api/public/store/config'
+    | '/api/public/store/products'
+    | '/store/$token/product/$productId'
+    | '/api/public/store/chat/messages'
+    | '/api/public/store/chat/session'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/login'
     | '/signup'
+    | '/store-manifest'
     | '/_authenticated/auto-replies'
     | '/_authenticated/broadcasts'
     | '/_authenticated/catalog-integrations'
@@ -413,11 +525,15 @@ export interface FileRouteTypes {
     | '/_authenticated/quick-replies'
     | '/_authenticated/saas-admin'
     | '/_authenticated/sessions'
+    | '/_authenticated/store'
     | '/_authenticated/transfer-rules'
+    | '/store/$token'
     | '/_authenticated/conversations/$threadId'
     | '/api/debug/media-diag'
     | '/api/internal/no-response-worker'
+    | '/store/$token/chat'
     | '/_authenticated/conversations/'
+    | '/store/$token/'
     | '/api/admin/engine/failed-requests'
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
@@ -427,6 +543,11 @@ export interface FileRouteTypes {
     | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
     | '/api/public/mapleads/ingest'
+    | '/api/public/store/config'
+    | '/api/public/store/products'
+    | '/store/$token/product/$productId'
+    | '/api/public/store/chat/messages'
+    | '/api/public/store/chat/session'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -434,6 +555,8 @@ export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  StoreManifestRoute: typeof StoreManifestRoute
+  StoreTokenRoute: typeof StoreTokenRouteWithChildren
   ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
   ApiInternalNoResponseWorkerRoute: typeof ApiInternalNoResponseWorkerRoute
   ApiAdminEngineFailedRequestsRoute: typeof ApiAdminEngineFailedRequestsRoute
@@ -445,22 +568,19 @@ export interface RootRouteChildren {
   ApiPublicEngineRetryProcessorRoute: typeof ApiPublicEngineRetryProcessorRoute
   ApiPublicEngineUploadMediaRoute: typeof ApiPublicEngineUploadMediaRoute
   ApiPublicMapleadsIngestRoute: typeof ApiPublicMapleadsIngestRoute
+  ApiPublicStoreConfigRoute: typeof ApiPublicStoreConfigRoute
+  ApiPublicStoreProductsRoute: typeof ApiPublicStoreProductsRoute
+  ApiPublicStoreChatMessagesRoute: typeof ApiPublicStoreChatMessagesRoute
+  ApiPublicStoreChatSessionRoute: typeof ApiPublicStoreChatSessionRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated': {
@@ -470,109 +590,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/transfer-rules': {
-      id: '/_authenticated/transfer-rules'
-      path: '/transfer-rules'
-      fullPath: '/transfer-rules'
-      preLoaderRoute: typeof AuthenticatedTransferRulesRouteImport
-      parentRoute: typeof AuthenticatedRoute
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/sessions': {
-      id: '/_authenticated/sessions'
-      path: '/sessions'
-      fullPath: '/sessions'
-      preLoaderRoute: typeof AuthenticatedSessionsRouteImport
-      parentRoute: typeof AuthenticatedRoute
+    '/store-manifest': {
+      id: '/store-manifest'
+      path: '/store-manifest'
+      fullPath: '/store-manifest'
+      preLoaderRoute: typeof StoreManifestRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/saas-admin': {
-      id: '/_authenticated/saas-admin'
-      path: '/saas-admin'
-      fullPath: '/saas-admin'
-      preLoaderRoute: typeof AuthenticatedSaasAdminRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/quick-replies': {
-      id: '/_authenticated/quick-replies'
-      path: '/quick-replies'
-      fullPath: '/quick-replies'
-      preLoaderRoute: typeof AuthenticatedQuickRepliesRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/pipelines': {
-      id: '/_authenticated/pipelines'
-      path: '/pipelines'
-      fullPath: '/pipelines'
-      preLoaderRoute: typeof AuthenticatedPipelinesRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/orders': {
-      id: '/_authenticated/orders'
-      path: '/orders'
-      fullPath: '/orders'
-      preLoaderRoute: typeof AuthenticatedOrdersRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/mapleads': {
-      id: '/_authenticated/mapleads'
-      path: '/mapleads'
-      fullPath: '/mapleads'
-      preLoaderRoute: typeof AuthenticatedMapleadsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/knowledge': {
-      id: '/_authenticated/knowledge'
-      path: '/knowledge'
-      fullPath: '/knowledge'
-      preLoaderRoute: typeof AuthenticatedKnowledgeRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/integrations': {
-      id: '/_authenticated/integrations'
-      path: '/integrations'
-      fullPath: '/integrations'
-      preLoaderRoute: typeof AuthenticatedIntegrationsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/flows': {
-      id: '/_authenticated/flows'
-      path: '/flows'
-      fullPath: '/flows'
-      preLoaderRoute: typeof AuthenticatedFlowsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/dashboard': {
-      id: '/_authenticated/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/conversations': {
-      id: '/_authenticated/conversations'
-      path: '/conversations'
-      fullPath: '/conversations'
-      preLoaderRoute: typeof AuthenticatedConversationsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/contacts': {
-      id: '/_authenticated/contacts'
-      path: '/contacts'
-      fullPath: '/contacts'
-      preLoaderRoute: typeof AuthenticatedContactsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/catalog-integrations': {
-      id: '/_authenticated/catalog-integrations'
-      path: '/catalog-integrations'
-      fullPath: '/catalog-integrations'
-      preLoaderRoute: typeof AuthenticatedCatalogIntegrationsRouteImport
+    '/_authenticated/auto-replies': {
+      id: '/_authenticated/auto-replies'
+      path: '/auto-replies'
+      fullPath: '/auto-replies'
+      preLoaderRoute: typeof AuthenticatedAutoRepliesRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/broadcasts': {
@@ -582,12 +625,117 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedBroadcastsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/auto-replies': {
-      id: '/_authenticated/auto-replies'
-      path: '/auto-replies'
-      fullPath: '/auto-replies'
-      preLoaderRoute: typeof AuthenticatedAutoRepliesRouteImport
+    '/_authenticated/catalog-integrations': {
+      id: '/_authenticated/catalog-integrations'
+      path: '/catalog-integrations'
+      fullPath: '/catalog-integrations'
+      preLoaderRoute: typeof AuthenticatedCatalogIntegrationsRouteImport
       parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/contacts': {
+      id: '/_authenticated/contacts'
+      path: '/contacts'
+      fullPath: '/contacts'
+      preLoaderRoute: typeof AuthenticatedContactsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/conversations': {
+      id: '/_authenticated/conversations'
+      path: '/conversations'
+      fullPath: '/conversations'
+      preLoaderRoute: typeof AuthenticatedConversationsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/dashboard': {
+      id: '/_authenticated/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/flows': {
+      id: '/_authenticated/flows'
+      path: '/flows'
+      fullPath: '/flows'
+      preLoaderRoute: typeof AuthenticatedFlowsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/integrations': {
+      id: '/_authenticated/integrations'
+      path: '/integrations'
+      fullPath: '/integrations'
+      preLoaderRoute: typeof AuthenticatedIntegrationsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/knowledge': {
+      id: '/_authenticated/knowledge'
+      path: '/knowledge'
+      fullPath: '/knowledge'
+      preLoaderRoute: typeof AuthenticatedKnowledgeRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/mapleads': {
+      id: '/_authenticated/mapleads'
+      path: '/mapleads'
+      fullPath: '/mapleads'
+      preLoaderRoute: typeof AuthenticatedMapleadsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/orders': {
+      id: '/_authenticated/orders'
+      path: '/orders'
+      fullPath: '/orders'
+      preLoaderRoute: typeof AuthenticatedOrdersRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/pipelines': {
+      id: '/_authenticated/pipelines'
+      path: '/pipelines'
+      fullPath: '/pipelines'
+      preLoaderRoute: typeof AuthenticatedPipelinesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/quick-replies': {
+      id: '/_authenticated/quick-replies'
+      path: '/quick-replies'
+      fullPath: '/quick-replies'
+      preLoaderRoute: typeof AuthenticatedQuickRepliesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/saas-admin': {
+      id: '/_authenticated/saas-admin'
+      path: '/saas-admin'
+      fullPath: '/saas-admin'
+      preLoaderRoute: typeof AuthenticatedSaasAdminRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/sessions': {
+      id: '/_authenticated/sessions'
+      path: '/sessions'
+      fullPath: '/sessions'
+      preLoaderRoute: typeof AuthenticatedSessionsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/store': {
+      id: '/_authenticated/store'
+      path: '/store'
+      fullPath: '/store'
+      preLoaderRoute: typeof AuthenticatedStoreRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/transfer-rules': {
+      id: '/_authenticated/transfer-rules'
+      path: '/transfer-rules'
+      fullPath: '/transfer-rules'
+      preLoaderRoute: typeof AuthenticatedTransferRulesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/store/$token': {
+      id: '/store/$token'
+      path: '/store/$token'
+      fullPath: '/store/$token'
+      preLoaderRoute: typeof StoreTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authenticated/conversations/': {
       id: '/_authenticated/conversations/'
@@ -596,12 +744,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConversationsIndexRouteImport
       parentRoute: typeof AuthenticatedConversationsRoute
     }
-    '/api/internal/no-response-worker': {
-      id: '/api/internal/no-response-worker'
-      path: '/api/internal/no-response-worker'
-      fullPath: '/api/internal/no-response-worker'
-      preLoaderRoute: typeof ApiInternalNoResponseWorkerRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_authenticated/conversations/$threadId': {
+      id: '/_authenticated/conversations/$threadId'
+      path: '/$threadId'
+      fullPath: '/conversations/$threadId'
+      preLoaderRoute: typeof AuthenticatedConversationsThreadIdRouteImport
+      parentRoute: typeof AuthenticatedConversationsRoute
     }
     '/api/debug/media-diag': {
       id: '/api/debug/media-diag'
@@ -610,60 +758,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDebugMediaDiagRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/conversations/$threadId': {
-      id: '/_authenticated/conversations/$threadId'
-      path: '/$threadId'
-      fullPath: '/conversations/$threadId'
-      preLoaderRoute: typeof AuthenticatedConversationsThreadIdRouteImport
-      parentRoute: typeof AuthenticatedConversationsRoute
-    }
-    '/api/public/mapleads/ingest': {
-      id: '/api/public/mapleads/ingest'
-      path: '/api/public/mapleads/ingest'
-      fullPath: '/api/public/mapleads/ingest'
-      preLoaderRoute: typeof ApiPublicMapleadsIngestRouteImport
+    '/api/internal/no-response-worker': {
+      id: '/api/internal/no-response-worker'
+      path: '/api/internal/no-response-worker'
+      fullPath: '/api/internal/no-response-worker'
+      preLoaderRoute: typeof ApiInternalNoResponseWorkerRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/engine/upload-media': {
-      id: '/api/public/engine/upload-media'
-      path: '/api/public/engine/upload-media'
-      fullPath: '/api/public/engine/upload-media'
-      preLoaderRoute: typeof ApiPublicEngineUploadMediaRouteImport
-      parentRoute: typeof rootRouteImport
+    '/store/$token/': {
+      id: '/store/$token/'
+      path: '/'
+      fullPath: '/store/$token/'
+      preLoaderRoute: typeof StoreTokenIndexRouteImport
+      parentRoute: typeof StoreTokenRoute
     }
-    '/api/public/engine/retry-processor': {
-      id: '/api/public/engine/retry-processor'
-      path: '/api/public/engine/retry-processor'
-      fullPath: '/api/public/engine/retry-processor'
-      preLoaderRoute: typeof ApiPublicEngineRetryProcessorRouteImport
-      parentRoute: typeof rootRouteImport
+    '/store/$token/chat': {
+      id: '/store/$token/chat'
+      path: '/chat'
+      fullPath: '/store/$token/chat'
+      preLoaderRoute: typeof StoreTokenChatRouteImport
+      parentRoute: typeof StoreTokenRoute
     }
-    '/api/public/engine/ingest': {
-      id: '/api/public/engine/ingest'
-      path: '/api/public/engine/ingest'
-      fullPath: '/api/public/engine/ingest'
-      preLoaderRoute: typeof ApiPublicEngineIngestRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/engine/commands': {
-      id: '/api/public/engine/commands'
-      path: '/api/public/engine/commands'
-      fullPath: '/api/public/engine/commands'
-      preLoaderRoute: typeof ApiPublicEngineCommandsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/cron/flow-scheduler': {
-      id: '/api/public/cron/flow-scheduler'
-      path: '/api/public/cron/flow-scheduler'
-      fullPath: '/api/public/cron/flow-scheduler'
-      preLoaderRoute: typeof ApiPublicCronFlowSchedulerRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/cron/dispatch': {
-      id: '/api/public/cron/dispatch'
-      path: '/api/public/cron/dispatch'
-      fullPath: '/api/public/cron/dispatch'
-      preLoaderRoute: typeof ApiPublicCronDispatchRouteImport
+    '/api/admin/engine/failed-requests': {
+      id: '/api/admin/engine/failed-requests'
+      path: '/api/admin/engine/failed-requests'
+      fullPath: '/api/admin/engine/failed-requests'
+      preLoaderRoute: typeof ApiAdminEngineFailedRequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/cron/cleanup': {
@@ -673,11 +793,88 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCronCleanupRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/admin/engine/failed-requests': {
-      id: '/api/admin/engine/failed-requests'
-      path: '/api/admin/engine/failed-requests'
-      fullPath: '/api/admin/engine/failed-requests'
-      preLoaderRoute: typeof ApiAdminEngineFailedRequestsRouteImport
+    '/api/public/cron/dispatch': {
+      id: '/api/public/cron/dispatch'
+      path: '/api/public/cron/dispatch'
+      fullPath: '/api/public/cron/dispatch'
+      preLoaderRoute: typeof ApiPublicCronDispatchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/cron/flow-scheduler': {
+      id: '/api/public/cron/flow-scheduler'
+      path: '/api/public/cron/flow-scheduler'
+      fullPath: '/api/public/cron/flow-scheduler'
+      preLoaderRoute: typeof ApiPublicCronFlowSchedulerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/engine/commands': {
+      id: '/api/public/engine/commands'
+      path: '/api/public/engine/commands'
+      fullPath: '/api/public/engine/commands'
+      preLoaderRoute: typeof ApiPublicEngineCommandsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/engine/ingest': {
+      id: '/api/public/engine/ingest'
+      path: '/api/public/engine/ingest'
+      fullPath: '/api/public/engine/ingest'
+      preLoaderRoute: typeof ApiPublicEngineIngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/engine/retry-processor': {
+      id: '/api/public/engine/retry-processor'
+      path: '/api/public/engine/retry-processor'
+      fullPath: '/api/public/engine/retry-processor'
+      preLoaderRoute: typeof ApiPublicEngineRetryProcessorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/engine/upload-media': {
+      id: '/api/public/engine/upload-media'
+      path: '/api/public/engine/upload-media'
+      fullPath: '/api/public/engine/upload-media'
+      preLoaderRoute: typeof ApiPublicEngineUploadMediaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/mapleads/ingest': {
+      id: '/api/public/mapleads/ingest'
+      path: '/api/public/mapleads/ingest'
+      fullPath: '/api/public/mapleads/ingest'
+      preLoaderRoute: typeof ApiPublicMapleadsIngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/store/config': {
+      id: '/api/public/store/config'
+      path: '/api/public/store/config'
+      fullPath: '/api/public/store/config'
+      preLoaderRoute: typeof ApiPublicStoreConfigRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/store/products': {
+      id: '/api/public/store/products'
+      path: '/api/public/store/products'
+      fullPath: '/api/public/store/products'
+      preLoaderRoute: typeof ApiPublicStoreProductsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/store/$token/product/$productId': {
+      id: '/store/$token/product/$productId'
+      path: '/product/$productId'
+      fullPath: '/store/$token/product/$productId'
+      preLoaderRoute: typeof StoreTokenProductProductIdRouteImport
+      parentRoute: typeof StoreTokenRoute
+    }
+    '/api/public/store/chat/messages': {
+      id: '/api/public/store/chat/messages'
+      path: '/api/public/store/chat/messages'
+      fullPath: '/api/public/store/chat/messages'
+      preLoaderRoute: typeof ApiPublicStoreChatMessagesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/store/chat/session': {
+      id: '/api/public/store/chat/session'
+      path: '/api/public/store/chat/session'
+      fullPath: '/api/public/store/chat/session'
+      preLoaderRoute: typeof ApiPublicStoreChatSessionRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -716,6 +913,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedQuickRepliesRoute: typeof AuthenticatedQuickRepliesRoute
   AuthenticatedSaasAdminRoute: typeof AuthenticatedSaasAdminRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
+  AuthenticatedStoreRoute: typeof AuthenticatedStoreRoute
   AuthenticatedTransferRulesRoute: typeof AuthenticatedTransferRulesRoute
 }
 
@@ -735,6 +933,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedQuickRepliesRoute: AuthenticatedQuickRepliesRoute,
   AuthenticatedSaasAdminRoute: AuthenticatedSaasAdminRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,
+  AuthenticatedStoreRoute: AuthenticatedStoreRoute,
   AuthenticatedTransferRulesRoute: AuthenticatedTransferRulesRoute,
 }
 
@@ -742,11 +941,29 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
   AuthenticatedRouteChildren,
 )
 
+interface StoreTokenRouteChildren {
+  StoreTokenChatRoute: typeof StoreTokenChatRoute
+  StoreTokenIndexRoute: typeof StoreTokenIndexRoute
+  StoreTokenProductProductIdRoute: typeof StoreTokenProductProductIdRoute
+}
+
+const StoreTokenRouteChildren: StoreTokenRouteChildren = {
+  StoreTokenChatRoute: StoreTokenChatRoute,
+  StoreTokenIndexRoute: StoreTokenIndexRoute,
+  StoreTokenProductProductIdRoute: StoreTokenProductProductIdRoute,
+}
+
+const StoreTokenRouteWithChildren = StoreTokenRoute._addFileChildren(
+  StoreTokenRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  StoreManifestRoute: StoreManifestRoute,
+  StoreTokenRoute: StoreTokenRouteWithChildren,
   ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
   ApiInternalNoResponseWorkerRoute: ApiInternalNoResponseWorkerRoute,
   ApiAdminEngineFailedRequestsRoute: ApiAdminEngineFailedRequestsRoute,
@@ -758,17 +975,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicEngineRetryProcessorRoute: ApiPublicEngineRetryProcessorRoute,
   ApiPublicEngineUploadMediaRoute: ApiPublicEngineUploadMediaRoute,
   ApiPublicMapleadsIngestRoute: ApiPublicMapleadsIngestRoute,
+  ApiPublicStoreConfigRoute: ApiPublicStoreConfigRoute,
+  ApiPublicStoreProductsRoute: ApiPublicStoreProductsRoute,
+  ApiPublicStoreChatMessagesRoute: ApiPublicStoreChatMessagesRoute,
+  ApiPublicStoreChatSessionRoute: ApiPublicStoreChatSessionRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

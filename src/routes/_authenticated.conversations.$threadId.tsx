@@ -407,7 +407,11 @@ function ThreadPage() {
       // Refetch inmediato para mostrar el mensaje encolado sin esperar 3 segundos
       await qc.refetchQueries({ queryKey: ["thread", threadId] });
       await qc.refetchQueries({ queryKey: ["threads"] });
-      toast.success(mediaUrl ? "Multimedia encolada" : "Mensaje encolado");
+      toast.success(
+        mediaUrl
+          ? "Multimedia enviada"
+          : "Mensaje enviado",
+      );
     } catch (err: unknown) {
       toast.error((err as Error)?.message ?? "Error al enviar");
       setUploading(false);
@@ -451,8 +455,17 @@ function ThreadPage() {
             {getContactDisplayName(data?.thread?.contact ?? null).slice(0, 1).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="font-medium truncate">
+            <div className="font-medium truncate flex items-center gap-2">
               {getContactDisplayName(data?.thread?.contact ?? null)}
+              {data?.thread?.channel === "web" ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-sky-500/40 text-sky-700 bg-sky-500/10 font-normal">
+                  Web
+                </span>
+              ) : (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-emerald-500/40 text-emerald-700 bg-emerald-500/10 font-normal">
+                  WA
+                </span>
+              )}
             </div>
             <div className="text-xs text-muted-foreground font-mono truncate">
               {formatPhoneOrWaId(data?.thread?.contact ?? null)}
