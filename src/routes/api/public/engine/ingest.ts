@@ -61,6 +61,7 @@ type NormalizedEvent = {
   sentAt?: string
   commandId?: string
   ackStatus?: string
+  mediaRecovery?: boolean
 }
 
 const TYPE_MAP: Record<string, NormalizedEvent['type']> = {
@@ -254,6 +255,7 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
     sentAt,
     commandId,
     ackStatus: ackStatus != null ? String(ackStatus) : undefined,
+    mediaRecovery: !!(e as { mediaRecovery?: boolean }).mediaRecovery || !!(p as { mediaRecovery?: boolean }).mediaRecovery,
   }
 }
 
@@ -1077,7 +1079,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 sentAt: e.sentAt,
                 waId: e.contact?.waId,
               })
-              if (!inboundEventDedupe.shouldProcess(dedupKey)) {
+              const isMediaRecovery = !!(e as { mediaRecovery?: boolean }).mediaRecovery
+              if (!isMediaRecovery && !inboundEventDedupe.shouldProcess(dedupKey)) {
                 console.log('[ingest] skip duplicate event', { dedupKey, type: e.type, chatId: e.chatId })
                 continue
               }
@@ -1464,6 +1467,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
               const existingMissing = !existingMediaObj || !existingMediaObj.url || existingMediaObj.missing_media;
               const newHasUrl = enrichedMedia && !!enrichedMedia.url;
+              const previousText = String(existingMessage.text ?? '').trim();
+              const gotNewTranscript = !!(e.text?.trim() && !previousText);
 
               if (existingMissing && newHasUrl) {
                 console.log('[ingest] Actualizando mensaje existente con media recuperada:', e.waMessageId);
@@ -1474,6 +1479,132 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     text: e.text ?? existingMessage.text,
                   })
                   .eq('id', existingMessage.id);
+
+                // Audio transcrito tarde: disparar IA ahora que ya hay texto
+                if (gotNewTranscript && (e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in') {
+                  const sendChatId = e.contact?.phone
+                    ? `${e.contact.phone}@c.us`
+                    : /^\d+$/.test(waId)
+                      ? `${waId}@c.us`
+                      : e.chatId
+                  try {
+                    await supabaseAdmin
+                      .from('no_response_pending')
+                      .update({ cancelled_at: new Date().toISOString() })
+                      .eq('thread_id', thread.id)
+                      .is('fired_at', null)
+                      .is('cancelled_at', null)
+                  } catch (_) { /* ignore */ }
+
+                  const { aiDisabled, totalDelaySec } = await maybeAutoReply(
+                    session.org_id,
+                    session.id,
+                    sendChatId,
+                    e.text!,
+                    thread.id,
+                    contactId,
+                  )
+                  if (!aiDisabled) {
+                    const autoRepliesWereSent = totalDelaySec > 0
+                    const aiReplyDedupKey = buildAiReplyDedupKey({
+                      sessionId: session.id,
+                      threadId: thread.id,
+                      text: e.text,
+                      waMessageId: e.waMessageId,
+                      sentAt: e.sentAt,
+                      chatId: sendChatId,
+                    })
+                    const alreadyQueued = await hasExistingAiReplyCommand(
+                      session.org_id,
+                      session.id,
+                      aiReplyDedupKey,
+                    )
+                    if (!alreadyQueued && aiReplyDedupe.shouldProcess(aiReplyDedupKey)) {
+                      console.log('[ingest] 🎤 IA disparada tras transcripción de audio', {
+                        waMessageId: e.waMessageId,
+                        threadId: thread.id,
+                      })
+                      if (process.env.ASYNC_AI_REPLY === 'true') {
+                        maybeAiReply(
+                          session.org_id,
+                          session.id,
+                          sendChatId,
+                          contactId,
+                          thread.id,
+                          e.text!,
+                          totalDelaySec,
+                          autoRepliesWereSent,
+                          aiReplyDedupKey,
+                        ).catch((err) => {
+                          console.error('[ingest] Error en maybeAiReply post-transcripción:', err)
+                        })
+                      } else {
+                        await maybeAiReply(
+                          session.org_id,
+                          session.id,
+                          sendChatId,
+                          contactId,
+                          thread.id,
+                          e.text!,
+                          totalDelaySec,
+                          autoRepliesWereSent,
+                          aiReplyDedupKey,
+                        )
+                      }
+                    }
+                  }
+                }
+              } else if (gotNewTranscript) {
+                console.log('[ingest] Actualizando texto transcrito de audio:', e.waMessageId);
+                await supabaseAdmin
+                  .from('messages')
+                  .update({ text: e.text })
+                  .eq('id', existingMessage.id);
+
+                if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in') {
+                  const sendChatId = e.contact?.phone
+                    ? `${e.contact.phone}@c.us`
+                    : /^\d+$/.test(waId)
+                      ? `${waId}@c.us`
+                      : e.chatId
+                  const { aiDisabled, totalDelaySec } = await maybeAutoReply(
+                    session.org_id,
+                    session.id,
+                    sendChatId,
+                    e.text!,
+                    thread.id,
+                    contactId,
+                  )
+                  if (!aiDisabled) {
+                    const aiReplyDedupKey = buildAiReplyDedupKey({
+                      sessionId: session.id,
+                      threadId: thread.id,
+                      text: e.text,
+                      waMessageId: e.waMessageId,
+                      sentAt: e.sentAt,
+                      chatId: sendChatId,
+                    })
+                    if (
+                      !(await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey)) &&
+                      aiReplyDedupe.shouldProcess(aiReplyDedupKey)
+                    ) {
+                      const run = () =>
+                        maybeAiReply(
+                          session.org_id,
+                          session.id,
+                          sendChatId,
+                          contactId,
+                          thread.id,
+                          e.text!,
+                          totalDelaySec,
+                          totalDelaySec > 0,
+                          aiReplyDedupKey,
+                        )
+                      if (process.env.ASYNC_AI_REPLY === 'true') run().catch(console.error)
+                      else await run()
+                    }
+                  }
+                }
               } else {
                 console.log('[ingest] Mensaje duplicado recibido, ignorando inserción:', e.waMessageId);
               }

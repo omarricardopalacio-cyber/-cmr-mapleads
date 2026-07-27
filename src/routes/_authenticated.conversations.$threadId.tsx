@@ -747,6 +747,14 @@ function ThreadPage() {
                         </a>
                       </div>
                     </div>
+                  ) : hasMissingMedia && (isAudio || msgType === "ptt") && displayText ? (
+                    <div className="flex flex-col gap-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+                      <span className="text-xs font-medium text-emerald-300 flex items-center gap-1.5">
+                        <Mic className="h-4 w-4 shrink-0" />
+                        Nota de voz transcrita
+                      </span>
+                      <span className="text-sm leading-normal">{displayText}</span>
+                    </div>
                   ) : hasMissingMedia ? (
                     <div className="flex flex-col gap-1.5 bg-slate-500/10 border border-slate-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
                       <span className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
