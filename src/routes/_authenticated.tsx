@@ -13,7 +13,7 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -55,6 +55,7 @@ function AppSidebar() {
     { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
     { title: "Chats en Vivo", url: "/conversations", icon: MessagesSquare },
     { title: "Tienda web", url: "/store", icon: Store },
+    { title: "Integración Catálogo", url: "/catalog-integrations", icon: Package },
     { title: "Contactos y Clientes", url: "/contacts", icon: Users },
     { title: "Pedidos", url: "/orders", icon: ClipboardList },
   ];
@@ -69,7 +70,6 @@ function AppSidebar() {
   const aiConfig = [
     { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
     // { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
-    // { title: "Integración Catálogo", url: "/catalog-integrations", icon: Store },
   ];
 
   const leads = [
