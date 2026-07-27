@@ -46,8 +46,8 @@ async function handler({ request }: { request: Request }) {
     return json(401, { error: 'invalid apikey' })
   }
 
-  const auditDays = Number(process.env.AUDIT_RETENTION_DAYS ?? '30')
-  const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? '30')
+  const auditDays = Number(process.env.AUDIT_RETENTION_DAYS ?? '7')
+  const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? '14')
   const auditCutoff = new Date(Date.now() - auditDays * 86400000).toISOString()
   const result: Record<string, unknown> = { auditRetentionDays: auditDays, mediaRetentionDays: mediaDays }
 
