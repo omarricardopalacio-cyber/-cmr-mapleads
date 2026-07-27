@@ -13,8 +13,8 @@ function getEnv(key) {
 
 const url = getEnv("VITE_SUPABASE_URL") || getEnv("SUPABASE_URL");
 const key = getEnv("SUPABASE_SERVICE_ROLE_KEY");
-const auditDays = Number(process.env.AUDIT_RETENTION_DAYS ?? "30");
-const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? "30");
+const auditDays = Number(process.env.AUDIT_RETENTION_DAYS ?? "7");
+const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? "5");
 
 const sb = createClient(url, key, { auth: { persistSession: false } });
 const auditCutoff = new Date(Date.now() - auditDays * 86400000).toISOString();

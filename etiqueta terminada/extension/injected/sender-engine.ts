@@ -182,6 +182,63 @@ class SenderEngine {
     }
   }
 
+  /**
+   * Extrae el código de resultado real del envío que devuelve WhatsApp.
+   * En builds recientes viene como result.sendMsgResult.messageSendResult
+   * (p.ej. "OK" en éxito, "ERROR_UNKNOWN" cuando el mensaje NO se entrega).
+   * También soporta formatos antiguos donde venía como string o número.
+   */
+  private extractSendResultCode(result: any): string | null {
+    const raw = result?.sendMsgResult;
+    if (raw == null) return null;
+    if (typeof raw === "string") return raw;
+    if (typeof raw === "number") return String(raw);
+    if (typeof raw === "object") {
+      const code =
+        raw.messageSendResult ?? raw.messageSendResultCode ?? raw.code;
+      if (typeof code === "string") return code;
+      if (typeof code === "number") return String(code);
+    }
+    return null;
+  }
+
+  /**
+   * Un código de envío se considera exitoso si no existe (formatos antiguos),
+   * o si es explícitamente "OK" / "0".
+   */
+  private isSendResultOk(code: string | null): boolean {
+    if (code == null) return true;
+    const c = code.toUpperCase();
+    return c === "OK" || c === "0" || c === "SUCCESS";
+  }
+
+  /**
+   * Fuerza la carga/creación del modelo de chat antes de enviar. En WhatsApp
+   * Web con direcciones @lid, enviar sin el chat cargado suele devolver
+   * messageSendResult=ERROR_UNKNOWN. No es fatal si falla.
+   */
+  private async warmUpChat(
+    WPP: NonNullable<ReturnType<typeof getWPP>>,
+    chatId: string
+  ): Promise<void> {
+    try {
+      if (WPP.chat && typeof WPP.chat.find === "function") {
+        await Promise.race([
+          WPP.chat.find(chatId),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("WARMUP_TIMEOUT")), 8000)
+          ),
+        ]);
+        console.log(`[MAPLE SENDER] Chat cargado (warm-up) para: ${chatId}`);
+      }
+    } catch (e) {
+      console.warn(
+        "[MAPLE SENDER] warm-up de chat falló (continúo igual):",
+        e instanceof Error ? e.message : e
+      );
+    }
+  }
+
   private buildSendOptions(task: SendTask): Record<string, unknown> {
     const sendOptions: Record<string, unknown> = {
       createChat: true,
@@ -225,6 +282,9 @@ class SenderEngine {
 
       const targetChatId = lidCheck.verifiedChatId || normalizedChatId;
       const sendOptions = this.buildSendOptions(task);
+
+      // Carga el chat antes de enviar para evitar ERROR_UNKNOWN con @lid.
+      await this.warmUpChat(WPP, targetChatId);
 
       console.log(`[MAPLE SENDER] About to send. targetChatId=${targetChatId}, isText=${!task.media}, text="${task.text || ""}"`);
       console.log(`[MAPLE SENDER] WPP.chat available:`, !!WPP.chat, `sendTextMessage:`, typeof WPP.chat?.sendTextMessage, `sendFileMessage:`, typeof WPP.chat?.sendFileMessage);
@@ -287,6 +347,18 @@ class SenderEngine {
 
       if (controller.signal.aborted) {
         throw new Error("SEND_ABORTED");
+      }
+
+      // Verifica el resultado REAL del envío. Aunque WhatsApp devuelva un id,
+      // si messageSendResult no es OK el mensaje NO llegó (queda con error en
+      // WhatsApp). En ese caso reportamos fallo para que el retry actúe y el
+      // CRM no marque como enviado un mensaje que nunca se entregó.
+      const sendResultCode = this.extractSendResultCode(result);
+      if (!this.isSendResultOk(sendResultCode)) {
+        console.error(
+          `[MAPLE SENDER] WhatsApp rechazó el envío. messageSendResult=${sendResultCode}. El mensaje NO se entregó.`
+        );
+        return { success: false, error: `WA_SEND_${sendResultCode}` };
       }
 
       const messageId = result?.id?._serialized || result?.id || task.taskId;

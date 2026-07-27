@@ -644,7 +644,20 @@ function ThreadPage() {
               );
             }
             
-            const mediaObj = (m.media as { url?: string; mimeType?: string; mime_type?: string; mimetype?: string; filename?: string; caption?: string; error?: string; missing_media?: boolean }) ?? null;
+            const mediaObj = (m.media as {
+              url?: string;
+              mimeType?: string;
+              mime_type?: string;
+              mimetype?: string;
+              filename?: string;
+              caption?: string;
+              error?: string;
+              missing_media?: boolean;
+              localOnly?: boolean;
+              transcribed?: boolean;
+              type?: string;
+              extraction_error?: string;
+            }) ?? null;
             
             // Log para diagnosticar mensajes entrantes con media
             const debugMime = (mediaObj?.mimeType || mediaObj?.mime_type || mediaObj?.mimetype || "")?.toLowerCase();
@@ -700,12 +713,13 @@ function ThreadPage() {
             const isImage = effectiveMime.startsWith("image/") || !!(mediaObj?.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i)) || msgType === "image";
             const isVideo = effectiveMime.startsWith("video/") || !!(mediaObj?.url?.match(/\.(mp4|webm|mov|mkv)$/i)) || msgType === "video";
             const isAudio = effectiveMime.startsWith("audio/") || !!(mediaObj?.url?.match(/\.(ogg|opus|mp3|m4a|aac|wav|amr)$/i)) || msgType === "ptt" || msgType === "audio";
-            const isDoc = !isImage && !isVideo && !isAudio && !!mediaObj?.url;
+            const isDoc = !isImage && !isVideo && !isAudio && (!!mediaObj?.url || mediaObj?.localOnly === true);
             
             // Estados de visualización del archivo multimedia
             const hasError = !!(m.media && mediaObj?.error);
             const hasMissingMedia = !!(m.media && mediaObj?.missing_media);
-            const hasMediaButNoUrl = !!(m.media && !mediaObj?.url && !hasError && !hasMissingMedia);
+            const hasLocalOnly = !!(m.media && mediaObj?.localOnly && !mediaObj?.url);
+            const hasMediaButNoUrl = !!(m.media && !mediaObj?.url && !hasError && !hasMissingMedia && !hasLocalOnly);
             
             return (
               <div
@@ -755,6 +769,26 @@ function ThreadPage() {
                       </span>
                       <span className="text-sm leading-normal">{displayText}</span>
                     </div>
+                  ) : hasLocalOnly && (isAudio || msgType === "ptt" || mediaObj?.transcribed) && displayText ? (
+                    <div className="flex flex-col gap-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+                      <span className="text-xs font-medium text-emerald-300 flex items-center gap-1.5">
+                        <Mic className="h-4 w-4 shrink-0" />
+                        {mediaObj?.transcribed ? "Nota de voz transcrita" : "Nota de voz (archivo en este PC)"}
+                      </span>
+                      <span className="text-sm leading-normal">{displayText}</span>
+                    </div>
+                  ) : hasLocalOnly ? (
+                    <div className="flex flex-col gap-1.5 bg-sky-500/10 border border-sky-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
+                      <span className="text-xs font-medium text-sky-300 flex items-center gap-1.5">
+                        {isImage ? <Image className="h-4 w-4 opacity-70" /> : isVideo ? <Image className="h-4 w-4 opacity-70" /> : isAudio ? <Mic className="h-4 w-4 shrink-0" /> : <FileText className="h-4 w-4 opacity-70" />}
+                        Multimedia en este PC
+                      </span>
+                      <span className="text-[10px] text-sky-200/80 leading-normal">
+                        El archivo está en la extensión de WhatsApp de este equipo (no en la nube).
+                        Usa Exportar ZIP en la extensión para pasarlo a otro PC.
+                        {mediaObj?.filename ? ` · ${mediaObj.filename}` : ""}
+                      </span>
+                    </div>
                   ) : hasMissingMedia ? (
                     <div className="flex flex-col gap-1.5 bg-slate-500/10 border border-slate-500/30 rounded-lg p-2.5 mt-1.5 max-w-sm">
                       <span className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
@@ -785,8 +819,10 @@ function ThreadPage() {
                       </span>
                     </div>
                   ) : null}
-                  {displayText ? <div className={mediaObj?.url ? "mt-2" : ""}>{displayText}</div> : null}
-                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && !hasError && !hasMissingMedia && (
+                  {displayText && !(hasLocalOnly && (isAudio || msgType === "ptt" || mediaObj?.transcribed)) ? (
+                    <div className={mediaObj?.url || hasLocalOnly ? "mt-2" : ""}>{displayText}</div>
+                  ) : null}
+                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && !hasError && !hasMissingMedia && !hasLocalOnly && (
                     <i className="opacity-60 text-xs">[mensaje vacío]</i>
                   )}
                 </div>

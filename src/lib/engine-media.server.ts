@@ -134,6 +134,44 @@ export async function uploadBase64ToStorage(
   };
 }
 
+function resolveMimeFromMedia(media: Record<string, unknown>): string {
+  const rawMime = (media.mimetype || media.mimeType || media.mime_type || "") as string;
+  let normalizedMime = rawMime ? normalizeMimeType(rawMime) : "application/octet-stream";
+  if (normalizedMime === "application/octet-stream") {
+    const msgType = media.type as string;
+    if (msgType === "image") normalizedMime = "image/jpeg";
+    else if (msgType === "video") normalizedMime = "video/mp4";
+    else if (msgType === "ptt" || msgType === "audio") normalizedMime = "audio/ogg";
+    else if (msgType === "document") normalizedMime = "application/pdf";
+  }
+  return normalizedMime;
+}
+
+function isAudioMedia(media: Record<string, unknown>, mime: string): boolean {
+  const msgType = String(media.type || "").toLowerCase();
+  return mime.startsWith("audio/") || msgType === "ptt" || msgType === "audio";
+}
+
+/** Metadatos ligeros cuando el archivo vive en el PC (extensión), no en Storage. */
+export function toLocalOnlyMediaMeta(
+  media: Record<string, unknown>,
+  extras?: { transcribed?: boolean }
+): Record<string, unknown> {
+  const mimeType = resolveMimeFromMedia(media);
+  return {
+    url: null,
+    localOnly: true,
+    localRef: (media.localRef as string) || undefined,
+    type: media.type,
+    mimeType,
+    mime_type: mimeType,
+    filename: (media.filename || media.fileName) as string | undefined,
+    size: typeof media.size === "number" ? media.size : undefined,
+    caption: (media.caption as string) || undefined,
+    transcribed: extras?.transcribed === true ? true : media.transcribed === true ? true : undefined,
+  };
+}
+
 export async function enrichMediaForMessage(
   media: Record<string, unknown> | null | undefined,
   orgId: string
@@ -142,53 +180,59 @@ export async function enrichMediaForMessage(
 
   const inlineBase64 = typeof media.base64 === "string" ? media.base64 : undefined;
 
-  console.log("[enrichMediaForMessage] Input media:", { hasBase64: !!inlineBase64, base64Len: inlineBase64?.length || 0, hasUrl: !!media.url, type: media.type });
+  console.log("[enrichMediaForMessage] Input media:", {
+    hasBase64: !!inlineBase64,
+    base64Len: inlineBase64?.length || 0,
+    hasUrl: !!media.url,
+    type: media.type,
+    localOnly: !!media.localOnly,
+    storedLocally: !!media.storedLocally,
+  });
 
+  // URL http primero: audios temporales llegan con storedLocally + url para Whisper.
   const existingUrl = (media.url || media.mediaUrl || media.fileUrl) as string | undefined;
   if (existingUrl && existingUrl.startsWith("http") && !existingUrl.startsWith("blob:")) {
-    const rawMime = (media.mimetype || media.mimeType || media.mime_type || "") as string;
-    let normalizedMime = rawMime ? normalizeMimeType(rawMime) : "application/octet-stream";
-
-    // Si el mime sigue siendo genérico, inferir por tipo de mensaje o extensión de URL
-    if (normalizedMime === "application/octet-stream") {
-      const msgType = media.type as string;
-      if (msgType === "image") normalizedMime = "image/jpeg";
-      else if (msgType === "video") normalizedMime = "video/mp4";
-      else if (msgType === "ptt" || msgType === "audio") normalizedMime = "audio/ogg";
-      else if (msgType === "document") normalizedMime = "application/pdf";
-    }
-
+    const normalizedMime = resolveMimeFromMedia(media);
     return {
       url: existingUrl,
       mimeType: normalizedMime,
       mime_type: normalizedMime,
+      type: media.type,
       caption: (media.caption as string) || undefined,
       filename: (media.filename || media.fileName) as string | undefined,
       storagePath: media.storagePath as string | undefined,
+      localRef: media.localRef as string | undefined,
+      storedLocally: media.storedLocally === true ? true : undefined,
     };
   }
 
+  // Sin URL de nube: metadatos solo-PC (fotos/videos/docs o audio ya limpio).
+  if (media.localOnly === true || media.storedLocally === true) {
+    return toLocalOnlyMediaMeta(media);
+  }
+
   const base64Raw = (media.base64 || media.body || media.data) as string | undefined;
-  console.log("[engine-media] enrichMediaForMessage input:", {
-    hasBase64: !!media.base64,
-    base64Len: (media.base64 as string)?.length || 0,
-    hasBody: !!media.body,
-    bodyLen: (media.body as string)?.length || 0,
-    hasData: !!media.data,
-    dataLen: (media.data as string)?.length || 0,
-    mimetype: media.mimetype,
-    type: media.type,
-    base64RawFound: !!base64Raw,
-    base64RawLen: base64Raw?.length || 0,
-    base64RawPrefix: base64Raw?.substring(0, 30) || null,
-  });
+  const mimeHint = resolveMimeFromMedia(media);
+  const msgType = typeof media.type === "string" ? media.type : undefined;
+
+  // Imágenes/videos/docs: no guardar en la nube (gasto en el PC vía extensión).
+  // Solo audios se suben temporalmente para Whisper.
+  if (base64Raw && !isAudioMedia(media, mimeHint)) {
+    console.log("[engine-media] Skipping cloud upload for non-audio (localOnly)");
+    const approxBytes = Math.floor((base64Raw.length * 3) / 4);
+    return toLocalOnlyMediaMeta({
+      ...media,
+      mimeType: mimeHint,
+      size: typeof media.size === "number" ? media.size : approxBytes,
+    });
+  }
+
   if (!base64Raw) {
     console.log("[engine-media] No base64Raw found, returning missing_media");
     return { ...media, url: null, missing_media: true };
   }
 
   try {
-    const msgType = typeof media.type === "string" ? media.type : undefined;
     const uploaded = await uploadBase64ToStorage(base64Raw, orgId, {
       mimeType: (media.mimetype || media.mimeType || media.mime_type) as string,
       msgType,
@@ -203,10 +247,12 @@ export async function enrichMediaForMessage(
       url: uploaded.url,
       mimeType: uploaded.mimeType,
       mime_type: uploaded.mime_type,
+      type: media.type,
       caption: (media.caption as string) || undefined,
       filename: uploaded.filename,
       storagePath: uploaded.storagePath,
       size: uploaded.size,
+      localRef: media.localRef as string | undefined,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

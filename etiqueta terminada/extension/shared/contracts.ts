@@ -27,7 +27,8 @@ export const CONSTANTS = {
 
   // Storage
   DB_NAME: "MapleWAEngineDB",
-  DB_VERSION: 1,
+  /** v2: tabla localMedia para archivos en el PC (nube ligera). */
+  DB_VERSION: 2,
 
   // Bridge
   BRIDGE_EVENT_CHANNEL: "WA_EVENT",

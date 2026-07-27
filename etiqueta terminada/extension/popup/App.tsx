@@ -4,9 +4,10 @@ import ConfigPanel from "./components/ConfigPanel";
 import SessionList from "./components/SessionList";
 import QueueStatus from "./components/QueueStatus";
 import DebugPanel from "./components/DebugPanel";
+import MediaBackupPanel from "./components/MediaBackupPanel";
 
 function App() {
-  const [tab, setTab] = useState<"status" | "config" | "sessions" | "queue" | "debug">("status");
+  const [tab, setTab] = useState<"status" | "config" | "sessions" | "queue" | "media" | "debug">("status");
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -39,7 +40,7 @@ function App() {
       </header>
 
       <nav className="flex gap-2 mb-4 text-xs flex-wrap">
-        {(["status", "config", "sessions", "queue", "debug"] as const).map((t) => (
+        {(["status", "config", "sessions", "queue", "media", "debug"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -49,7 +50,7 @@ function App() {
                 : "bg-slate-700 text-slate-300 hover:bg-slate-600"
             }`}
           >
-            {t}
+            {t === "media" ? "media ZIP" : t}
           </button>
         ))}
       </nav>
@@ -59,6 +60,7 @@ function App() {
         {tab === "config" && <ConfigPanel />}
         {tab === "sessions" && <SessionList />}
         {tab === "queue" && <QueueStatus />}
+        {tab === "media" && <MediaBackupPanel />}
         {tab === "debug" && <DebugPanel />}
       </main>
     </div>

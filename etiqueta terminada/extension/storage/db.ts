@@ -3,7 +3,7 @@
 // ============================================================
 
 import Dexie, { type Table } from "dexie";
-import type { WAEvent, CommandPayload, WAMessage, WAContact, WAChat, SessionInfo } from "../shared/types";
+import type { WAEvent, WAContact, WAChat, SessionInfo } from "../shared/types";
 import { CONSTANTS } from "../shared/contracts";
 
 interface PendingCommand {
@@ -47,6 +47,22 @@ interface CacheEntry {
   createdAt: number;
 }
 
+/** Archivo multimedia guardado en el PC (no en Supabase Storage). */
+export interface LocalMediaItem {
+  /** Clave primaria: waMessageId o localRef */
+  id: string;
+  waMessageId: string;
+  chatId: string;
+  mimeType: string;
+  filename: string;
+  type: string;
+  blob: Blob;
+  size: number;
+  createdAt: number;
+  direction?: string;
+  text?: string;
+}
+
 class MapleDatabase extends Dexie {
   events!: Table<EventQueueItem, number>;
   pendingCommands!: Table<PendingCommand, number>;
@@ -55,10 +71,11 @@ class MapleDatabase extends Dexie {
   chats!: Table<WAChat, string>;
   sessions!: Table<SessionInfo, string>;
   cache!: Table<CacheEntry, number>;
+  localMedia!: Table<LocalMediaItem, string>;
 
   constructor() {
     super(CONSTANTS.DB_NAME);
-    this.version(CONSTANTS.DB_VERSION).stores({
+    this.version(1).stores({
       events: "++id, eventId, eventType, synced, timestamp",
       pendingCommands: "++id, commandId, status, createdAt",
       pendingMessages: "++id, messageId, chatId, status, createdAt",
@@ -67,10 +84,115 @@ class MapleDatabase extends Dexie {
       sessions: "sessionId, browserId, deviceId, isReady, connectedAt",
       cache: "++id, key, expiresAt, createdAt",
     });
+    this.version(2).stores({
+      events: "++id, eventId, eventType, synced, timestamp",
+      pendingCommands: "++id, commandId, status, createdAt",
+      pendingMessages: "++id, messageId, chatId, status, createdAt",
+      contacts: "contactId, user, server, name, isGroup",
+      chats: "chatId, user, server, name, isGroup, unreadCount",
+      sessions: "sessionId, browserId, deviceId, isReady, connectedAt",
+      cache: "++id, key, expiresAt, createdAt",
+      localMedia: "id, waMessageId, chatId, type, createdAt",
+    });
   }
 }
 
 export const db = new MapleDatabase();
+
+// ============================================================
+// Local media (PC storage — nube ligera)
+// ============================================================
+
+function extensionFromMime(mime: string, type?: string): string {
+  const m = mime.split(";")[0].trim().toLowerCase();
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("png")) return "png";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
+  if (m.includes("mp4")) return "mp4";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("ogg") || m.includes("opus")) return "ogg";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("pdf")) return "pdf";
+  if (type === "image") return "jpg";
+  if (type === "video") return "mp4";
+  if (type === "ptt" || type === "audio") return "ogg";
+  if (type === "document") return "pdf";
+  return "bin";
+}
+
+function base64ToBlob(base64OrDataUri: string, mimeType: string): Blob {
+  let b64 = base64OrDataUri;
+  let mime = mimeType;
+  const dataUriMatch = base64OrDataUri.match(/^data:([^;]+);base64,(.+)$/i);
+  if (dataUriMatch) {
+    mime = dataUriMatch[1] || mime;
+    b64 = dataUriMatch[2];
+  }
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+export async function saveLocalMedia(opts: {
+  waMessageId: string;
+  chatId: string;
+  base64: string;
+  mimeType: string;
+  type?: string;
+  filename?: string;
+  direction?: string;
+  text?: string;
+}): Promise<LocalMediaItem> {
+  const mime = opts.mimeType || "application/octet-stream";
+  const ext = extensionFromMime(mime, opts.type);
+  const filename = opts.filename || `${opts.waMessageId.replace(/[^\w.-]/g, "_")}.${ext}`;
+  const blob = base64ToBlob(opts.base64, mime);
+  const item: LocalMediaItem = {
+    id: opts.waMessageId,
+    waMessageId: opts.waMessageId,
+    chatId: opts.chatId || "unknown",
+    mimeType: mime,
+    filename,
+    type: opts.type || "document",
+    blob,
+    size: blob.size,
+    createdAt: Date.now(),
+    direction: opts.direction,
+    text: opts.text,
+  };
+  await db.localMedia.put(item);
+  return item;
+}
+
+export async function getLocalMedia(id: string): Promise<LocalMediaItem | undefined> {
+  return db.localMedia.get(id);
+}
+
+export async function listLocalMedia(): Promise<LocalMediaItem[]> {
+  return db.localMedia.orderBy("createdAt").reverse().toArray();
+}
+
+export async function countLocalMedia(): Promise<number> {
+  return db.localMedia.count();
+}
+
+export async function localMediaStats(): Promise<{ count: number; totalBytes: number }> {
+  const rows = await db.localMedia.toArray();
+  return {
+    count: rows.length,
+    totalBytes: rows.reduce((s, r) => s + (r.size || 0), 0),
+  };
+}
+
+export async function putLocalMediaItem(item: LocalMediaItem): Promise<void> {
+  await db.localMedia.put(item);
+}
+
+export async function clearLocalMedia(): Promise<void> {
+  await db.localMedia.clear();
+}
 
 // ============================================================
 // Event Queue

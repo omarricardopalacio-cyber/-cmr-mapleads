@@ -32,9 +32,9 @@ async function deleteEventsBefore(cutoff: string, batchSize = 10000, maxRounds =
 
 /**
  * Limpieza / retencion para controlar el consumo de espacio.
- * - Borra filas de auditoria/logs mas antiguas que AUDIT_RETENTION_DAYS (def. 30).
+ * - Borra filas de auditoria/logs mas antiguas que AUDIT_RETENTION_DAYS (def. 7).
  * - Si MEDIA_RETENTION_DAYS > 0, borra del Storage el media de mensajes mas
- *   antiguos que ese umbral y limpia la referencia (def. 30 dias).
+ *   antiguos que ese umbral y limpia la referencia (def. 5 dias; resto en PC).
  * Protegido con CRON_SECRET (igual que /cron/dispatch). Agendar 1 vez al dia.
  */
 async function handler({ request }: { request: Request }) {
@@ -47,7 +47,7 @@ async function handler({ request }: { request: Request }) {
   }
 
   const auditDays = Number(process.env.AUDIT_RETENTION_DAYS ?? '7')
-  const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? '14')
+  const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? '5')
   const auditCutoff = new Date(Date.now() - auditDays * 86400000).toISOString()
   const result: Record<string, unknown> = { auditRetentionDays: auditDays, mediaRetentionDays: mediaDays }
 

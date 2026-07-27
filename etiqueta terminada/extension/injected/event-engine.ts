@@ -4,9 +4,10 @@
 // ============================================================
 
 import { waitForWPP, getWPP } from "./wpp-bootstrap";
+import { getMessageById } from "./message-detector";
 import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
-import { isBase64Thumbnail, sanitizeMessageBody } from "../shared/message-text";
+import { sanitizeMessageBody } from "../shared/message-text";
 
 declare global {
   interface Window {
@@ -86,27 +87,32 @@ function validateBase64Media(base64Data: string): { valid: boolean; firstBytesHe
   }
 }
 
+function isAudioMessage(msg: any): boolean {
+  return (
+    msg?.type === "ptt" ||
+    msg?.type === "audio" ||
+    String(msg?.mimetype || "").toLowerCase().startsWith("audio/")
+  );
+}
+
 function registerNewMessage(WPP: NonNullable<typeof window.WPP>): void {
-  const handler = async (...args: any[]) => {
+  // Handler SIN async/await: retorna al instante para no bloquear el pipeline de WhatsApp
+  // (afecta mensajes salientes, entrantes, texto e imágenes por igual).
+  const handler = (...args: any[]) => {
     const msg = args[0];
     if (!msg) return;
-
-    try {
-      const normalized = await normalizeMessage(msg);
-      if (!normalized) return;
-      emit("NEW_MESSAGE", normalized);
-    } catch (err) {
-      console.error("[EventEngine] Error normalizando mensaje:", err);
-    }
+    void processNewMessage(msg).catch((err) =>
+      console.error("[EventEngine] Error procesando mensaje:", err)
+    );
   };
 
-  if (typeof WPP.prependListener === "function") {
-    WPP.prependListener("chat.new_message", handler, { objectify: true });
-  } else if (typeof WPP.on === "function") {
-    console.warn("[EventEngine] WPP.prependListener no disponible, usando on() para chat.new_message");
+  if (typeof WPP.on === "function") {
     WPP.on("chat.new_message", handler);
+  } else if (typeof WPP.prependListener === "function") {
+    console.warn("[EventEngine] WPP.on no disponible, fallback a prependListener");
+    WPP.prependListener("chat.new_message", handler, { objectify: true });
   } else {
-    console.warn("[EventEngine] WPP no soporta prependListener ni on para chat.new_message");
+    console.warn("[EventEngine] WPP no soporta on ni prependListener para chat.new_message");
   }
   cleanupFns.push(() => WPP.off("chat.new_message", handler));
 }
@@ -259,20 +265,8 @@ async function resolveToBase64(data: any, mimetype?: string): Promise<string | n
   return null;
 }
 
-async function normalizeMessage(msg: any): Promise<any> {
-  // DIAGNÓSTICO: Loguear TODO mensaje entrante para ver propiedades
-  console.log("[MAPLE EVENT ENGINE] normalizeMessage llamado:", {
-    id: msg.id?._serialized,
-    type: msg.type,
-    isMedia: msg.isMedia,
-    hasMediaKey: !!msg.mediaKey,
-    hasClientUrl: !!msg.clientUrl,
-    hasDeprecatedMms3Url: !!msg.deprecatedMms3Url,
-    hasBody: !!msg.body,
-    bodyPreview: msg.body ? String(msg.body).substring(0, 60) : null,
-    keys: Object.keys(msg).filter(k => k.includes("media") || k.includes("url") || k.includes("blob")),
-  });
-
+/** Emite al CRM de inmediato con datos síncronos — cero awaits, no bloquea WhatsApp. */
+function buildMessageFast(msg: any): any {
   let author: any = undefined;
   if (msg.__x_author) {
     author = {
@@ -283,201 +277,11 @@ async function normalizeMessage(msg: any): Promise<any> {
     };
   }
 
-  const phoneNumber = getMyPhoneNumber();
-
   const media = extractMediaData(msg);
-
-  // Detección robusta de media: usar múltiples propiedades porque msg.isMedia puede ser undefined
-  const hasMediaIndicators = msg.isMedia || msg.mediaKey || msg.clientUrl || msg.deprecatedMms3Url || msg.mediaData;
-  const shouldDownloadMedia = hasMediaIndicators && media;
-
-  console.log("[MAPLE EVENT ENGINE] Decisión media:", {
-    hasMediaIndicators,
-    shouldDownloadMedia,
-    mediaExtracted: !!media,
-    msgType: msg.type,
-  });
-
-  // Descargar media binaria para mensajes multimedia (entrantes y salientes) con reintentos
-  if (shouldDownloadMedia) {
-    // DIAGNÓSTICO: Loguear estado inicial del media
-    console.log("[MAPLE MULTIMEDIA] Mensaje multimedia detectado:", {
-      type: msg.type,
-      isMedia: msg.isMedia,
-      id: msg.id?._serialized,
-      hasMediaData: !!msg.mediaData,
-      hasClientUrl: !!msg.clientUrl,
-      hasDeprecatedMms3Url: !!msg.deprecatedMms3Url,
-      hasDownloadMedia: typeof msg.downloadMedia === "function",
-      hasDownloadMediaCrypted: typeof msg.downloadMediaCrypted === "function",
-      mediaDataKeys: msg.mediaData ? Object.keys(msg.mediaData) : [],
-    });
-
-    try {
-      const WPP = getWPP();
-      let base64Data: string | null = null;
-      const isVideo = msg.type === "video";
-      let retries = isVideo ? 12 : 12; // Aumentado a 12 para imágenes también - más tiempo para descarga
-
-      while (!base64Data && retries > 0) {
-        // Método 1: Intentar leer del blob URL nativo que WhatsApp ya descargó en el navegador (debe ser blob:)
-        const possibleUrls = [
-          msg.clientUrl,
-          msg.mediaData?.clientUrl,
-          msg.mediaData?.renderableUrl,
-          msg.mediaData?.previewUrl,
-          msg.deprecatedMms3Url,
-        ].filter((u): u is string => typeof u === "string" && u.startsWith("blob:"));
-
-        for (const url of possibleUrls) {
-          console.log("[MAPLE MULTIMEDIA] Intentando extraer desde URL:", url.substring(0, 60) + "...");
-          try {
-            if (url.startsWith("blob:")) {
-              base64Data = await blobUrlToBase64(url);
-            } else {
-              // Sin credentials explícito para evitar CORS wildcard + credentials:include rejection
-              const resp = await fetch(url);
-              if (resp.ok) {
-                const blob = await resp.blob();
-                base64Data = await new Promise<string | null>((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(reader.result as string);
-                  reader.onerror = () => reject(reader.error);
-                  reader.readAsDataURL(blob);
-                });
-              }
-            }
-            if (base64Data) {
-              console.log("[MAPLE MULTIMEDIA] Sincronización exitosa desde URL!");
-              break;
-            }
-          } catch (urlErr) {
-            console.warn("[MAPLE MULTIMEDIA] Fallo URL:", url.substring(0, 40), urlErr);
-          }
-        }
-
-        // Método 2: Descarga encriptada nativa (más confiable para media entrante)
-        if (!base64Data && typeof msg.downloadMediaCrypted === "function") {
-          console.log("[MAPLE MULTIMEDIA] Intentando descargar vía msg.downloadMediaCrypted()...");
-          try {
-            const res = await msg.downloadMediaCrypted();
-            console.log("[MAPLE MULTIMEDIA] downloadMediaCrypted result:", typeof res, res?.constructor?.name, Object.keys(res || {}));
-            // FIX: usar resolveToBase64 en lugar de manejar solo string/data
-            base64Data = await resolveToBase64(res, msg.mimetype);
-          } catch (e: any) {
-            console.warn("[MAPLE MULTIMEDIA] downloadMediaCrypted failed:", e?.message || e);
-          }
-        }
-
-        // Método 3: Descarga directa desde el modelo de mensaje
-        if (!base64Data && typeof msg.downloadMedia === "function") {
-          console.log("[MAPLE MULTIMEDIA] Intentando descargar vía msg.downloadMedia()...");
-          try {
-            const res = await msg.downloadMedia();
-            console.log("[MAPLE MULTIMEDIA] msg.downloadMedia result:", typeof res, res?.constructor?.name);
-            // FIX: usar resolveToBase64 en lugar de manejar solo string/data
-            base64Data = await resolveToBase64(res, msg.mimetype);
-          } catch (e: any) {
-            console.warn("[MAPLE MULTIMEDIA] msg.downloadMedia failed:", e?.message || e);
-          }
-        }
-
-        // Método 4: Usar API nativa de descarga de WPP
-        // FIX: intentar primero con el objeto msg completo, luego con el ID serializado
-        // (algunas versiones de WPP requieren el objeto completo, no solo el ID)
-        if (!base64Data && WPP && WPP.chat) {
-          const wppMethod = WPP.chat.downloadMedia || WPP.chat.downloadMediaMessage;
-          if (typeof wppMethod === "function") {
-            console.log("[MAPLE MULTIMEDIA] Intentando descargar vía WPP...");
-            try {
-              const msgId = msg.id?._serialized || msg.id;
-              let res: any;
-              try {
-                res = await wppMethod(msg);         // FIX: objeto completo primero
-              } catch {
-                res = await wppMethod(msgId);       // fallback: solo el ID
-              }
-              console.log("[MAPLE MULTIMEDIA] WPP result:", typeof res, res?.constructor?.name, JSON.stringify(res)?.substring(0, 200));
-              // FIX: usar resolveToBase64 para manejar Blob, ArrayBuffer, string, etc.
-              const resolved = await resolveToBase64(res, msg.mimetype);
-              if (resolved) {
-                base64Data = resolved;
-              } else if (res?.size === 0 || res?._blob?.size === 0) {
-                console.warn("[MAPLE MULTIMEDIA] WPP devolvió Blob vacío, reintentando...");
-              }
-            } catch (e: any) {
-              console.warn("[MAPLE MULTIMEDIA] WPP download failed:", e?.message || e);
-            }
-          } else {
-            console.warn("[MAPLE MULTIMEDIA] WPP.chat.downloadMedia no disponible");
-          }
-        }
-
-        if (base64Data) {
-          const validation = validateBase64Media(base64Data);
-          console.log("[MAPLE MULTIMEDIA] Base64 validación:", {
-            valid: validation.valid,
-            detectedType: validation.detectedType,
-            firstBytes: validation.firstBytesHex,
-            length: base64Data.length,
-            approxBytes: Math.ceil(base64Data.length * 0.75),
-          });
-
-          // Las notas de voz/audio pueden venir en codecs que no siempre
-          // detectamos por firma; si el mensaje es de audio, aceptamos los bytes
-          // igual (mejor transcribir/guardar que descartar por falso negativo).
-          const isAudioMsg =
-            msg.type === "ptt" ||
-            msg.type === "audio" ||
-            String(msg.mimetype || "").toLowerCase().startsWith("audio/");
-
-          if (!validation.valid && !isAudioMsg) {
-            console.warn("[MAPLE MULTIMEDIA] Base64 NO es una imagen válida. Probablemente datos encriptados o corruptos. Reintentando...");
-            base64Data = null; // Forzar reintento con otro método
-          } else {
-            if (!validation.valid && isAudioMsg) {
-              console.log("[MAPLE MULTIMEDIA] Audio aceptado pese a firma no reconocida:", validation.firstBytesHex);
-            }
-            const approxBytes = Math.ceil(base64Data.length * 0.75);
-            if (approxBytes > 20 * 1024 * 1024) {
-              console.warn(
-                "[MAPLE MULTIMEDIA] Archivo > 20MB; se enviará solo metadata (evita timeout en servidor)"
-              );
-            } else {
-              media.base64 = base64Data;
-              media.type = msg.type;
-            }
-            break;
-          }
-        }
-
-        retries--;
-        if (retries > 0) {
-          console.log(`[MAPLE MULTIMEDIA] Archivo no listo aún. Esperando 2.5s antes del reintento... (${retries} intentos restantes)`);
-          await new Promise((r) => setTimeout(r, isVideo ? 3000 : 2500));
-        }
-      }
-
-      if (!base64Data) {
-        // FIX CRÍTICO: En lugar de devolver null (que silencia el mensaje completamente),
-        // marcamos el media como faltante y CONTINUAMOS enviando el evento al CRM.
-        // Así el CRM recibe la notificación de que llegó un mensaje con imagen,
-        // aunque todavía no tenga el base64. Esto es lo que hace la versión funcional.
-        console.warn("[MAPLE MULTIMEDIA] No se pudo obtener la multimedia tras reintentos para el mensaje:", msg.id?._serialized);
-        console.log("[MAPLE MULTIMEDIA] Enviando evento con missing_media=true para que el CRM lo reciba igualmente");
-        if (media) {
-          media.missing_media = true;
-          media.extraction_error = "timeout_after_retries";
-        }
-      }
-    } catch (err) {
-      console.error("[MAPLE MULTIMEDIA] Error general descargando media:", err);
-      console.log("[MAPLE MULTIMEDIA] Enviando evento con missing_media=true (error en descarga)");
-      if (media) {
-        media.missing_media = true;
-        media.extraction_error = "exception_during_download";
-      }
-    }
+  const hasMediaIndicators =
+    msg.isMedia || msg.mediaKey || msg.clientUrl || msg.deprecatedMms3Url || msg.mediaData;
+  if (media && hasMediaIndicators) {
+    media.missing_media = true;
   }
 
   const cleanBody = sanitizeMessageBody({
@@ -487,105 +291,11 @@ async function normalizeMessage(msg: any): Promise<any> {
     type: msg.type,
   });
 
-  if (msg.isMedia && isBase64Thumbnail(msg.body)) {
-    console.log(
-      `[MAPLE EVENT ENGINE] Filtrado thumbnail base64 en body para mensaje ${msg.id?._serialized}. Usando caption.`
-    );
-  }
-
-  const WPP = getWPP();
-  let realChatId = msg.id?.remote?._serialized;
-  let realFrom = msg.from?._serialized || msg.id?.remote?._serialized;
-  let realTo = msg.to?._serialized;
-
-  // Si son JIDs de tipo LID, resolver su número telefónico real (@c.us) para evitar duplicación y chats "sin número"
-  if (WPP) {
-    if (realChatId && realChatId.endsWith("@lid")) {
-      try {
-        const wid = createWidSafely(WPP, realChatId);
-        if (!wid) {
-          console.warn("[EventEngine] No se pudo crear Wid para:", realChatId);
-        } else {
-          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-          if (numObj && numObj._serialized) {
-            realChatId = numObj._serialized;
-          }
-        }
-      } catch (err) {
-        console.warn("[EventEngine] Error al obtener número para LID chatId:", realChatId, err);
-      }
-    }
-    if (realFrom && realFrom.endsWith("@lid")) {
-      try {
-        const wid = createWidSafely(WPP, realFrom);
-        if (!wid) {
-          console.warn("[EventEngine] No se pudo crear Wid para:", realFrom);
-        } else {
-          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-          if (numObj && numObj._serialized) {
-            realFrom = numObj._serialized;
-          }
-        }
-      } catch (err) {}
-    }
-    if (realTo && realTo.endsWith("@lid")) {
-      try {
-        const wid = createWidSafely(WPP, realTo);
-        if (!wid) {
-          console.warn("[EventEngine] No se pudo crear Wid para:", realTo);
-        } else {
-          const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-          if (numObj && numObj._serialized) {
-            realTo = numObj._serialized;
-          }
-        }
-      } catch (err) {}
-    }
-  }
-
-  // Extraer información de contacto/nombre del remitente si está disponible
-  let pushname = msg.pushname || msg.sender?.pushname || undefined;
-  let notifyName = msg.sender?.pushname || msg.pushname || undefined;
-  let displayName = msg.sender?.displayName || msg.sender?.name || msg.sender?.formattedName || pushname || undefined;
-
-  // Si no hay nombre y tenemos el contacto de WPP, cargarlo
-  let profilePictureUrl: string | undefined = undefined;
-  if (WPP && realFrom) {
-    try {
-      const contactObj = await WPP.contact.get(realFrom);
-      if (contactObj) {
-        pushname = contactObj.pushname || pushname;
-        notifyName = contactObj.pushname || notifyName;
-        displayName = contactObj.name || contactObj.displayName || contactObj.pushname || contactObj.formattedName || undefined;
-        
-        // Extraer foto de perfil si está disponible en el objeto contacto
-        if (contactObj.profilePicThumb?.imgFull || contactObj.profilePicThumb?.img) {
-          profilePictureUrl = contactObj.profilePicThumb.imgFull || contactObj.profilePicThumb.img || undefined;
-        }
-        if (!profilePictureUrl && (contactObj.profilePictureThumb || contactObj.profilePicThumbObj)) {
-          profilePictureUrl = contactObj.profilePictureThumb || contactObj.profilePicThumbObj?.eurl || undefined;
-        }
-
-        // FIX: usar getProfilePictureUrl (método correcto en versiones actuales de WPP)
-        if (!profilePictureUrl && typeof WPP.contact.getProfilePictureUrl === 'function') {
-          try {
-            const picUrl = await WPP.contact.getProfilePictureUrl(realFrom);
-            if (typeof picUrl === 'string' && picUrl.startsWith('http')) {
-              profilePictureUrl = picUrl;
-            }
-          } catch (picErr) {
-            console.warn("[EventEngine] Error obteniendo foto de perfil:", picErr);
-          }
-        }
-      }
-    } catch (err) {}
-  }
-
   return {
     messageId: msg.id?._serialized,
-    chatId: realChatId,
-    from: realFrom,
-    to: realTo,
+    chatId: msg.id?.remote?._serialized,
+    from: msg.from?._serialized || msg.id?.remote?._serialized,
+    to: msg.to?._serialized,
     body: cleanBody,
     text: cleanBody,
     type: msg.type,
@@ -594,12 +304,288 @@ async function normalizeMessage(msg: any): Promise<any> {
     author,
     media,
     ack: msg.ack,
-    phoneNumber,
+    phoneNumber: getMyPhoneNumber(),
+    pushname: msg.pushname || msg.sender?.pushname,
+    notifyName: msg.sender?.pushname || msg.pushname,
+    displayName:
+      msg.sender?.displayName || msg.sender?.name || msg.sender?.formattedName || msg.pushname,
+  };
+}
+
+async function processNewMessage(msg: any): Promise<void> {
+  const normalized = buildMessageFast(msg);
+  const eventType = normalized.fromMe ? "MESSAGE_SENT" : "NEW_MESSAGE";
+  emit(eventType, normalized);
+  const recovered = await enrichMessageInBackground(msg, normalized, eventType);
+  if (!recovered && normalized.media?.missing_media) {
+    scheduleMediaRetry(msg, normalized, eventType);
+  }
+}
+
+async function enrichMessageInBackground(msg: any, base: any, eventType: WAEventType = "NEW_MESSAGE"): Promise<boolean> {
+  const fromMe = !!msg.id?.fromMe;
+  const WPP = getWPP();
+  let realChatId = base.chatId;
+  let realFrom = base.from;
+  let realTo = base.to;
+  let pushname = base.pushname;
+  let notifyName = base.notifyName;
+  let displayName = base.displayName;
+  let profilePictureUrl: string | undefined;
+  let media = base.media ? { ...base.media } : undefined;
+
+  const hasMedia = !!media && !!(msg.isMedia || msg.mediaKey || msg.clientUrl || msg.deprecatedMms3Url || msg.mediaData);
+  const isAudio = isAudioMessage(msg);
+  // Audios entrantes: WhatsApp tarda más en desencriptar la nota de voz
+  const waitMs =
+    fromMe && hasMedia ? 3500 : isAudio && !fromMe ? 3500 : fromMe ? 1500 : 800;
+  await new Promise((r) => setTimeout(r, waitMs));
+
+  if (WPP) {
+    if (realChatId?.endsWith("@lid")) {
+      realChatId = (await resolveLidJid(WPP, realChatId)) ?? realChatId;
+    }
+    if (realFrom?.endsWith("@lid")) {
+      realFrom = (await resolveLidJid(WPP, realFrom)) ?? realFrom;
+    }
+    if (realTo?.endsWith("@lid")) {
+      realTo = (await resolveLidJid(WPP, realTo)) ?? realTo;
+    }
+
+    // En salientes el contacto relevante es el destinatario (to), no nosotros
+    const contactJid = fromMe ? realTo || realChatId : realFrom || realChatId;
+    if (contactJid && !fromMe) {
+      try {
+        const contactObj = await WPP.contact.get(contactJid);
+        if (contactObj) {
+          pushname = contactObj.pushname || pushname;
+          notifyName = contactObj.pushname || notifyName;
+          displayName =
+            contactObj.name ||
+            contactObj.displayName ||
+            contactObj.pushname ||
+            contactObj.formattedName ||
+            displayName;
+          profilePictureUrl =
+            contactObj.profilePicThumb?.imgFull ||
+            contactObj.profilePicThumb?.img ||
+            contactObj.profilePictureThumb ||
+            contactObj.profilePicThumbObj?.eurl ||
+            undefined;
+          if (!profilePictureUrl && typeof WPP.contact.getProfilePictureUrl === "function") {
+            try {
+              const picUrl = await WPP.contact.getProfilePictureUrl(contactJid);
+              if (typeof picUrl === "string" && picUrl.startsWith("http")) {
+                profilePictureUrl = picUrl;
+              }
+            } catch {
+              /* ignorar */
+            }
+          }
+        }
+      } catch {
+        /* ignorar */
+      }
+    }
+  }
+
+  const hasMediaIndicators =
+    msg.isMedia || msg.mediaKey || msg.clientUrl || msg.deprecatedMms3Url || msg.mediaData;
+  if (media && hasMediaIndicators && media.missing_media) {
+    media =
+      (await downloadMessageMedia(msg, media, {
+        // En background ya es seguro usar downloadMedia* (no bloquea WhatsApp)
+        allowNativeDownload: true,
+      })) ?? media;
+  }
+
+  const idsChanged =
+    realChatId !== base.chatId || realFrom !== base.from || realTo !== base.to;
+  const contactChanged =
+    pushname !== base.pushname ||
+    notifyName !== base.notifyName ||
+    displayName !== base.displayName ||
+    !!profilePictureUrl;
+  const mediaRecovered = !!media?.base64 && base.media?.missing_media;
+
+  if (!idsChanged && !contactChanged && !mediaRecovered) return mediaRecovered;
+
+  emit(eventType, {
+    ...base,
+    chatId: realChatId,
+    from: realFrom,
+    to: realTo,
     pushname,
     notifyName,
     displayName,
     profilePictureUrl,
-  };
+    media,
+    mediaRecovery: mediaRecovered || undefined,
+  });
+  return mediaRecovered;
+}
+
+/** Reintento tardío de media (audios/imágenes) sin bloquear WhatsApp. */
+function scheduleMediaRetry(msg: any, base: any, eventType: WAEventType): void {
+  let completed = false;
+  const isAudio = isAudioMessage(msg);
+  const delays =
+    isAudio && !base.fromMe
+      ? [4000, 10000, 18000]
+      : base.fromMe
+        ? [6000, 12000]
+        : [5000, 12000];
+  for (const delayMs of delays) {
+    setTimeout(() => {
+      void (async () => {
+        if (completed) return;
+        const media = base.media ? { ...base.media, missing_media: true } : undefined;
+        if (!media) return;
+        let freshMsg = msg;
+        const msgId = msg.id?._serialized || base.messageId;
+        if (msgId) {
+          try {
+            freshMsg = (await getMessageById(msgId)) || msg;
+          } catch {
+            freshMsg = msg;
+          }
+        }
+        const downloaded = await downloadMessageMedia(freshMsg, media, { allowNativeDownload: true });
+        if (!downloaded?.base64) return;
+        completed = true;
+        emit(eventType, {
+          ...base,
+          media: downloaded,
+          mediaRecovery: true,
+        });
+      })().catch(() => {});
+    }, delayMs);
+  }
+}
+
+async function resolveLidJid(WPP: any, jid: string): Promise<string | undefined> {
+  try {
+    const wid = createWidSafely(WPP, jid);
+    if (!wid) return undefined;
+    const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
+    return numObj?._serialized || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function downloadMessageMedia(
+  msg: any,
+  media: any,
+  opts?: { allowNativeDownload?: boolean }
+): Promise<any | null> {
+  const isAudio = isAudioMessage(msg);
+  const isVideo = msg.type === "video";
+  const fromMe = fromMeSafe(msg);
+  const maxRetries = isAudio ? 10 : isVideo ? 10 : fromMe ? 8 : 8;
+  const retryDelayMs = isAudio ? 1200 : isVideo ? 2000 : 1500;
+  // Sin allowNativeDownload: solo blob (audios, primer intento). Con allowNativeDownload: también downloadMedia*.
+  const blobOnly = isAudio && !opts?.allowNativeDownload;
+
+  try {
+    const WPP = getWPP();
+    let base64Data: string | null = null;
+    let retries = maxRetries;
+
+    while (!base64Data && retries > 0) {
+      const possibleUrls = [
+        msg.clientUrl,
+        msg.mediaData?.clientUrl,
+        msg.mediaData?.renderableUrl,
+        msg.mediaData?.previewUrl,
+        msg.deprecatedMms3Url,
+      ].filter((u): u is string => typeof u === "string" && u.startsWith("blob:"));
+
+      for (const url of possibleUrls) {
+        try {
+          base64Data = await blobUrlToBase64(url);
+          if (base64Data) break;
+        } catch {
+          /* ignorar */
+        }
+      }
+
+      if (blobOnly && !opts?.allowNativeDownload) {
+        retries--;
+        if (retries > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+        continue;
+      }
+
+      if (!base64Data && typeof msg.downloadMediaCrypted === "function") {
+        try {
+          const res = await msg.downloadMediaCrypted();
+          base64Data = await resolveToBase64(res, msg.mimetype);
+        } catch {
+          /* ignorar */
+        }
+      }
+
+      if (!base64Data && typeof msg.downloadMedia === "function") {
+        try {
+          const res = await msg.downloadMedia();
+          base64Data = await resolveToBase64(res, msg.mimetype);
+        } catch {
+          /* ignorar */
+        }
+      }
+
+      if (!base64Data && WPP?.chat) {
+        const wppMethod = WPP.chat.downloadMedia || WPP.chat.downloadMediaMessage;
+        if (typeof wppMethod === "function") {
+          try {
+            const msgId = msg.id?._serialized || msg.id;
+            let res: any;
+            try {
+              res = await wppMethod(msg);
+            } catch {
+              res = await wppMethod(msgId);
+            }
+            base64Data = await resolveToBase64(res, msg.mimetype);
+          } catch {
+            /* ignorar */
+          }
+        }
+      }
+
+      if (base64Data) {
+        const validation = validateBase64Media(base64Data);
+        const isAudioMsg = isAudioMessage(msg);
+        if (!validation.valid && !isAudioMsg) {
+          base64Data = null;
+        } else {
+          const approxBytes = Math.ceil(base64Data.length * 0.75);
+          if (approxBytes <= 20 * 1024 * 1024) {
+            const mime = msg.mimetype || media.mimetype || (isAudioMsg ? "audio/ogg" : undefined);
+            return {
+              ...media,
+              base64: base64Data,
+              type: msg.type,
+              mimetype: mime,
+              mimeType: mime,
+              missing_media: false,
+            };
+          }
+          return media;
+        }
+      }
+
+      retries--;
+      if (retries > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+    }
+  } catch (err) {
+    console.warn("[MAPLE MULTIMEDIA] Error descargando media en background:", err);
+  }
+
+  return null;
+}
+
+function fromMeSafe(msg: any): boolean {
+  return !!msg?.id?.fromMe;
 }
 
 function normalizeChat(chat: any): any {
@@ -828,19 +814,23 @@ export function destroyEventEngine(): void {
     // Re-barrido cada 5 min
     setInterval(enrichAll, 5 * 60 * 1000);
 
-    // Enriquecer cada vez que llega un mensaje nuevo
+    // Enriquecer contactos entrantes en background (nunca bloquear salientes ni el pipeline de WA)
     try {
-      (window as any).WPP.on?.('chat.new_message', async (msg: any) => {
-        try {
-          const cid = msg?.id?.remote?._serialized
-            || msg?.from?._serialized
-            || msg?.chatId;
-          if (!cid || cid.endsWith('@g.us')) return;
-          // Invalidar throttling para este chat
-          SENT_CACHE.delete(cid);
-          const chat = await (window as any).WPP.chat.find(cid).catch(()=>null);
-          await enrichChat(chat || { id: { _serialized: cid } });
-        } catch(e){}
+      (window as any).WPP.on?.('chat.new_message', (msg: any) => {
+        if (msg?.id?.fromMe) return;
+        setTimeout(() => {
+          void (async () => {
+            try {
+              const cid = msg?.id?.remote?._serialized
+                || msg?.from?._serialized
+                || msg?.chatId;
+              if (!cid || cid.endsWith('@g.us')) return;
+              SENT_CACHE.delete(cid);
+              const chat = await (window as any).WPP.chat.find(cid).catch(()=>null);
+              await enrichChat(chat || { id: { _serialized: cid } });
+            } catch(e){}
+          })();
+        }, 8000);
       });
     } catch(e){}
 

@@ -10,6 +10,7 @@ import {
   saveSession,
   updateSessionHeartbeat,
   getActiveSession,
+  saveLocalMedia,
 } from "../storage/db";
 
 // Estado del service worker
@@ -495,16 +496,20 @@ async function flushIngestQueue(): Promise<void> {
     deviceId: phoneNumber,
     events: batch.map((e) => {
       const flat = eventPayloadRecord(e as WAEvent);
+      const fromMe = flat.fromMe as boolean | undefined;
+      const inferredType =
+        e.type === "NEW_MESSAGE" && fromMe ? "message-out" : mapEventType(e.type);
       return {
         id: `${e.id}`,
-        type: mapEventType(e.type) as any,
+        type: inferredType as any,
         chatId: flat.chatId as string | undefined,
         waMessageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
-        direction: (flat.direction as "in" | "out" | undefined) ?? (typeof flat.fromMe === "boolean" ? (flat.fromMe ? "out" : "in") : undefined),
+        direction: (flat.direction as "in" | "out" | undefined) ?? (typeof fromMe === "boolean" ? (fromMe ? "out" : "in") : undefined),
         text: (flat.text ?? flat.body) as string | undefined,
         media: slimMediaForIngest(flat.media as Record<string, unknown> | undefined),
         contact: flat.contact as { waId: string; displayName?: string; phone?: string } | undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
+        mediaRecovery: flat.mediaRecovery as boolean | undefined,
         payload: {
           fromMe: flat.fromMe as boolean | undefined,
           phoneNumber: (flat.phoneNumber as string) || phoneNumber,
@@ -606,7 +611,7 @@ function slimMediaForIngest(
   const out = { ...media };
   const url = out.url as string | undefined;
   const hasHttpUrl = typeof url === "string" && url.startsWith("http") && !url.startsWith("blob:");
-  if (hasHttpUrl) {
+  if (hasHttpUrl || out.localOnly === true) {
     delete out.base64;
     delete out.body;
     delete out.data;
@@ -622,12 +627,17 @@ function slimMediaForIngest(
   return out;
 }
 
-function eventHasHeavyMedia(event: WAEvent): boolean {
+function eventHasMediaBase64(event: WAEvent): boolean {
   const p = eventPayloadRecord(event);
   const media = p.media as Record<string, unknown> | undefined;
   if (!media) return false;
+  if (media.localOnly === true && media.localRef) return false;
   const b64 = (media.base64 || media.body || media.data) as unknown;
-  return typeof b64 === "string" && b64.length > CONSTANTS.MEDIA_INLINE_MAX_LEN;
+  return typeof b64 === "string" && b64.length > 64;
+}
+
+function eventHasHeavyMedia(event: WAEvent): boolean {
+  return eventHasMediaBase64(event);
 }
 
 async function uploadMediaToBackend(
@@ -663,14 +673,13 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
   if (!media) return event;
 
   const b64 = (media.base64 || media.body || media.data) as string | undefined;
-  if (typeof b64 !== "string" || b64.length <= CONSTANTS.MEDIA_INLINE_MAX_LEN) return event;
+  if (typeof b64 !== "string" || b64.length < 64) return event;
 
   let mime = String(
     media.mimetype || media.mimeType || media.mime_type || "application/octet-stream"
   );
   const msgType = typeof media.type === "string" ? media.type : undefined;
 
-  // FIX: Si el mime sigue siendo genérico, inferir por tipo de mensaje
   if (mime === "application/octet-stream" && msgType) {
     if (msgType === "image") mime = "image/jpeg";
     else if (msgType === "video") mime = "video/mp4";
@@ -678,21 +687,69 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
     else if (msgType === "document") mime = "application/pdf";
   }
 
-  const uploaded = await uploadMediaToBackend(b64, mime, msgType);
-  if (!uploaded?.url) return event;
+  const isAudio =
+    mime.startsWith("audio/") || msgType === "ptt" || msgType === "audio";
+  const waMessageId = String(
+    p.messageId || p.waMessageId || event.id || `local-${Date.now()}`
+  );
+  const chatId = String(p.chatId || p.from || p.to || "unknown");
 
-  const slimMedia: Record<string, unknown> = {
+  // Siempre guardar en el PC (IndexedDB).
+  let localRef = waMessageId;
+  try {
+    const saved = await saveLocalMedia({
+      waMessageId,
+      chatId,
+      base64: b64,
+      mimeType: mime,
+      type: msgType,
+      filename: (media.filename || media.fileName) as string | undefined,
+      direction: p.direction as string | undefined,
+      text: (p.text || p.body) as string | undefined,
+    });
+    localRef = saved.id;
+    console.log("[MAPLE MULTIMEDIA] Guardado en PC:", localRef, saved.size, "bytes");
+  } catch (err) {
+    console.warn("[MAPLE MULTIMEDIA] Error guardando en PC:", err);
+  }
+
+  // Solo audios van temporalmente a la nube (Whisper). Fotos/videos/docs = solo PC.
+  if (isAudio) {
+    console.log("[MAPLE MULTIMEDIA] Subiendo audio temporal a Storage para transcripción...");
+    const uploaded = await uploadMediaToBackend(b64, mime, msgType);
+    if (uploaded?.url) {
+      const slimMedia: Record<string, unknown> = {
+        ...media,
+        url: uploaded.url,
+        storagePath: uploaded.storagePath,
+        mimeType: uploaded.mimeType,
+        mime_type: uploaded.mimeType,
+        localRef,
+        storedLocally: true,
+      };
+      delete slimMedia.base64;
+      delete slimMedia.body;
+      delete slimMedia.data;
+      return { ...event, payload: { ...p, media: slimMedia } };
+    }
+  }
+
+  const localOnlyMedia: Record<string, unknown> = {
     ...media,
-    url: uploaded.url,
-    storagePath: uploaded.storagePath,
-    mimeType: uploaded.mimeType,
-    mime_type: uploaded.mimeType,
+    url: null,
+    localOnly: true,
+    localRef,
+    storedLocally: true,
+    mimeType: mime,
+    mime_type: mime,
+    type: msgType || media.type,
+    size: Math.floor((b64.length * 3) / 4),
   };
-  delete slimMedia.base64;
-  delete slimMedia.body;
-  delete slimMedia.data;
+  delete localOnlyMedia.base64;
+  delete localOnlyMedia.body;
+  delete localOnlyMedia.data;
 
-  return { ...event, payload: { ...p, media: slimMedia } };
+  return { ...event, payload: { ...p, media: localOnlyMedia } };
 }
 
 async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSender): Promise<void> {
@@ -700,7 +757,7 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
   try {
     let stored = event;
     if (eventHasHeavyMedia(event)) {
-      console.log("[MAPLE MULTIMEDIA] Subiendo archivo a Storage antes de encolar...");
+      console.log("[MAPLE MULTIMEDIA] Guardando en PC / offload selectivo...");
       stored = await offloadHeavyMediaFromEvent(event);
     }
 

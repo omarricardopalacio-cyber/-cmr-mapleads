@@ -2,15 +2,35 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import { sanitizeMessageText } from '@/lib/message-text'
-import { enrichMediaForMessage, stripHeavyFieldsForDb } from '@/lib/engine-media.server'
+import {
+  enrichMediaForMessage,
+  stripHeavyFieldsForDb,
+  toLocalOnlyMediaMeta,
+} from '@/lib/engine-media.server'
 import { registerFailedAiRequest, sendSupportMessage } from '@/lib/retry-manager.server'
 import { loadCustomerMemory, extractAndSaveMemory } from '@/lib/ai/customer-memory.server'
 import { transcribeAudioFromUrl } from '@/lib/ai/transcribe.server'
+import { storagePathFromMediaUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createDedupTracker, buildInboundDedupKey, buildAiReplyDedupKey } from './-ingest-dedupe'
 import { ensureFlowRunForContact } from '@/lib/flow-trigger.server'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
+
+/** Borra el archivo de Storage tras usar el audio (p. ej. Whisper). No falla el ingest. */
+async function deleteCloudMediaFile(media: Record<string, unknown> | null | undefined): Promise<void> {
+  if (!media) return
+  const path =
+    (typeof media.storagePath === 'string' && media.storagePath) ||
+    (typeof media.url === 'string' ? storagePathFromMediaUrl(media.url) : null)
+  if (!path) return
+  try {
+    const { error } = await supabaseAdmin.storage.from('media').remove([path])
+    if (error) console.warn('[ingest] deleteCloudMediaFile:', error.message)
+  } catch (err) {
+    console.warn('[ingest] deleteCloudMediaFile error:', (err as Error)?.message)
+  }
+}
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -1333,6 +1353,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         waMessageId: e.waMessageId,
                         length: e.text.length,
                       });
+                      // Nube ligera: borrar audio de Storage; el texto queda en el mensaje.
+                      await deleteCloudMediaFile(enrichedMedia as Record<string, unknown>);
+                      Object.assign(
+                        enrichedMedia as object,
+                        toLocalOnlyMediaMeta(enrichedMedia as Record<string, unknown>, {
+                          transcribed: true,
+                        }),
+                      );
                     } else {
                       console.log('[ingest] 🎤 audio sin transcripción utilizable', {
                         waMessageId: e.waMessageId,
@@ -1467,15 +1495,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
               const existingMissing = !existingMediaObj || !existingMediaObj.url || existingMediaObj.missing_media;
               const newHasUrl = enrichedMedia && !!enrichedMedia.url;
+              const newHasLocalOnly = !!(enrichedMedia && (enrichedMedia as any).localOnly);
               const previousText = String(existingMessage.text ?? '').trim();
               const gotNewTranscript = !!(e.text?.trim() && !previousText);
 
-              if (existingMissing && newHasUrl) {
+              if (existingMissing && (newHasUrl || newHasLocalOnly || gotNewTranscript)) {
                 console.log('[ingest] Actualizando mensaje existente con media recuperada:', e.waMessageId);
                 await supabaseAdmin
                   .from('messages')
                   .update({
-                    media: enrichedMedia as any,
+                    media: (enrichedMedia || existingMediaObj) as any,
                     text: e.text ?? existingMessage.text,
                   })
                   .eq('id', existingMessage.id);
@@ -1558,7 +1587,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.log('[ingest] Actualizando texto transcrito de audio:', e.waMessageId);
                 await supabaseAdmin
                   .from('messages')
-                  .update({ text: e.text })
+                  .update({
+                    text: e.text,
+                    ...(enrichedMedia ? { media: enrichedMedia as any } : {}),
+                  })
                   .eq('id', existingMessage.id);
 
                 if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in') {
