@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { Copy, ExternalLink } from "lucide-react";
+import { Copy, ExternalLink, Tags } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/store")({
   component: StoreSettingsPage,
@@ -107,6 +107,21 @@ function StoreSettingsPage() {
           </Button>
         </div>
         <p className="break-all text-xs text-muted-foreground">Token: {data.store_token}</p>
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-2">
+          <Tags className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+          <div>
+            <p className="text-sm font-medium">Observaciones IA por producto</p>
+            <p className="text-xs text-muted-foreground">
+              Edita el prompt especial con el que la IA atiende cada producto del chat.
+            </p>
+          </div>
+        </div>
+        <Button asChild variant="secondary" size="sm">
+          <Link to="/catalog">Abrir</Link>
+        </Button>
       </div>
 
       <div className="space-y-4 rounded-lg border bg-card p-4">

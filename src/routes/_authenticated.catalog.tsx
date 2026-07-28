@@ -84,10 +84,10 @@ function CatalogProductsPage() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Catálogo</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Observaciones / prompts por producto</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Revisa productos sincronizados y deja observaciones para que la IA atienda cada uno de
-          forma especial en el chat de la tienda.
+          Elige un producto y escribe cómo quieres que la IA lo atienda (tono, descuentos, objeciones,
+          datos especiales). Eso se usa cuando el cliente abre el chat de ese producto.
         </p>
       </div>
 

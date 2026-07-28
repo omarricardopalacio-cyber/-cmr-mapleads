@@ -6,6 +6,9 @@ export type FocusStoreProductResult = {
   productName: string;
   switched: boolean;
   introSent: boolean;
+  imageUrl: string | null;
+  videoUrl: string | null;
+  price: number | null;
 };
 
 function formatCop(price: number | null | undefined) {
@@ -93,44 +96,8 @@ export async function focusStoreProduct(opts: {
 
   if (switched) {
     const now = Date.now();
-    const base = new Date().toISOString();
 
-    if (product.image_url) {
-      await supabaseAdmin.from("messages").insert({
-        org_id: orgId,
-        thread_id: threadId,
-        direction: "out",
-        text: null,
-        media: {
-          url: product.image_url,
-          mimeType: "image/jpeg",
-          type: "image",
-          productId: product.id,
-        },
-        wa_message_id: `web-prod-img-${product.id}-${now}`,
-        sent_at: base,
-        raw: { channel: "web", kind: "product_image", productId: product.id },
-      } as any);
-    }
-
-    if (product.video_url) {
-      await supabaseAdmin.from("messages").insert({
-        org_id: orgId,
-        thread_id: threadId,
-        direction: "out",
-        text: null,
-        media: {
-          url: product.video_url,
-          mimeType: "video/mp4",
-          type: "video",
-          productId: product.id,
-        },
-        wa_message_id: `web-prod-vid-${product.id}-${now}`,
-        sent_at: new Date(Date.now() + 10).toISOString(),
-        raw: { channel: "web", kind: "product_video", productId: product.id },
-      } as any);
-    }
-
+    // Imagen/video van fijos arriba en el cliente; aquí solo ficha + interés + IA.
     const lines = [
       `📦 *${product.name}*`,
       product.badge ? `Etiqueta: ${product.badge}` : null,
@@ -149,7 +116,7 @@ export async function focusStoreProduct(opts: {
       direction: "out",
       text: lines,
       wa_message_id: `web-prod-info-${product.id}-${now}`,
-      sent_at: new Date(Date.now() + 20).toISOString(),
+      sent_at: new Date().toISOString(),
       raw: { channel: "web", kind: "product_info", productId: product.id },
     } as any);
 
@@ -160,7 +127,7 @@ export async function focusStoreProduct(opts: {
       direction: "in",
       text: interest,
       wa_message_id: `web-prod-interest-${product.id}-${now}`,
-      sent_at: new Date(Date.now() + 30).toISOString(),
+      sent_at: new Date(Date.now() + 20).toISOString(),
       raw: { channel: "web", kind: "product_interest", productId: product.id },
     } as any);
 
@@ -185,5 +152,8 @@ export async function focusStoreProduct(opts: {
     productName: String(product.name),
     switched,
     introSent,
+    imageUrl: product.image_url ? String(product.image_url) : null,
+    videoUrl: product.video_url ? String(product.video_url) : null,
+    price: product.price != null ? Number(product.price) : null,
   };
 }

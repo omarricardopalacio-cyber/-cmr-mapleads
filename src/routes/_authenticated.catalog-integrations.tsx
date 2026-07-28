@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
@@ -48,6 +48,8 @@ import {
   Clock,
   Zap,
   PackageSearch,
+  Tags,
+  ArrowRight,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/catalog-integrations")({
@@ -228,6 +230,27 @@ function CatalogIntegrationsPage() {
           Nueva integración
         </Button>
       </div>
+
+      <Card className="border-emerald-500/30 bg-emerald-500/5">
+        <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <Tags className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+            <div>
+              <p className="text-sm font-semibold">Observaciones / prompts por producto</p>
+              <p className="text-xs text-muted-foreground">
+                Después de sincronizar, edita cómo debe atender la IA cada producto (descuentos,
+                tono, datos especiales).
+              </p>
+            </div>
+          </div>
+          <Button asChild variant="secondary" className="gap-2 shrink-0">
+            <Link to="/catalog">
+              Abrir editor
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">

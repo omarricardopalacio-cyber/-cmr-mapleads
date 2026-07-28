@@ -21,6 +21,15 @@ const json = (status: number, body: unknown) =>
     headers: { "Content-Type": "application/json", ...CORS },
   });
 
+function normalizeWhatsApp(raw: string): string | null {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  // Colombia: 10 dígitos locales → 57…
+  if (digits.length === 10 && digits.startsWith("3")) return `57${digits}`;
+  if (digits.length >= 10 && digits.length <= 15) return digits;
+  return null;
+}
+
 export const Route = createFileRoute("/api/public/store/chat/session")({
   server: {
     handlers: {
@@ -35,8 +44,15 @@ export const Route = createFileRoute("/api/public/store/chat/session")({
         const store = await resolveStoreByToken(token);
         if (!store) return json(401, { error: "Invalid store token" });
 
-        let body: { visitorToken?: string; displayName?: string; productId?: string; productName?: string } =
-          {};
+        let body: {
+          visitorToken?: string;
+          displayName?: string;
+          phone?: string;
+          productId?: string;
+          productName?: string;
+          /** Si false, solo crea sesión sin enfocar producto (p. ej. aún en formulario) */
+          startProduct?: boolean;
+        } = {};
         try {
           body = await request.json();
         } catch {
@@ -46,11 +62,13 @@ export const Route = createFileRoute("/api/public/store/chat/session")({
         try {
           let visitorToken = String(body.visitorToken || "").trim();
           let webSession: any = null;
+          const displayName = String(body.displayName || "").trim().slice(0, 80);
+          const phoneNorm = body.phone ? normalizeWhatsApp(body.phone) : null;
 
           if (visitorToken) {
             const { data } = await (supabaseAdmin as any)
               .from("web_sessions")
-              .select("id, visitor_token, org_id")
+              .select("id, visitor_token, org_id, display_name")
               .eq("visitor_token", visitorToken)
               .eq("org_id", store.org_id)
               .maybeSingle();
@@ -64,17 +82,19 @@ export const Route = createFileRoute("/api/public/store/chat/session")({
               .insert({
                 org_id: store.org_id,
                 visitor_token: visitorToken,
-                display_name: body.displayName?.trim() || null,
+                display_name: displayName || null,
                 last_seen_at: new Date().toISOString(),
               })
-              .select("id, visitor_token, org_id")
+              .select("id, visitor_token, org_id, display_name")
               .single();
             if (error || !data) throw new Error(error?.message || "web_session insert failed");
             webSession = data;
           } else {
+            const patch: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+            if (displayName) patch.display_name = displayName;
             await (supabaseAdmin as any)
               .from("web_sessions")
-              .update({ last_seen_at: new Date().toISOString() })
+              .update(patch)
               .eq("id", webSession.id);
           }
 
@@ -82,13 +102,24 @@ export const Route = createFileRoute("/api/public/store/chat/session")({
           let contactId: string;
           const { data: existingContact } = await (supabaseAdmin as any)
             .from("contacts")
-            .select("id")
+            .select("id, display_name, phone")
             .eq("org_id", store.org_id)
             .eq("wa_id", waId)
             .maybeSingle();
 
           if (existingContact?.id) {
             contactId = existingContact.id;
+            const contactPatch: Record<string, unknown> = {
+              updated_at: new Date().toISOString(),
+            };
+            if (displayName) contactPatch.display_name = displayName;
+            if (phoneNorm) contactPatch.phone = phoneNorm;
+            if (Object.keys(contactPatch).length > 1) {
+              await (supabaseAdmin as any)
+                .from("contacts")
+                .update(contactPatch)
+                .eq("id", contactId);
+            }
           } else {
             const { data: c, error: cErr } = await (supabaseAdmin as any)
               .from("contacts")
@@ -96,8 +127,8 @@ export const Route = createFileRoute("/api/public/store/chat/session")({
                 org_id: store.org_id,
                 wa_id: waId,
                 web_visitor_id: hashToken(webSession.visitor_token),
-                display_name: body.displayName?.trim() || "Visitante web",
-                phone: null,
+                display_name: displayName || "Visitante web",
+                phone: phoneNorm,
               })
               .select("id")
               .single();
@@ -137,7 +168,8 @@ export const Route = createFileRoute("/api/public/store/chat/session")({
 
           let productFocus: Awaited<ReturnType<typeof focusStoreProduct>> = null;
           const productId = String(body.productId || "").trim();
-          if (productId) {
+          const shouldStartProduct = body.startProduct !== false && !!productId;
+          if (shouldStartProduct) {
             try {
               productFocus = await focusStoreProduct({
                 orgId: store.org_id,

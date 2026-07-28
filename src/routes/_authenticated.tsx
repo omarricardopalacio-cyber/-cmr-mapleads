@@ -55,7 +55,6 @@ function AppSidebar() {
     { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
     { title: "Chats en Vivo", url: "/conversations", icon: MessagesSquare },
     { title: "Tienda web", url: "/store", icon: Store },
-    { title: "Catálogo", url: "/catalog", icon: Tags },
     { title: "Integración Catálogo", url: "/catalog-integrations", icon: Package },
     { title: "Contactos y Clientes", url: "/contacts", icon: Users },
     { title: "Pedidos", url: "/orders", icon: ClipboardList },
@@ -69,6 +68,7 @@ function AppSidebar() {
   ];
 
   const aiConfig = [
+    { title: "Observaciones productos", url: "/catalog", icon: Tags },
     { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
     // { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
   ];
@@ -88,16 +88,20 @@ function AppSidebar() {
   ];
 
   const renderItems = (items: typeof main) =>
-    items.map((item) => (
+    items.map((item) => {
+      const active =
+        pathname === item.url || pathname.startsWith(`${item.url}/`);
+      return (
       <SidebarMenuItem key={item.title}>
-        <SidebarMenuButton asChild isActive={pathname.startsWith(item.url)}>
+        <SidebarMenuButton asChild isActive={active}>
           <Link to={item.url} className="flex items-center gap-2">
             <item.icon className="h-4 w-4 shrink-0" />
             <span className="truncate">{item.title}</span>
           </Link>
         </SidebarMenuButton>
       </SidebarMenuItem>
-    ));
+      );
+    });
 
   return (
     <Sidebar collapsible="icon">

@@ -95,7 +95,14 @@ export async function fetchStoreProducts(
 
 export async function openChatSession(
   storeToken: string,
-  opts?: { visitorToken?: string; productId?: string; productName?: string },
+  opts?: {
+    visitorToken?: string;
+    productId?: string;
+    productName?: string;
+    displayName?: string;
+    phone?: string;
+    startProduct?: boolean;
+  },
 ) {
   const res = await fetch("/api/public/store/chat/session", {
     method: "POST",
@@ -104,6 +111,9 @@ export async function openChatSession(
       visitorToken: opts?.visitorToken,
       productId: opts?.productId,
       productName: opts?.productName,
+      displayName: opts?.displayName,
+      phone: opts?.phone,
+      startProduct: opts?.startProduct,
     }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Session error");
@@ -116,6 +126,9 @@ export async function openChatSession(
       productName: string;
       switched: boolean;
       introSent: boolean;
+      imageUrl: string | null;
+      videoUrl: string | null;
+      price: number | null;
     } | null;
     brandName: string;
     primaryColor: string;
@@ -152,6 +165,31 @@ export async function sendChatMessage(storeToken: string, visitorToken: string, 
 
 export function visitorStorageKey(storeToken: string) {
   return `maple_store_visitor_${storeToken}`;
+}
+
+export function leadStorageKey(storeToken: string) {
+  return `maple_store_lead_${storeToken}`;
+}
+
+export type StoreLead = { name: string; phone: string };
+
+export function loadStoreLead(storeToken: string): StoreLead | null {
+  try {
+    const raw = localStorage.getItem(leadStorageKey(storeToken));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoreLead;
+    if (!parsed?.name?.trim() || !parsed?.phone?.trim()) return null;
+    return { name: parsed.name.trim(), phone: parsed.phone.trim() };
+  } catch {
+    return null;
+  }
+}
+
+export function saveStoreLead(storeToken: string, lead: StoreLead) {
+  localStorage.setItem(
+    leadStorageKey(storeToken),
+    JSON.stringify({ name: lead.name.trim(), phone: lead.phone.trim() }),
+  );
 }
 
 export function formatPrice(price: number | null | undefined) {
