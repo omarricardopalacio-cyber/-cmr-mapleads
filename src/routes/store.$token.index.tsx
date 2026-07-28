@@ -8,6 +8,7 @@ import {
   type StoreCategorySphere,
   type StoreProduct,
 } from "@/lib/store-client";
+import { isDirectPlayableVideo } from "@/lib/store-media";
 import { ChevronRight, MessageCircle, Search, Star, X } from "lucide-react";
 
 export const Route = createFileRoute("/store/$token/")({
@@ -276,6 +277,7 @@ function CategorySphere({
   onClick: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playable = isDirectPlayableVideo(cat.video_url);
   return (
     <button type="button" onClick={onClick} className="group flex w-[76px] shrink-0 flex-col items-center gap-1.5">
       <div
@@ -283,6 +285,7 @@ function CategorySphere({
           active ? "ring-[color:var(--store-accent)]" : "ring-white/20 group-hover:ring-white/50"
         }`}
         onMouseEnter={() => {
+          if (!playable) return;
           const v = videoRef.current;
           if (v) {
             v.currentTime = 0;
@@ -298,7 +301,12 @@ function CategorySphere({
         }}
       >
         {cat.image_url ? (
-          <img src={cat.image_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+          <img
+            src={cat.image_url}
+            alt=""
+            className={`h-full w-full object-cover transition ${playable ? "group-hover:opacity-0" : ""}`}
+            loading="lazy"
+          />
         ) : (
           <div
             className="flex h-full w-full items-center justify-center text-lg font-bold text-white"
@@ -307,7 +315,7 @@ function CategorySphere({
             {cat.name.slice(0, 1)}
           </div>
         )}
-        {cat.video_url ? (
+        {playable && cat.video_url ? (
           <video
             ref={videoRef}
             src={cat.video_url}
@@ -329,6 +337,8 @@ function CategorySphere({
 function ProductCard({ product: p, token }: { product: StoreProduct; token: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const rating = 4.5 + ((p.id?.charCodeAt(0) || 0) % 5) * 0.1;
+  const playable = isDirectPlayableVideo(p.video_url);
+  const [imgFailed, setImgFailed] = useState(false);
 
   return (
     <div className="group flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b101a] shadow-sm transition hover:-translate-y-0.5 hover:border-white/20 hover:shadow-xl">
@@ -336,10 +346,12 @@ function ProductCard({ product: p, token }: { product: StoreProduct; token: stri
         to="/store/$token/chat"
         params={{ token }}
         search={{ productId: p.id, productName: p.name }}
-        className="relative block aspect-square overflow-hidden bg-white"
+        className="relative block aspect-square overflow-hidden bg-[#121820]"
         onMouseEnter={() => {
+          if (!playable) return;
           const v = videoRef.current;
           if (v) {
+            if (v.readyState < 2) v.load();
             v.currentTime = 0;
             void v.play().catch(() => {});
           }
@@ -352,25 +364,33 @@ function ProductCard({ product: p, token }: { product: StoreProduct; token: stri
           }
         }}
       >
-        {p.image_url ? (
+        {p.image_url && !imgFailed ? (
           <img
             src={p.image_url}
             alt=""
-            className={`h-full w-full object-cover transition duration-300 ${p.video_url ? "group-hover:opacity-0" : "group-hover:scale-[1.03]"}`}
+            className={`h-full w-full object-cover transition duration-300 ${
+              playable ? "group-hover:opacity-0" : "group-hover:scale-[1.03]"
+            }`}
             loading="lazy"
+            onError={() => setImgFailed(true)}
           />
         ) : (
-          <div className="flex h-full items-center justify-center bg-stone-100 text-xs text-stone-400">Sin foto</div>
+          <div className="flex h-full items-center justify-center bg-[#121820] text-xs text-white/40">
+            Sin foto
+          </div>
         )}
-        {p.video_url ? (
+        {playable && p.video_url ? (
           <video
             ref={videoRef}
             src={p.video_url}
             muted
             playsInline
             loop
-            preload="none"
+            preload="metadata"
             className="absolute inset-0 h-full w-full object-cover opacity-0 transition group-hover:opacity-100"
+            onError={(e) => {
+              (e.currentTarget as HTMLVideoElement).style.display = "none";
+            }}
           />
         ) : null}
         {p.badge && (

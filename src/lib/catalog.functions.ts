@@ -211,7 +211,7 @@ function mapRow(row: any): Record<string, any> | null {
     price: normalizeNumber(row.base_price ?? row.price),
     stock: normalizeNumber(row.warehouse_stock ?? row.stock),
     image_url: row.main_image_url ?? row.image_url ?? null,
-    video_url: row.main_video_url ?? row.video_url ?? (Array.isArray(row.videos) && row.videos[0]?.url) ?? null,
+    video_url: extractVideoUrl(row),
     slug: row.slug ?? null,
     sku: row.sku ?? null,
     badge: row.badge ?? null,
@@ -224,6 +224,30 @@ function mapRow(row: any): Record<string, any> | null {
       null,
     is_active: normalizeBoolean(row.is_active ?? true),
   };
+}
+
+function extractVideoUrl(row: any): string | null {
+  const direct =
+    row.main_video_url ??
+    row.video_url ??
+    row.video ??
+    null;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+  const videos = row.videos;
+  if (Array.isArray(videos) && videos.length) {
+    const first = videos[0];
+    if (typeof first === "string" && first.trim()) return first.trim();
+    if (first && typeof first === "object") {
+      const u = first.url ?? first.src ?? first.video_url ?? first.href;
+      if (typeof u === "string" && u.trim()) return u.trim();
+    }
+  }
+  if (videos && typeof videos === "object" && !Array.isArray(videos)) {
+    const u = videos.url ?? videos.src;
+    if (typeof u === "string" && u.trim()) return u.trim();
+  }
+  return null;
 }
 
 /**

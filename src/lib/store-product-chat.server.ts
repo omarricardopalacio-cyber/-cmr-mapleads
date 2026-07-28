@@ -97,18 +97,20 @@ export async function focusStoreProduct(opts: {
   if (switched) {
     const now = Date.now();
 
-    // Imagen/video van fijos arriba en el cliente; aquí solo ficha + interés + IA.
-    const lines = [
+    // Descripción primero; ficha (precio/stock/etc.) al final.
+    const desc = product.description ? String(product.description).trim().slice(0, 1200) : "";
+    const specs = [
       `📦 *${product.name}*`,
       product.badge ? `Etiqueta: ${product.badge}` : null,
       product.category ? `Categoría: ${product.category}` : null,
       `Precio: ${formatCop(product.price)}`,
       product.sku ? `SKU: ${product.sku}` : null,
       product.stock != null ? `Stock: ${product.stock}` : null,
-      product.description ? `\n${String(product.description).slice(0, 1200)}` : null,
     ]
       .filter(Boolean)
       .join("\n");
+
+    const lines = desc ? `${desc}\n\n${specs}` : specs;
 
     await supabaseAdmin.from("messages").insert({
       org_id: orgId,

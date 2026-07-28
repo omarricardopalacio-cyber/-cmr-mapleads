@@ -11,13 +11,14 @@ import {
   sendChatMessage,
   visitorStorageKey,
 } from "@/lib/store-client";
-import { ArrowLeft, Gift, Send } from "lucide-react";
+import { ArrowLeft, Gift, Play, Send } from "lucide-react";
 import {
   StoreInstallBanner,
   clearStoreBadgeAndMarkRead,
   enableStorePush,
   registerStoreServiceWorker,
 } from "@/components/store/StoreInstallBanner";
+import { resolveStoreMedia } from "@/lib/store-media";
 
 const searchSchema = z.object({
   productId: z.string().optional(),
@@ -51,38 +52,6 @@ function mediaKind(media: BubbleMedia): "image" | "video" | null {
   return null;
 }
 
-function youtubeEmbedUrl(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (u.hostname.includes("youtu.be")) {
-      const id = u.pathname.replace("/", "").split("/")[0];
-      return id ? `https://www.youtube.com/embed/${id}?playsinline=1` : null;
-    }
-    if (u.hostname.includes("youtube.com")) {
-      const id = u.searchParams.get("v") || u.pathname.match(/\/(?:embed|shorts)\/([^/]+)/)?.[1];
-      return id ? `https://www.youtube.com/embed/${id}?playsinline=1` : null;
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-function vimeoEmbedUrl(url: string): string | null {
-  const m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
-  return m ? `https://player.vimeo.com/video/${m[1]}` : null;
-}
-
-/** ¿Se puede reproducir inline o mejor enlace externo? */
-function canPlayInlineVideo(url: string): boolean {
-  if (youtubeEmbedUrl(url) || vimeoEmbedUrl(url)) return true;
-  if (/\.(mp4|webm|mov|m4v|ogg)(\?|$)/i.test(url)) return true;
-  if (/supabase\.co\/storage|cloudinary|mux\.com|videodelivery/i.test(url)) return true;
-  if (/drive\.google|docs\.google|dropbox\.com|facebook\.com|tiktok\.com/i.test(url)) return false;
-  // URLs de CDN sin extensión: intentar <video>
-  return /^https?:\/\//i.test(url);
-}
-
 function normalizePhoneInput(raw: string): string {
   return raw.replace(/[^\d+\s()-]/g, "").slice(0, 20);
 }
@@ -101,76 +70,70 @@ function StickyProductMedia({
   imageUrl: string | null;
   productName: string | null;
 }) {
-  const yt = videoUrl ? youtubeEmbedUrl(videoUrl) : null;
-  const vimeo = videoUrl && !yt ? vimeoEmbedUrl(videoUrl) : null;
-  const inlineOk = videoUrl ? canPlayInlineVideo(videoUrl) : false;
+  const media = resolveStoreMedia(videoUrl, imageUrl);
+  if (media.kind === "none") return null;
 
-  if (videoUrl) {
-    return (
-      <div className="shrink-0 border-b border-black/10 bg-[#0b101a] shadow-md">
-        <div className="relative mx-auto aspect-video max-h-44 w-full bg-black sm:max-h-52">
-          {yt || vimeo ? (
-            <iframe
-              src={(yt || vimeo)!}
-              title={productName || "Video del producto"}
-              className="absolute inset-0 h-full w-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
+  const externalVideo =
+    videoUrl && media.kind === "image" ? videoUrl : null;
+
+  return (
+    <div className="shrink-0 border-b border-black/10 bg-black shadow-md">
+      <div className="relative h-44 w-full overflow-hidden bg-black sm:h-52">
+        {media.kind === "youtube" || media.kind === "vimeo" ? (
+          <iframe
+            src={media.embed}
+            title={productName || "Video del producto"}
+            className="absolute inset-0 h-full w-full border-0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        ) : null}
+
+        {media.kind === "video" ? (
+          <video
+            key={media.src}
+            src={media.src}
+            controls
+            playsInline
+            muted
+            autoPlay
+            loop
+            preload="auto"
+            poster={imageUrl || undefined}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : null}
+
+        {media.kind === "image" ? (
+          <>
+            <img
+              src={media.src}
+              alt={productName || "Producto"}
+              className="absolute inset-0 h-full w-full object-cover"
             />
-          ) : inlineOk ? (
-            <video
-              key={videoUrl}
-              src={videoUrl}
-              controls
-              playsInline
-              preload="metadata"
-              poster={imageUrl || undefined}
-              className="absolute inset-0 h-full w-full object-contain"
-            >
-              Tu navegador no soporta video.
-            </video>
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-2 p-3 text-center">
-              {imageUrl ? (
-                <img src={imageUrl} alt="" className="max-h-28 rounded object-contain" />
-              ) : null}
+            {externalVideo ? (
               <a
-                href={videoUrl}
+                href={externalVideo}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs font-semibold text-pink-300 underline"
+                className="absolute inset-0 flex items-center justify-center bg-black/35"
               >
-                Abrir video del producto
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/95 px-3 py-2 text-xs font-bold text-stone-900 shadow">
+                  <Play className="h-4 w-4 fill-stone-900" />
+                  Ver video
+                </span>
               </a>
-            </div>
-          )}
-        </div>
-        {productName ? (
-          <p className="truncate px-3 py-1.5 text-center text-[11px] font-medium text-white/70">
-            {productName}
-          </p>
+            ) : null}
+          </>
         ) : null}
       </div>
-    );
-  }
-
-  if (imageUrl) {
-    return (
-      <div className="pointer-events-none absolute right-3 top-3 z-20">
-        <div className="pointer-events-auto overflow-hidden rounded-2xl border-2 border-white shadow-lg ring-1 ring-black/10">
-          <a href={imageUrl} target="_blank" rel="noreferrer">
-            <img
-              src={imageUrl}
-              alt={productName || "Producto"}
-              className="h-16 w-16 object-cover sm:h-[72px] sm:w-[72px]"
-            />
-          </a>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
+      {productName ? (
+        <p className="truncate bg-[#0b101a] px-3 py-1.5 text-center text-[11px] font-medium text-white/70">
+          {productName}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function LeadGateForm({
@@ -526,7 +489,7 @@ function StoreChatPage() {
         </div>
       </div>
 
-      {stickyVideo ? (
+      {(stickyVideo || stickyImage) ? (
         <StickyProductMedia
           videoUrl={stickyVideo}
           imageUrl={stickyImage}
@@ -535,14 +498,6 @@ function StoreChatPage() {
       ) : null}
 
       <div className="relative min-h-0 flex-1">
-        {!stickyVideo && stickyImage ? (
-          <StickyProductMedia
-            videoUrl={null}
-            imageUrl={stickyImage}
-            productName={focusedName}
-          />
-        ) : null}
-
         <div
           ref={listRef}
           onScroll={onListScroll}
