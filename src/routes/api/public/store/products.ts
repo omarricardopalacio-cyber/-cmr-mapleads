@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   clientIp,
+  listStoreCategories,
   listStoreProducts,
   rateLimit,
   resolveStoreByToken,
@@ -34,12 +35,19 @@ export const Route = createFileRoute("/api/public/store/products")({
         if (!store) return json(401, { error: "Invalid store token" });
 
         try {
-          const products = await listStoreProducts(store.org_id, {
+          if (url.searchParams.get("meta") === "1") {
+            const categories = await listStoreCategories(store.org_id);
+            return json(200, { categories });
+          }
+
+          const result = await listStoreProducts(store.org_id, {
             q: url.searchParams.get("q") || undefined,
             id: url.searchParams.get("id") || undefined,
-            limit: Number(url.searchParams.get("limit") || 48),
+            category: url.searchParams.get("category") || undefined,
+            limit: Number(url.searchParams.get("limit") || 24),
+            offset: Number(url.searchParams.get("offset") || 0),
           });
-          return json(200, { products });
+          return json(200, result);
         } catch (err: any) {
           return json(500, { error: err?.message || "Failed to list products" });
         }

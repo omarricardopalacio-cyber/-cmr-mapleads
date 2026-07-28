@@ -215,6 +215,13 @@ function mapRow(row: any): Record<string, any> | null {
     slug: row.slug ?? null,
     sku: row.sku ?? null,
     badge: row.badge ?? null,
+    category:
+      row.category_name ??
+      row.category ??
+      (row.categories && typeof row.categories === "object"
+        ? row.categories.name ?? row.categories.title
+        : null) ??
+      null,
     is_active: normalizeBoolean(row.is_active ?? true),
   };
 }
@@ -262,6 +269,23 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
     const PAGE_SIZE = 200;
     let hasMore = true;
 
+    // Mapa category_id → nombre (Sincro categories)
+    const categoryById = new Map<string, string>();
+    try {
+      const catsPath = `categories?tenant_id=eq.${integ.tenant_id}&select=id,name&limit=500`;
+      const catsRes = await externalFetch(integ.supabase_url, integ.publishable_key, catsPath);
+      if (catsRes.ok) {
+        const cats = await catsRes.json();
+        if (Array.isArray(cats)) {
+          for (const c of cats) {
+            if (c?.id && c?.name) categoryById.set(String(c.id), String(c.name));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[SYNC] no se pudo cargar categories:", (e as Error)?.message);
+    }
+
     try {
       while (hasMore) {
         const from = page * PAGE_SIZE;
@@ -288,7 +312,14 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
           console.log(`[SYNC] external_id mapeado:`, mapRow(rows[0]).external_id);
         }
 
-        const mappedRows = rows.map((r) => mapRow(r));
+        const mappedRows = rows.map((r) => {
+          const mapped = mapRow(r);
+          if (!mapped) return null;
+          if (!mapped.category && r.category_id != null) {
+            mapped.category = categoryById.get(String(r.category_id)) ?? null;
+          }
+          return mapped;
+        });
         const invalidRows = mappedRows
           .map((mapped, idx) => ({ mapped, raw: rows[idx] }))
           .filter((item) => item.mapped === null);

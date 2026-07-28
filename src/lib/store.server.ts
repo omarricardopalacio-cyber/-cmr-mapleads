@@ -7,8 +7,15 @@ export type StoreConfig = {
   brand_name: string;
   logo_url: string | null;
   primary_color: string;
+  accent_color: string | null;
+  social_title: string | null;
+  social_description: string | null;
+  social_image_url: string | null;
   enabled: boolean;
 };
+
+const STORE_SELECT =
+  "org_id, store_token, brand_name, logo_url, primary_color, accent_color, social_title, social_description, social_image_url, enabled";
 
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
@@ -32,61 +39,224 @@ export function newVisitorToken(): string {
   return `vis_${randomBytes(18).toString("hex")}`;
 }
 
+function normalizeStore(row: Record<string, unknown>): StoreConfig {
+  return {
+    org_id: String(row.org_id),
+    store_token: String(row.store_token),
+    brand_name: String(row.brand_name || "Mi Tienda"),
+    logo_url: (row.logo_url as string) || null,
+    primary_color: String(row.primary_color || "#0056AD"),
+    accent_color: (row.accent_color as string) || "#FF2D95",
+    social_title: (row.social_title as string) || null,
+    social_description: (row.social_description as string) || null,
+    social_image_url: (row.social_image_url as string) || null,
+    enabled: row.enabled !== false,
+  };
+}
+
 export async function resolveStoreByToken(token: string): Promise<StoreConfig | null> {
   if (!token?.trim()) return null;
   const { data, error } = await (supabaseAdmin as any)
     .from("store_configs")
-    .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
+    .select(STORE_SELECT)
     .eq("store_token", token.trim())
     .maybeSingle();
-  if (error || !data || data.enabled === false) return null;
-  return data as StoreConfig;
+  if (error || !data || data.enabled === false) {
+    // Fallback si la migración OG aún no está aplicada
+    if (error?.message?.includes("social_") || error?.message?.includes("accent_color")) {
+      const { data: legacy } = await (supabaseAdmin as any)
+        .from("store_configs")
+        .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
+        .eq("store_token", token.trim())
+        .maybeSingle();
+      if (!legacy || legacy.enabled === false) return null;
+      return normalizeStore(legacy);
+    }
+    return null;
+  }
+  return normalizeStore(data);
 }
 
 export async function ensureStoreConfig(orgId: string): Promise<StoreConfig> {
-  const { data: existing } = await (supabaseAdmin as any)
+  const { data: existing, error } = await (supabaseAdmin as any)
     .from("store_configs")
-    .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
+    .select(STORE_SELECT)
     .eq("org_id", orgId)
     .maybeSingle();
-  if (existing) return existing as StoreConfig;
+  if (existing) return normalizeStore(existing);
+  if (error?.message?.includes("social_") || error?.message?.includes("accent_color")) {
+    const { data: legacy } = await (supabaseAdmin as any)
+      .from("store_configs")
+      .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (legacy) return normalizeStore(legacy);
+  }
 
   const row = {
     org_id: orgId,
     store_token: newStoreToken(),
     brand_name: "Mi Tienda",
     primary_color: "#0056AD",
+    accent_color: "#FF2D95",
     enabled: true,
   };
-  const { data, error } = await (supabaseAdmin as any)
+  const { data, error: insErr } = await (supabaseAdmin as any)
     .from("store_configs")
     .insert(row)
-    .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
+    .select(STORE_SELECT)
     .single();
-  if (error || !data) throw new Error(error?.message || "No se pudo crear store_configs");
-  return data as StoreConfig;
+  if (insErr || !data) {
+    const { data: basic, error: e2 } = await (supabaseAdmin as any)
+      .from("store_configs")
+      .insert({
+        org_id: orgId,
+        store_token: row.store_token,
+        brand_name: row.brand_name,
+        primary_color: row.primary_color,
+        enabled: true,
+      })
+      .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
+      .single();
+    if (e2 || !basic) throw new Error(insErr?.message || e2?.message || "No se pudo crear store_configs");
+    return normalizeStore(basic);
+  }
+  return normalizeStore(data);
 }
 
-export async function listStoreProducts(orgId: string, opts?: { q?: string; limit?: number; id?: string }) {
-  const limit = Math.min(Math.max(opts?.limit ?? 48, 1), 100);
+export type StoreProductRow = {
+  id: string;
+  name: string;
+  description?: string | null;
+  price?: number | null;
+  stock?: number | null;
+  image_url?: string | null;
+  video_url?: string | null;
+  slug?: string | null;
+  sku?: string | null;
+  badge?: string | null;
+  category?: string | null;
+  is_active?: boolean;
+};
+
+export async function listStoreProducts(
+  orgId: string,
+  opts?: { q?: string; limit?: number; offset?: number; id?: string; category?: string },
+) {
+  const limit = Math.min(Math.max(opts?.limit ?? 24, 1), 48);
+  const offset = Math.max(opts?.offset ?? 0, 0);
+
+  const selectWithCat =
+    "id, name, description, price, stock, image_url, video_url, slug, sku, badge, category, is_active";
+  const selectLegacy =
+    "id, name, description, price, stock, image_url, video_url, slug, sku, badge, is_active";
+
   let query = (supabaseAdmin as any)
     .from("products")
-    .select("id, name, description, price, stock, image_url, video_url, slug, sku, badge, is_active")
+    .select(selectWithCat, { count: "exact" })
     .eq("org_id", orgId)
     .eq("is_active", true)
     .order("name", { ascending: true })
-    .limit(limit);
+    .range(offset, offset + limit - 1);
 
   if (opts?.id) {
-    query = query.eq("id", opts.id);
-  } else if (opts?.q?.trim()) {
-    const q = opts.q.trim().replace(/%/g, "");
-    query = query.or(`name.ilike.%${q}%,description.ilike.%${q}%,sku.ilike.%${q}%`);
+    query = (supabaseAdmin as any)
+      .from("products")
+      .select(selectWithCat)
+      .eq("org_id", orgId)
+      .eq("id", opts.id)
+      .limit(1);
+  } else {
+    if (opts?.q?.trim()) {
+      const q = opts.q.trim().replace(/%/g, "");
+      query = query.or(`name.ilike.%${q}%,description.ilike.%${q}%,sku.ilike.%${q}%`);
+    }
+    if (opts?.category?.trim()) {
+      query = query.eq("category", opts.category.trim());
+    }
   }
 
-  const { data, error } = await query;
+  let { data, error, count } = await query;
+
+  if (error && (error.message?.includes("category") || error.code === "42703")) {
+    let q2 = (supabaseAdmin as any)
+      .from("products")
+      .select(selectLegacy, { count: "exact" })
+      .eq("org_id", orgId)
+      .eq("is_active", true)
+      .order("name", { ascending: true })
+      .range(offset, offset + limit - 1);
+    if (opts?.id) {
+      q2 = (supabaseAdmin as any)
+        .from("products")
+        .select(selectLegacy)
+        .eq("org_id", orgId)
+        .eq("id", opts.id)
+        .limit(1);
+    } else if (opts?.q?.trim()) {
+      const q = opts.q.trim().replace(/%/g, "");
+      q2 = q2.or(`name.ilike.%${q}%,description.ilike.%${q}%,sku.ilike.%${q}%`);
+    }
+    const legacy = await q2;
+    data = legacy.data;
+    error = legacy.error;
+    count = legacy.count;
+  }
+
   if (error) throw new Error(error.message);
-  return (data ?? []) as Array<Record<string, unknown>>;
+  const products = (data ?? []) as StoreProductRow[];
+  const total = typeof count === "number" ? count : products.length;
+  return {
+    products,
+    total,
+    offset,
+    limit,
+    hasMore: opts?.id ? false : offset + products.length < total,
+  };
+}
+
+export type StoreCategorySphere = {
+  name: string;
+  image_url: string | null;
+  video_url: string | null;
+  count: number;
+};
+
+/** Categorías + media representativa (imagen/video de un producto) para esferas. */
+export async function listStoreCategories(orgId: string): Promise<StoreCategorySphere[]> {
+  const { data, error } = await (supabaseAdmin as any)
+    .from("products")
+    .select("category, image_url, video_url")
+    .eq("org_id", orgId)
+    .eq("is_active", true)
+    .not("category", "is", null)
+    .limit(2000);
+
+  if (error) {
+    if (error.message?.includes("category") || error.code === "42703") return [];
+    throw new Error(error.message);
+  }
+
+  const map = new Map<string, StoreCategorySphere>();
+  for (const row of data ?? []) {
+    const name = String(row.category || "").trim();
+    if (!name) continue;
+    const cur = map.get(name);
+    if (!cur) {
+      map.set(name, {
+        name,
+        image_url: row.image_url || null,
+        video_url: row.video_url || null,
+        count: 1,
+      });
+    } else {
+      cur.count += 1;
+      if (!cur.video_url && row.video_url) cur.video_url = row.video_url;
+      if (!cur.image_url && row.image_url) cur.image_url = row.image_url;
+    }
+  }
+
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
 export function clientIp(request: Request): string {

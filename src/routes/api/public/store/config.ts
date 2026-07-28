@@ -34,6 +34,10 @@ export const Route = createFileRoute("/api/public/store/config")({
           brandName: store.brand_name,
           logoUrl: store.logo_url,
           primaryColor: store.primary_color,
+          accentColor: store.accent_color || "#FF2D95",
+          socialTitle: store.social_title || store.brand_name,
+          socialDescription: store.social_description,
+          socialImageUrl: store.social_image_url || store.logo_url,
           orgId: store.org_id,
         });
       },

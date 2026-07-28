@@ -15,7 +15,7 @@ function ProductPage() {
 
   useEffect(() => {
     fetchStoreProducts(token, { id: productId })
-      .then((list) => setProduct(list[0] || null))
+      .then((res) => setProduct(res.products[0] || null))
       .catch((e) => setError(e.message));
   }, [token, productId]);
 
@@ -64,10 +64,22 @@ function ProductPage() {
           <p className="mt-1 text-xl font-bold" style={{ color: "var(--store-accent)" }}>
             {formatPrice(product.price as number)}
           </p>
+          {product.category && (
+            <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-white/40">{product.category}</p>
+          )}
           {product.description && (
             <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-white/65">
               {product.description}
             </p>
+          )}
+          {product.video_url && (
+            <video
+              src={product.video_url}
+              controls
+              playsInline
+              className="mt-4 w-full rounded-xl border border-white/10"
+              poster={product.image_url || undefined}
+            />
           )}
           {product.sku && <p className="mt-2 text-xs text-white/40">SKU: {product.sku}</p>}
           {product.stock != null && (

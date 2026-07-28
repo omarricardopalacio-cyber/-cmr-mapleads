@@ -4,6 +4,10 @@ export type StoreConfigPublic = {
   brandName: string;
   logoUrl: string | null;
   primaryColor: string;
+  accentColor: string;
+  socialTitle: string | null;
+  socialDescription: string | null;
+  socialImageUrl: string | null;
   orgId: string;
 };
 
@@ -18,6 +22,14 @@ export type StoreProduct = {
   slug?: string | null;
   sku?: string | null;
   badge?: string | null;
+  category?: string | null;
+};
+
+export type StoreCategorySphere = {
+  name: string;
+  image_url: string | null;
+  video_url: string | null;
+  count: number;
 };
 
 function headers(storeToken: string, visitorToken?: string) {
@@ -32,21 +44,53 @@ function headers(storeToken: string, visitorToken?: string) {
 export async function fetchStoreConfig(storeToken: string): Promise<StoreConfigPublic> {
   const res = await fetch(`/api/public/store/config?token=${encodeURIComponent(storeToken)}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Config error");
-  return res.json();
+  const data = await res.json();
+  return {
+    brandName: data.brandName,
+    logoUrl: data.logoUrl ?? null,
+    primaryColor: data.primaryColor || "#0056AD",
+    accentColor: data.accentColor || "#FF2D95",
+    socialTitle: data.socialTitle ?? null,
+    socialDescription: data.socialDescription ?? null,
+    socialImageUrl: data.socialImageUrl ?? null,
+    orgId: data.orgId,
+  };
+}
+
+export async function fetchStoreCategories(storeToken: string): Promise<StoreCategorySphere[]> {
+  const u = new URL("/api/public/store/products", window.location.origin);
+  u.searchParams.set("token", storeToken);
+  u.searchParams.set("meta", "1");
+  const res = await fetch(u.toString());
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Categories error");
+  const data = await res.json();
+  return data.categories ?? [];
 }
 
 export async function fetchStoreProducts(
   storeToken: string,
-  opts?: { q?: string; id?: string },
-): Promise<StoreProduct[]> {
+  opts?: { q?: string; id?: string; category?: string; limit?: number; offset?: number },
+): Promise<{ products: StoreProduct[]; hasMore: boolean; total: number; offset: number }> {
   const u = new URL("/api/public/store/products", window.location.origin);
   u.searchParams.set("token", storeToken);
   if (opts?.q) u.searchParams.set("q", opts.q);
   if (opts?.id) u.searchParams.set("id", opts.id);
+  if (opts?.category) u.searchParams.set("category", opts.category);
+  if (opts?.limit != null) u.searchParams.set("limit", String(opts.limit));
+  if (opts?.offset != null) u.searchParams.set("offset", String(opts.offset));
   const res = await fetch(u.toString());
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Products error");
   const data = await res.json();
-  return data.products ?? [];
+  // Compat: API antigua devolvía { products: [] }
+  if (Array.isArray(data.products) && data.hasMore == null && data.total == null) {
+    return { products: data.products, hasMore: false, total: data.products.length, offset: 0 };
+  }
+  return {
+    products: data.products ?? [],
+    hasMore: !!data.hasMore,
+    total: data.total ?? (data.products?.length || 0),
+    offset: data.offset ?? 0,
+  };
 }
 
 export async function openChatSession(
