@@ -24,14 +24,14 @@ function StoreSettingsPage() {
   });
 
   const [brand, setBrand] = useState("");
-  const [color, setColor] = useState("#FF6A00");
+  const [color, setColor] = useState("#0056AD");
   const [logo, setLogo] = useState("");
   const [enabled, setEnabled] = useState(true);
 
   useEffect(() => {
     if (!data) return;
     setBrand(data.brand_name || "");
-    setColor(data.primary_color || "#FF6A00");
+    setColor(data.primary_color || "#0056AD");
     setLogo(data.logo_url || "");
     setEnabled(data.enabled !== false);
   }, [data]);
@@ -59,7 +59,7 @@ function StoreSettingsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Tienda web</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Catálogo tipo Temu + chat estilo WhatsApp. Comparte el link con tus clientes.
+          Catálogo público estilo Syncro (fondo oscuro + chat). Comparte el link con tus clientes.
         </p>
       </div>
 

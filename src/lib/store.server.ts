@@ -55,7 +55,7 @@ export async function ensureStoreConfig(orgId: string): Promise<StoreConfig> {
     org_id: orgId,
     store_token: newStoreToken(),
     brand_name: "Mi Tienda",
-    primary_color: "#FF6A00",
+    primary_color: "#0056AD",
     enabled: true,
   };
   const { data, error } = await (supabaseAdmin as any)
