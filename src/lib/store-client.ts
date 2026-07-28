@@ -111,6 +111,12 @@ export async function openChatSession(
     visitorToken: string;
     threadId: string;
     productHint: string | null;
+    productFocus: {
+      productId: string;
+      productName: string;
+      switched: boolean;
+      introSent: boolean;
+    } | null;
     brandName: string;
     primaryColor: string;
   }>;

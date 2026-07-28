@@ -333,8 +333,9 @@ function ProductCard({ product: p, token }: { product: StoreProduct; token: stri
   return (
     <div className="group flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b101a] shadow-sm transition hover:-translate-y-0.5 hover:border-white/20 hover:shadow-xl">
       <Link
-        to="/store/$token/product/$productId"
-        params={{ token, productId: p.id }}
+        to="/store/$token/chat"
+        params={{ token }}
+        search={{ productId: p.id, productName: p.name }}
         className="relative block aspect-square overflow-hidden bg-white"
         onMouseEnter={() => {
           const v = videoRef.current;
@@ -389,8 +390,9 @@ function ProductCard({ product: p, token }: { product: StoreProduct; token: stri
           </div>
         </div>
         <Link
-          to="/store/$token/product/$productId"
-          params={{ token, productId: p.id }}
+          to="/store/$token/chat"
+          params={{ token }}
+          search={{ productId: p.id, productName: p.name }}
           className="mt-2 flex h-9 w-full items-center justify-center rounded-[14px] text-xs font-semibold text-white transition active:scale-[0.98]"
           style={{ background: "var(--store-accent)" }}
         >

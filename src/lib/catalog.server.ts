@@ -40,6 +40,8 @@ export type CatalogProduct = {
   sku?: string;
   badge?: string;
   attributes?: Record<string, unknown>;
+  /** Instrucciones especiales del vendedor para la IA (tienda / CRM) */
+  ai_observation?: string | null;
 };
 
 function extractProductAttributes(

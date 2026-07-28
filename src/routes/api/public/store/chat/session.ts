@@ -7,6 +7,7 @@ import {
   rateLimit,
   resolveStoreByToken,
 } from "@/lib/store.server";
+import { focusStoreProduct } from "@/lib/store-product-chat.server";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -134,17 +135,27 @@ export const Route = createFileRoute("/api/public/store/chat/session")({
             threadId = t.id;
           }
 
-          // Contexto de producto: mensaje sistema interno no visible? Mejor nota en raw vía primer user hint
-          const productHint =
-            body.productName || body.productId
-              ? `Me interesa el producto: ${body.productName || body.productId}`
-              : null;
+          let productFocus: Awaited<ReturnType<typeof focusStoreProduct>> = null;
+          const productId = String(body.productId || "").trim();
+          if (productId) {
+            try {
+              productFocus = await focusStoreProduct({
+                orgId: store.org_id,
+                threadId,
+                contactId,
+                productId,
+              });
+            } catch (focusErr) {
+              console.error("[store/chat/session] product focus failed", focusErr);
+            }
+          }
 
           return json(200, {
             visitorToken: webSession.visitor_token,
             threadId,
             contactId,
-            productHint,
+            productHint: null,
+            productFocus,
             brandName: store.brand_name,
             primaryColor: store.primary_color,
           });

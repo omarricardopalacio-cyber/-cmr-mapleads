@@ -1192,16 +1192,26 @@ async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | nu
     const age = new Date().getTime() - new Date(thread.focused_updated_at).getTime();
     if (age > 6 * 60 * 60 * 1000) return null; // Expira a 6h
 
-    if (ctx.catalogCfg) {
+    const snapshot = (thread.focused_product_snapshot as CatalogProduct & {
+      ai_observation?: string | null;
+      source?: string;
+    }) ?? null;
+
+    if (ctx.catalogCfg && snapshot?.source !== "store_web") {
       try {
         const enriched = await getCatalogProduct(ctx.catalogCfg, thread.focused_product_id);
-        if (enriched) return enriched;
+        if (enriched) {
+          return {
+            ...enriched,
+            ai_observation: snapshot?.ai_observation ?? enriched.ai_observation ?? null,
+          };
+        }
       } catch {
         /* continúa con snapshot */
       }
     }
 
-    return (thread.focused_product_snapshot as CatalogProduct) ?? null;
+    return snapshot;
   } catch (err) {
     console.warn("[loadFocusedProduct] falló", err instanceof Error ? err.message : String(err));
     return null;
@@ -3060,8 +3070,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     orderContextProduct ??
     contextualProduct ??
     focusedProduct;
+  const observationText = contextProductForPrompt?.ai_observation?.trim()
+    ? `\n\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${contextProductForPrompt.ai_observation.trim().slice(0, 1500)}`
+    : "";
   const selectedProductText = contextProductForPrompt
-    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${
+    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${observationText}${
         startOrderFlow
           ? "\n\nEl cliente quiere hacer el pedido de ESTE producto. NO busques otros productos ni reinicies la conversación. Continúa el flujo de pedido pidiendo los datos para agendar."
           : ""

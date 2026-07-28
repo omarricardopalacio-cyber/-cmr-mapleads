@@ -17,6 +17,8 @@ export type ChannelAiReplyParams = {
   autoRepliesWereSent?: boolean;
   aiReplyDedupeKey?: string;
   delayAfterAutoReplies?: number;
+  /** Ignora respond_to=new (p. ej. apertura de producto en tienda web) */
+  forceReply?: boolean;
 };
 
 export type ChannelAiReplyResult = {
@@ -71,11 +73,12 @@ export async function runChannelAiReply(
     autoRepliesWereSent = false,
     aiReplyDedupeKey,
     delayAfterAutoReplies = 0,
+    forceReply = false,
   } = params;
 
   const { data: thread } = await supabaseAdmin
     .from("threads")
-    .select("ai_enabled")
+    .select("ai_enabled, focused_product_snapshot")
     .eq("id", threadId)
     .maybeSingle();
 
@@ -108,7 +111,8 @@ export async function runChannelAiReply(
     return { reply: "", actions: [], skipped: true, reason: "ai_config_disabled" };
   }
 
-  if ((cfg as any).respond_to === "new") {
+  // En tienda web el chat debe continuar; "solo nuevos" aplica a WhatsApp.
+  if (!forceReply && channel !== "web" && (cfg as any).respond_to === "new") {
     const { count } = await supabaseAdmin
       .from("messages")
       .select("id", { count: "exact", head: true })
@@ -121,9 +125,35 @@ export async function runChannelAiReply(
 
   const history = await loadThreadHistory(threadId, text);
   let historyWithContext = history;
+
+  const snap = (thread as any)?.focused_product_snapshot as Record<string, unknown> | null;
+  if (snap && (snap.name || snap.id)) {
+    const obs = snap.ai_observation ? String(snap.ai_observation).trim() : "";
+    historyWithContext = [
+      {
+        role: "system" as const,
+        content: [
+          "PRODUCTO EN FOCO (el cliente lo abrió en la tienda web; vende ESTE producto salvo que pida otro):",
+          `- Nombre: ${snap.name ?? ""}`,
+          snap.price != null ? `- Precio: ${snap.price}` : null,
+          snap.sku ? `- SKU: ${snap.sku}` : null,
+          snap.category ? `- Categoría: ${snap.category}` : null,
+          snap.description ? `- Descripción: ${String(snap.description).slice(0, 800)}` : null,
+          obs
+            ? `\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${obs.slice(0, 1500)}`
+            : null,
+          "Usa precio y datos de este producto. Si el cliente cambia de producto, el foco se actualizará.",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      },
+      ...historyWithContext,
+    ];
+  }
+
   if (autoRepliesWereSent) {
     historyWithContext = [
-      ...history,
+      ...historyWithContext,
       {
         role: "system" as const,
         content:

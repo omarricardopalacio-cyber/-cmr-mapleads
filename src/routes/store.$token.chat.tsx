@@ -19,12 +19,27 @@ export const Route = createFileRoute("/store/$token/chat")({
   component: StoreChatPage,
 });
 
+type BubbleMedia = {
+  url?: string;
+  mimeType?: string;
+  type?: string;
+} | null;
+
 type Bubble = {
   id: string;
   direction: "in" | "out";
   text: string;
+  media: BubbleMedia;
   sent_at: string;
 };
+
+function mediaKind(media: BubbleMedia): "image" | "video" | null {
+  if (!media?.url) return null;
+  const t = `${media.type || ""} ${media.mimeType || ""}`.toLowerCase();
+  if (t.includes("video") || /\.(mp4|webm|mov)(\?|$)/i.test(media.url)) return "video";
+  if (t.includes("image") || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(media.url)) return "image";
+  return "image";
+}
 
 function StoreChatPage() {
   const { token } = useParams({ from: "/store/$token/chat" });
@@ -35,30 +50,36 @@ function StoreChatPage() {
   const [sending, setSending] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [focusedName, setFocusedName] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const productHintSent = useRef(false);
+  const lastProductId = useRef<string | null>(null);
 
   const scrollDown = () => {
     requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
   };
 
-  const refresh = useCallback(async (vis: string) => {
-    const data = await fetchChatMessages(token, vis);
-    setMessages(
-      (data.messages || []).map((m) => ({
-        id: m.id,
-        direction: m.direction,
-        text: m.text || "",
-        sent_at: m.sent_at,
-      })),
-    );
-    scrollDown();
-  }, [token]);
+  const refresh = useCallback(
+    async (vis: string) => {
+      const data = await fetchChatMessages(token, vis);
+      setMessages(
+        (data.messages || []).map((m) => ({
+          id: m.id,
+          direction: m.direction,
+          text: m.text || "",
+          media: (m.media as BubbleMedia) || null,
+          sent_at: m.sent_at,
+        })),
+      );
+      scrollDown();
+    },
+    [token],
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        setReady(false);
         const stored = localStorage.getItem(visitorStorageKey(token)) || undefined;
         const session = await openChatSession(token, {
           visitorToken: stored,
@@ -68,15 +89,14 @@ function StoreChatPage() {
         if (cancelled) return;
         localStorage.setItem(visitorStorageKey(token), session.visitorToken);
         setVisitorToken(session.visitorToken);
-        await refresh(session.visitorToken);
-
-        if (session.productHint && !productHintSent.current) {
-          productHintSent.current = true;
-          setSending(true);
-          await sendChatMessage(token, session.visitorToken, session.productHint);
-          await refresh(session.visitorToken);
-          setSending(false);
+        if (session.productFocus?.productName) {
+          setFocusedName(session.productFocus.productName);
+        } else if (search.productName) {
+          setFocusedName(search.productName);
         }
+        lastProductId.current = search.productId || null;
+        // El servidor ya envió imagen/video/ficha + respuesta IA; solo refrescar historial.
+        await refresh(session.visitorToken);
         setReady(true);
       } catch (e: any) {
         if (!cancelled) setError(e.message || "No se pudo abrir el chat");
@@ -105,6 +125,7 @@ function StoreChatPage() {
       id: `tmp-${Date.now()}`,
       direction: "in",
       text: body,
+      media: null,
       sent_at: new Date().toISOString(),
     };
     setMessages((m) => [...m, optimistic]);
@@ -141,8 +162,12 @@ function StoreChatPage() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">Atención</p>
-          <p className="text-[11px] text-emerald-100/90">
-            {sending ? "escribiendo…" : "en línea"}
+          <p className="truncate text-[11px] text-emerald-100/90">
+            {sending
+              ? "escribiendo…"
+              : focusedName
+                ? `Producto: ${focusedName}`
+                : "en línea"}
           </p>
         </div>
       </div>
@@ -164,16 +189,36 @@ function StoreChatPage() {
         )}
         {messages.map((m) => {
           const mine = m.direction === "in";
+          const kind = mediaKind(m.media);
           return (
             <div key={m.id} className={`mb-1.5 flex ${mine ? "justify-end" : "justify-start"}`}>
               <div
-                className={`max-w-[82%] rounded-lg px-2.5 py-1.5 shadow-sm ${
+                className={`max-w-[82%] overflow-hidden rounded-lg px-2.5 py-1.5 shadow-sm ${
                   mine ? "rounded-tr-none bg-[#DCF8C6]" : "rounded-tl-none bg-white"
                 }`}
               >
-                <p className="whitespace-pre-wrap text-[14.2px] leading-snug text-stone-900">
-                  {m.text}
-                </p>
+                {kind === "image" && m.media?.url ? (
+                  <a href={m.media.url} target="_blank" rel="noreferrer" className="block">
+                    <img
+                      src={m.media.url}
+                      alt=""
+                      className="mb-1 max-h-56 w-full rounded-md object-cover"
+                    />
+                  </a>
+                ) : null}
+                {kind === "video" && m.media?.url ? (
+                  <video
+                    src={m.media.url}
+                    controls
+                    playsInline
+                    className="mb-1 max-h-56 w-full rounded-md bg-black"
+                  />
+                ) : null}
+                {m.text ? (
+                  <p className="whitespace-pre-wrap text-[14.2px] leading-snug text-stone-900">
+                    {m.text}
+                  </p>
+                ) : null}
                 <p className="mt-0.5 text-right text-[10px] text-stone-500">
                   {formatTime(m.sent_at)}
                 </p>
