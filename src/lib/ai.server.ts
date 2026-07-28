@@ -1110,6 +1110,7 @@ async function loadLastSentProduct(ctx: ToolExecCtx): Promise<CatalogProduct | n
 
 /**
  * Guarda el producto en foco (el que se está conversando) en la BD para memoria persistente.
+ * Conserva el producto anterior en _previous_product al cambiar de foco.
  */
 async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): Promise<void> {
   if (!p?.id || !ctx.threadId) return;
@@ -1123,14 +1124,37 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
 
     const existingSnapshot =
       (thread?.focused_product_snapshot as Record<string, unknown> | null) ?? {};
+    const prevId = existingSnapshot.id ? String(existingSnapshot.id) : null;
+    const switched = prevId && prevId !== String(p.id);
+
+    const previousBlock = switched
+      ? {
+          id: existingSnapshot.id,
+          name: existingSnapshot.name,
+          price: existingSnapshot.price ?? null,
+          sku: existingSnapshot.sku ?? null,
+          description: existingSnapshot.description ?? null,
+          category: existingSnapshot.category ?? null,
+          ai_observation: existingSnapshot.ai_observation ?? null,
+        }
+      : (existingSnapshot._previous_product as Record<string, unknown> | undefined) ?? null;
+
     const snapshot = {
-      ...existingSnapshot,
       id: p.id,
       name: p.name,
       price: p.price ?? null,
+      stock: p.stock ?? null,
       sku: p.sku ?? null,
+      badge: p.badge ?? null,
+      category: p.category ?? null,
+      description: p.description ?? null,
       image_url: p.image_url ?? null,
       video_url: p.video_url ?? null,
+      ai_observation: p.ai_observation ?? null,
+      source: (p as any).source ?? existingSnapshot.source ?? null,
+      _lock: true,
+      _previous_product: previousBlock,
+      _catalog_search: null,
     };
     await (supabaseAdmin as any)
       .from("threads")
@@ -1173,7 +1197,7 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
 }
 
 /**
- * Carga el producto en foco guardado; expira a 6h; enriquece desde catálogo si es posible, fallback a snapshot.
+ * Carga el producto en foco guardado; expira a 6h; siempre refresca ficha + ai_observation desde BD.
  */
 async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | null> {
   if (!ctx.threadId) return null;
@@ -1193,7 +1217,30 @@ async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | nu
     const snapshot = (thread.focused_product_snapshot as CatalogProduct & {
       ai_observation?: string | null;
       source?: string;
+      _previous_product?: CatalogProduct & { ai_observation?: string | null };
     }) ?? null;
+
+    // Siempre refrescar desde products (Observaciones / ficha actualizadas)
+    try {
+      const { data: fresh } = await (supabaseAdmin as any)
+        .from("products")
+        .select(
+          "id, name, description, price, stock, image_url, video_url, sku, badge, category, ai_observation",
+        )
+        .eq("org_id", ctx.orgId)
+        .eq("id", thread.focused_product_id)
+        .maybeSingle();
+      if (fresh) {
+        return {
+          ...fresh,
+          source: snapshot?.source ?? "store_web",
+          _previous_product: snapshot?._previous_product,
+          _lock: true,
+        } as CatalogProduct;
+      }
+    } catch {
+      /* snapshot */
+    }
 
     if (ctx.catalogCfg && snapshot?.source !== "store_web") {
       try {
@@ -1202,7 +1249,8 @@ async function loadFocusedProduct(ctx: ToolExecCtx): Promise<CatalogProduct | nu
           return {
             ...enriched,
             ai_observation: snapshot?.ai_observation ?? enriched.ai_observation ?? null,
-          };
+            _previous_product: (snapshot as any)?._previous_product,
+          } as CatalogProduct;
         }
       } catch {
         /* continúa con snapshot */
@@ -1252,6 +1300,39 @@ function mentionsFocusedProduct(query: string, product: CatalogProduct | null): 
     .filter((w) => w.length >= 3);
   const skuTokens = (product.sku || "").split(/[-_]/).filter((t) => t.length >= 2);
   return nameWords.some((w) => q.includes(w)) || skuTokens.some((t) => q.includes(t));
+}
+
+/** Cliente quiere salir del foco y ver catálogo general. */
+function wantsCatalogBrowse(text: string): boolean {
+  return /\b(otros productos|qu[eé] m[aá]s (tienes|hay|venden)|ver (el )?cat[aá]logo|mostrar(me)? (m[aá]s|otros)|busco (otra cosa|otro producto)|tienen (algo )?m[aá]s)\b/i.test(
+    text || "",
+  );
+}
+
+function isComplexProductCompareQuery(text: string): boolean {
+  return /\b(compar|diferenc|mejor|antes|anterior|el otro|la otra|ambos|las dos|los dos|versus|vs\.?)\b/i.test(
+    text || "",
+  );
+}
+
+function formatProductObservationBlock(
+  p: CatalogProduct & { ai_observation?: string | null },
+  title: string,
+): string {
+  const lines = [
+    `=== ${title} ===`,
+    `Nombre: ${p.name}`,
+    p.sku ? `SKU: ${p.sku}` : null,
+    p.price != null && p.price !== "" ? `Precio: ${p.price}` : null,
+    p.stock != null ? `Stock: ${p.stock}` : null,
+    p.category ? `Categoría: ${p.category}` : null,
+    p.badge ? `Etiqueta: ${p.badge}` : null,
+    p.description ? `Descripción: ${String(p.description).slice(0, 1200)}` : null,
+    p.ai_observation?.trim()
+      ? `\nOBSERVACIÓN / PROMPT DEL VENDEDOR (OBLIGATORIO):\n${p.ai_observation.trim().slice(0, 2000)}`
+      : null,
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 const normFieldKey = (s: string) =>
@@ -2162,10 +2243,14 @@ export async function executeToolCall(
           result = "Producto no disponible.";
           details = result;
         } else {
-          result = `Producto presentado: "${presented.productName}" (id: ${presented.productId}). Imagen/video/ficha enviados. Continúa hablando SOLO de este producto.`;
+          result = `Producto presentado: "${presented.productName}" (id: ${presented.productId}). Ficha enviada. Ahora responde SOLO con la ficha + observación de este producto (sin base de conocimiento de otros artículos).`;
           details = `present_product: ${presented.productId}`;
           if (presented.product) {
             ctx.lastProducts = [presented.product as any];
+            await saveFocusedProduct(ctx, {
+              ...(presented.product as any),
+              ai_observation: (presented.product as any).ai_observation ?? null,
+            });
           }
         }
       }
@@ -2804,16 +2889,23 @@ export async function runAiAgent({
     ? "pedido"
     : startOrderFlow
       ? "pedido"
-      : selectedProductForDetails
-        ? "product_detail"
-        : "general";
+      : focusedProduct && !wantsCatalogBrowse(lastUserText)
+        ? "product_focus"
+        : selectedProductForDetails
+          ? "product_detail"
+          : "general";
 
   const tools =
-    promptMode === "pedido" || promptMode === "product_detail"
+    promptMode === "pedido"
       ? CRM_TOOLS
-      : catalogCfg
-        ? [...CRM_TOOLS, ...CATALOG_TOOLS]
-        : CRM_TOOLS;
+      : promptMode === "product_focus"
+        ? // Foco de producto: CRM + present_product / media (sin search masivo)
+          [...CRM_TOOLS, ...CATALOG_TOOLS]
+        : promptMode === "product_detail"
+          ? CRM_TOOLS
+          : catalogCfg
+            ? [...CRM_TOOLS, ...CATALOG_TOOLS]
+            : CRM_TOOLS;
 
   const PRODUCT_FLOW_GUIDE = `
 Eres un asistente comercial por WhatsApp. Tu objetivo es ATENDER, AGENDAR/PREPARAR PEDIDOS y MOSTRAR PRODUCTOS cuando corresponda.
@@ -2856,8 +2948,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 `;
 
   const activeFlowGuide =
-    promptMode === "product_detail"
-      ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la BASE DE CONOCIMIENTO relevante.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
+    promptMode === "product_focus"
+      ? `MODO PRODUCTO EN FOCO:\n1. Usa SOLO ficha + OBSERVACIÓN DEL VENDEDOR de este producto. NO uses base de conocimiento ni precios de otros artículos.\n2. Si el cliente pide OTRO producto por nombre/SKU, llama present_product para cambiar el foco.\n3. Si compara con el producto anterior, usa el bloque PRODUCTO ANTERIOR + historial.\n4. Respuestas breves; una pregunta de cierre.`
+      : promptMode === "product_detail"
+      ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la observación del vendedor.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
       : promptMode === "pedido"
         ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
         : catalogCfg
@@ -2882,14 +2976,21 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si deseas agendar o hacer el pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? "" : " (opcional)"}`).join("\n")}"\n3. INTERPRETA LOS DATOS EN CUALQUIER FORMATO: el cliente puede enviarlos con etiquetas ("Nombre: Juan"), separados por "/" o por comas, o cada dato en una línea distinta sin rótulos. Mapea cada valor al campo correcto sin importar el formato y NO le pidas que los reescriba.\n4. Si después de interpretar falta algún dato REQUERIDO, pide ÚNICAMENTE el dato que falta, de forma breve y cortés, una sola pregunta por mensaje, y repite solo hasta que el cliente entregue todos los datos requeridos. No avances ni confirma mientras falten datos requeridos.\n5. SIEMPRE incluye en el form_data el PRODUCTO que el cliente está comprando (nombre/referencia del producto que se venía conversando o que eligió) y su VALOR/precio. Si el cliente no mencionó el producto explícitamente, use el último producto mostrado en la conversación. Usa las claves "Producto" y "Valor".\n6. Cuando tengas TODOS los datos requeridos (incluido Producto y Cantidad), muestra un resumen claro con el producto, valor y datos del cliente, y pregunta: "¿La información es correcta para confirmar su pedido?"\n7. SOLO cuando el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON (incluido Producto y Valor). NO digas "pedido registrado" ni confirma el pedido si no ejecutas confirm_order.\n8. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no se puede considerar el pedido confirmado.\n9. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso".`
     : "";
 
+  // En product_focus: NO cargar base de conocimiento / fuentes (evita mezclar forros, tarifas, etc.)
+  const skipKnowledgeForProductFocus = promptMode === "product_focus";
+
   // Load knowledge sources con manejo de error
   try {
-    const result = await supabaseAdmin
-      .from("knowledge_sources")
-      .select("id, name, source_type, content, metadata")
-      .eq("org_id", orgId)
-      .eq("is_active", true);
-    knowledgeSourcesData = result.data;
+    if (skipKnowledgeForProductFocus) {
+      knowledgeSourcesData = [];
+    } else {
+      const result = await supabaseAdmin
+        .from("knowledge_sources")
+        .select("id, name, source_type, content, metadata")
+        .eq("org_id", orgId)
+        .eq("is_active", true);
+      knowledgeSourcesData = result.data;
+    }
   } catch (err) {
     console.error("[runAiAgent] knowledge_sources query failed", err, { orgId });
     knowledgeSourcesData = null;
@@ -2905,17 +3006,19 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   const lastAssistantText =
     [...visibleChat].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
   // Cotización: planificador + paquete + ciudad/precio en historial.
-  const needsPriceContext =
-    !!promptPlan?.needsPrice ||
-    !!activePackageName ||
-    /\b(ciudad|precio|precios|cotiz|cu[aá]nto\s+vale|cu[aá]nto\s+cuesta|tarifa)\b/i.test(
-      lastAssistantText,
-    ) ||
-    /\b(precio|precios|valor|costo|cotiz|cu[aá]nto|bogot|medell[ií]n|cali|barranquilla|cartagena|bucaramanga|pereira|manizales|cucuta|ibagu[eé]|neiva|villavicencio)\b/i.test(
-      lastUserText,
-    ) ||
-    (/^\d{1,2}$/.test(lastUserText.trim()) &&
-      /\b(silla|forro|cantidad|cu[aá]nt)/i.test(lastAssistantText + "\n" + recentConversationHint));
+  // En product_focus NO cotizar desde KB (el precio sale de la ficha del producto).
+  const needsPriceContext = skipKnowledgeForProductFocus
+    ? false
+    : !!promptPlan?.needsPrice ||
+      !!activePackageName ||
+      /\b(ciudad|precio|precios|cotiz|cu[aá]nto\s+vale|cu[aá]nto\s+cuesta|tarifa)\b/i.test(
+        lastAssistantText,
+      ) ||
+      /\b(precio|precios|valor|costo|cotiz|cu[aá]nto|bogot|medell[ií]n|cali|barranquilla|cartagena|bucaramanga|pereira|manizales|cucuta|ibagu[eé]|neiva|villavicencio)\b/i.test(
+        lastUserText,
+      ) ||
+      (/^\d{1,2}$/.test(lastUserText.trim()) &&
+        /\b(silla|forro|cantidad|cu[aá]nt)/i.test(lastAssistantText + "\n" + recentConversationHint));
 
   // Para RECORTAR texto: query del planificador (hechos + mensaje) o fallback.
   const knowledgeRetrievalQuery = [
@@ -2992,6 +3095,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           ? 800
           : 1500;
   const knowledgeSourcesText = (() => {
+    if (skipKnowledgeForProductFocus) return "";
     if (!sourcesToUse.length) return "";
     // Si ya inyectamos tarifas completas, no duplicar esas fuentes aquí.
     const priceNames = new Set(
@@ -3092,15 +3196,19 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           : promptMode === "product_detail"
             ? 2500
             : 1200;
-  const knowledgeBaseRaw = (cfg.knowledge_base as string)?.trim() || "";
+  const knowledgeBaseRaw = skipKnowledgeForProductFocus
+    ? ""
+    : (cfg.knowledge_base as string)?.trim() || "";
   // En cotización no arriesgar recorte por keywords: si la KB cabe, va completa.
-  const knowledgeBase = needsPriceContext && knowledgeBaseRaw.length <= KB_MAX
-    ? knowledgeBaseRaw
-    : selectRelevantText(
-        knowledgeBaseRaw,
-        `${knowledgeRetrievalQuery}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`,
-        KB_MAX,
-      );
+  const knowledgeBase = skipKnowledgeForProductFocus
+    ? ""
+    : needsPriceContext && knowledgeBaseRaw.length <= KB_MAX
+      ? knowledgeBaseRaw
+      : selectRelevantText(
+          knowledgeBaseRaw,
+          `${knowledgeRetrievalQuery}\n${selectedProductForDetails?.name ?? ""}\n${selectedProductForDetails?.sku ?? ""}`,
+          KB_MAX,
+        );
 
   console.info("[runAiAgent] knowledge context", {
     orgId,
@@ -3108,16 +3216,21 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     historyMsgs: visibleChat.length,
     lastUserText: lastUserText.slice(0, 80),
     activePackageName: activePackageName || null,
-    needsPriceContext,
+    needsPriceContext: skipKnowledgeForProductFocus ? false : needsPriceContext,
+    promptMode,
+    skipKnowledgeForProductFocus,
     kbRawChars: knowledgeBaseRaw.length,
     kbInjectedChars: knowledgeBase.length,
-    mandatoryPriceChars: mandatoryPriceKnowledgeText.length,
+    mandatoryPriceChars: skipKnowledgeForProductFocus ? 0 : mandatoryPriceKnowledgeText.length,
     kbHasPriceToken: /(\$|precio|precios|valor|tarifa|bogot)/i.test(
       knowledgeBase + mandatoryPriceKnowledgeText,
     ),
-    sourcesUsed: (sourcesToUse as any[]).length,
+    sourcesUsed: skipKnowledgeForProductFocus ? 0 : (sourcesToUse as any[]).length,
     sourcesTotal: allKnowledgeSources.length,
-    topSourceNames: (sourcesToUse as any[]).slice(0, 4).map((s) => s.name),
+    topSourceNames: skipKnowledgeForProductFocus
+      ? []
+      : (sourcesToUse as any[]).slice(0, 4).map((s) => s.name),
+    focusedProductId: focusedProduct?.id || null,
   });
 
   const contextProductForPrompt =
@@ -3125,57 +3238,97 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     selectedProductForDetails ??
     orderContextProduct ??
     contextualProduct;
+
+  const previousProduct =
+    ((focusedProduct as any)?._previous_product as
+      | (CatalogProduct & { ai_observation?: string | null })
+      | null
+      | undefined) || null;
+
+  const mentionsPrev =
+    !!previousProduct &&
+    mentionsFocusedProduct(lastUserText, previousProduct) &&
+    !mentionsFocusedProduct(lastUserText, focusedProduct);
+  const mentionsBoth =
+    !!previousProduct &&
+    mentionsFocusedProduct(lastUserText, previousProduct) &&
+    mentionsFocusedProduct(lastUserText, focusedProduct);
+  const useDualProductPrompt =
+    promptMode === "product_focus" &&
+    previousProduct &&
+    (mentionsBoth || (mentionsPrev && isComplexProductCompareQuery(lastUserText)) || mentionsPrev);
+
   const observationText = contextProductForPrompt?.ai_observation?.trim()
-    ? `\n\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${contextProductForPrompt.ai_observation.trim().slice(0, 1500)}`
+    ? `\n\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${contextProductForPrompt.ai_observation.trim().slice(0, 2000)}`
     : "";
-  const focusLockText = focusedProduct
-    ? `\n\n=== BLOQUEO DE PRODUCTO ===\nHabla ÚNICAMENTE de "${focusedProduct.name}"${focusedProduct.sku ? ` (SKU ${focusedProduct.sku})` : ""}. PROHIBIDO mencionar otros productos del historial. Si el cliente pide otro producto explícitamente por nombre, entonces sí puedes buscarlo.`
+  const focusLockText =
+    promptMode === "product_focus" && focusedProduct
+      ? `\n\n=== BLOQUEO DE PRODUCTO ===\nHabla ÚNICAMENTE de "${focusedProduct.name}"${focusedProduct.sku ? ` (SKU ${focusedProduct.sku})` : ""}. PROHIBIDO inventar precios/datos de otros productos o de la base de conocimiento general. Si el cliente pide otro producto por nombre/SKU, usa present_product.`
+      : focusedProduct
+        ? `\n\n=== BLOQUEO DE PRODUCTO ===\nHabla ÚNICAMENTE de "${focusedProduct.name}"${focusedProduct.sku ? ` (SKU ${focusedProduct.sku})` : ""}. PROHIBIDO mencionar otros productos del historial. Si el cliente pide otro producto explícitamente por nombre, entonces sí puedes buscarlo.`
+        : "";
+
+  const dualPreviousText = useDualProductPrompt
+    ? `\n\n${formatProductObservationBlock(previousProduct!, "PRODUCTO ANTERIOR (historial)")}\n\nUsa el producto actual como prioridad. El anterior solo si la pregunta lo requiere o compara ambos.`
     : "";
+
   const selectedProductText = contextProductForPrompt
-    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${observationText}${focusLockText}${
-        startOrderFlow
-          ? "\n\nEl cliente quiere hacer el pedido de ESTE producto. NO busques otros productos ni reinicies la conversación. Continúa el flujo de pedido pidiendo los datos para agendar."
-          : ""
-      }`
+    ? promptMode === "product_focus"
+      ? `\n\n${formatProductObservationBlock(
+          contextProductForPrompt,
+          "PRODUCTO EN FOCO (prioridad máxima)",
+        )}${focusLockText}${dualPreviousText}${
+          startOrderFlow
+            ? "\n\nEl cliente quiere hacer el pedido de ESTE producto. Continúa el flujo de pedido."
+            : ""
+        }`
+      : `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${observationText}${focusLockText}${
+          startOrderFlow
+            ? "\n\nEl cliente quiere hacer el pedido de ESTE producto. NO busques otros productos ni reinicies la conversación. Continúa el flujo de pedido pidiendo los datos para agendar."
+            : ""
+        }`
     : "";
 
   const toolsHintLegacy =
-    activePackageName || needsPriceContext
-      ? "\n\nHay cotización o PAQUETE activo. Para precios/tarifas por ciudad prioriza TARIFAS Y PRECIOS, FUENTES y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí."
-      : "\n\nResponde con el contexto y las herramientas CRM disponibles (etiquetas, recordatorios, pedido, transferir).";
+    promptMode === "product_focus"
+      ? "\n\nProducto en foco activo: responde con ficha + observación. Si pide otro producto, present_product. No uses tarifas/KB de otros artículos."
+      : activePackageName || needsPriceContext
+        ? "\n\nHay cotización o PAQUETE activo. Para precios/tarifas por ciudad prioriza TARIFAS Y PRECIOS, FUENTES y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí."
+        : "\n\nResponde con el contexto y las herramientas CRM disponibles (etiquetas, recordatorios, pedido, transferir).";
 
   const { system, mode: promptAssemblyMode } = assembleSystemPrompt({
     identity:
       (cfg.system_prompt as string)?.trim() ||
       "Eres un asistente comercial útil, cercano y proactivo. Acompañas al cliente hasta que cierre una compra o decida no continuar.",
     promptMode,
-    conversationStateText,
-    threadPromptExtensionText,
-    conversationRulesText,
-    customerMemoryText,
-    salesPackagesText,
-    activePackageContextText,
+    conversationStateText: promptMode === "product_focus" ? "" : conversationStateText,
+    threadPromptExtensionText: promptMode === "product_focus" ? "" : threadPromptExtensionText,
+    conversationRulesText: promptMode === "product_focus" ? "" : conversationRulesText,
+    customerMemoryText: promptMode === "product_focus" ? "" : customerMemoryText,
+    salesPackagesText: promptMode === "product_focus" ? "" : salesPackagesText,
+    activePackageContextText: promptMode === "product_focus" ? "" : activePackageContextText,
     selectedProductText,
-    knowledgeBase,
-    mandatoryPriceKnowledgeText,
+    knowledgeBase: promptMode === "product_focus" ? "" : knowledgeBase,
+    mandatoryPriceKnowledgeText:
+      promptMode === "product_focus" ? "" : mandatoryPriceKnowledgeText,
     toolsHintLegacy,
     activeFlowGuide,
     orderStateText,
     orderFieldsText,
-    knowledgeSourcesText,
-    dynamicContextText,
-    needsPriceContext,
+    knowledgeSourcesText: promptMode === "product_focus" ? "" : knowledgeSourcesText,
+    dynamicContextText: promptMode === "product_focus" ? "" : dynamicContextText,
+    needsPriceContext: promptMode === "product_focus" ? false : needsPriceContext,
     isCollectingOrder,
     startOrderFlow,
     lastUserText,
-    hasActivePackage: !!activePackageName,
+    hasActivePackage: promptMode === "product_focus" ? false : !!activePackageName,
     factCount: promptPlan?.summary
       ? (promptPlan.summary.match(/^\d+\./gm) || []).length
       : conversationStateText
         ? (conversationStateText.match(/^\d+\./gm) || []).length
         : 0,
     fechaLine: `${fechaLegible} · ${horaActual}`,
-    recentProductsBlock: recentProductsContextBlock,
+    recentProductsBlock: promptMode === "product_focus" ? "" : recentProductsContextBlock,
   });
 
   const historyForPrompt = selectHistoryForPrompt(messages, promptAssemblyMode === "legacy");

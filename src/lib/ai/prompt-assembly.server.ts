@@ -55,11 +55,12 @@ function compactFlowGuide(promptMode: string, needsPrice: boolean): string {
 2. Aplica la tarifa de la ciudad (local vs resto del país) y responde precio.
 3. Cierra con una sola pregunta suave (agendar / color / confirmar).`;
   }
-  if (promptMode === "product_detail") {
-    return `=== GUÍA (detalle) ===
-1. Responde solo del producto en foco / conocimiento del turno.
-2. No reinventes búsqueda ni reenvíes el pitch del flujo.
-3. Si falta un dato técnico exacto y no está en contexto, dilo breve.`;
+  if (promptMode === "product_detail" || promptMode === "product_focus") {
+    return `=== GUÍA (producto en foco) ===
+1. Prioridad ABSOLUTA: ficha del producto + OBSERVACIÓN DEL VENDEDOR. No uses base de conocimiento ni tarifas de otros productos.
+2. Responde solo de este producto. Si el cliente pide OTRO producto por nombre/SKU, usa present_product para cambiar el foco.
+3. Si menciona un producto anterior y la consulta es compleja, usa historial + ambos bloques de observación.
+4. Si falta un dato exacto y no está en ficha/observación, dilo breve y ofrece verificarlo. No inventes.`;
   }
   return `=== GUÍA (general) ===
 1. Continúa desde el contexto consolidado.
@@ -101,6 +102,19 @@ export type SystemPromptParts = {
 
 /** Prompt largo anterior (rollback). */
 export function buildLegacySystemPrompt(p: SystemPromptParts): string {
+  if (p.promptMode === "product_focus") {
+    return [
+      clipIdentityPrompt(p.identity, 600),
+      `\n\n=== MODO PRODUCTO EN FOCO ===\nUsa SOLO la ficha y la OBSERVACIÓN DEL VENDEDOR. Prohibido inventar con base de conocimiento u otros productos.`,
+      p.conversationStateText,
+      p.selectedProductText,
+      `\n\n${compactFlowGuide("product_focus", false)}`,
+      p.isCollectingOrder || p.startOrderFlow ? p.orderStateText : "",
+      p.isCollectingOrder || p.startOrderFlow ? p.orderFieldsText : "",
+    ]
+      .filter(Boolean)
+      .join("");
+  }
   return [
     p.identity,
     `\n\n=== MODO DE PROMPT DINÁMICO ===\nmodo: ${p.promptMode}\nUsa solo el contexto incluido aquí. Para detalles del producto elegido, prioriza PRODUCTO ELEGIDO y BASE DE CONOCIMIENTO relevante; no reinicies búsqueda ni envías otra ronda de imágenes salvo que el cliente pida otros productos.`,
@@ -147,16 +161,36 @@ export function buildCompactSystemPrompt(p: SystemPromptParts): string {
     ? clipBlock(p.activePackageContextText, 900)
     : "";
 
-  const knowledgeTurn = buildKnowledgeTurnBlock(p);
+  const knowledgeTurn =
+    p.promptMode === "product_focus" ? "" : buildKnowledgeTurnBlock(p);
   const includeOrder = p.isCollectingOrder || p.startOrderFlow || p.promptMode === "pedido";
   const includeProduct =
     !!p.selectedProductText &&
-    (p.promptMode === "product_detail" || includeOrder || p.startOrderFlow);
+    (p.promptMode === "product_detail" ||
+      p.promptMode === "product_focus" ||
+      includeOrder ||
+      p.startOrderFlow);
   const includeRecentProducts =
     !!p.recentProductsBlock && looksLikeNumberSelection(p.lastUserText);
   const includeFecha =
     !!p.fechaLine &&
     (p.needsPriceContext || includeOrder || /\b(ma[nñ]ana|entrega|llega|horario)\b/i.test(p.lastUserText));
+
+  // En product_focus: identidad corta + producto/observación + reglas + historial (sin KB/paquetes)
+  if (p.promptMode === "product_focus") {
+    return [
+      clipIdentityPrompt(p.identity, 600),
+      modeLine,
+      p.conversationStateText,
+      `\n\n${COMPACT_RULES}`,
+      includeProduct ? p.selectedProductText : "",
+      `\n\n${compactFlowGuide(p.promptMode, false)}`,
+      includeOrder ? p.orderStateText : "",
+      includeOrder ? clipBlock(p.orderFieldsText, 1200) : "",
+    ]
+      .filter(Boolean)
+      .join("");
+  }
 
   return [
     identity,

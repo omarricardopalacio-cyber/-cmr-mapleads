@@ -216,7 +216,7 @@ async function loadProduct(orgId: string, productId: string) {
   return product;
 }
 
-function buildSnapshot(product: any) {
+function buildSnapshot(product: any, previous?: Record<string, unknown> | null) {
   return {
     id: product.id,
     name: product.name,
@@ -233,6 +233,7 @@ function buildSnapshot(product: any) {
     source: "store_web",
     _lock: true,
     _catalog_search: null,
+    _previous_product: previous || null,
   };
 }
 
@@ -261,7 +262,20 @@ export async function focusStoreProduct(opts: {
     ? String((thread as any).focused_product_id)
     : null;
   const switched = prevId !== String(product.id);
-  const snapshot = buildSnapshot(product);
+  const oldSnap = (thread as any)?.focused_product_snapshot as Record<string, unknown> | null;
+  const previousBlock =
+    switched && oldSnap?.id && String(oldSnap.id) !== String(product.id)
+      ? {
+          id: oldSnap.id,
+          name: oldSnap.name,
+          price: oldSnap.price ?? null,
+          sku: oldSnap.sku ?? null,
+          description: oldSnap.description ?? null,
+          category: oldSnap.category ?? null,
+          ai_observation: oldSnap.ai_observation ?? null,
+        }
+      : (oldSnap?._previous_product as Record<string, unknown> | null) || null;
+  const snapshot = buildSnapshot(product, previousBlock);
 
   await supabaseAdmin
     .from("threads")
@@ -322,7 +336,32 @@ export async function presentProductToThread(opts: {
   const product = await loadProduct(opts.orgId, opts.productId);
   if (!product) return null;
 
-  const snapshot = buildSnapshot(product);
+  const { data: existingThread } = await supabaseAdmin
+    .from("threads")
+    .select("focused_product_id, focused_product_snapshot")
+    .eq("id", opts.threadId)
+    .eq("org_id", opts.orgId)
+    .maybeSingle();
+  const oldSnap = (existingThread as any)?.focused_product_snapshot as Record<string, unknown> | null;
+  const oldId = (existingThread as any)?.focused_product_id
+    ? String((existingThread as any).focused_product_id)
+    : oldSnap?.id
+      ? String(oldSnap.id)
+      : null;
+  const previousBlock =
+    oldId && oldId !== String(product.id) && oldSnap
+      ? {
+          id: oldSnap.id,
+          name: oldSnap.name,
+          price: oldSnap.price ?? null,
+          sku: oldSnap.sku ?? null,
+          description: oldSnap.description ?? null,
+          category: oldSnap.category ?? null,
+          ai_observation: oldSnap.ai_observation ?? null,
+        }
+      : (oldSnap?._previous_product as Record<string, unknown> | null) || null;
+
+  const snapshot = buildSnapshot(product, previousBlock);
   await supabaseAdmin
     .from("threads")
     .update({

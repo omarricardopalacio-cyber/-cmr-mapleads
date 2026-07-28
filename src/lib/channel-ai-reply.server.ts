@@ -169,22 +169,26 @@ export async function runChannelAiReply(
   if (focusSnap && (focusSnap.name || focusSnap.id)) {
     const obs = focusSnap.ai_observation ? String(focusSnap.ai_observation).trim() : "";
     const pname = String(focusSnap.name || "");
+    const prev = (focusSnap as any)._previous_product as Record<string, unknown> | null;
     historyWithContext = [
       {
         role: "system" as const,
         content: [
           `=== BLOQUEO DE PRODUCTO (OBLIGATORIO) ===`,
           `El cliente está preguntando SOLO por: "${pname}" (id: ${focusSnap.id}).`,
-          `PROHIBIDO mencionar, cotizar o vender OTRO producto (aunque aparezca en el historial).`,
-          `Si el historial habla de otros artículos, IGNÓRALOS. Responde únicamente sobre "${pname}".`,
+          `PROHIBIDO usar base de conocimiento, tarifas u otros productos (aunque aparezcan en el historial).`,
+          `Responde únicamente con la ficha de este producto y la OBSERVACIÓN DEL VENDEDOR.`,
           `- Precio: ${focusSnap.price ?? "consultar"}`,
           focusSnap.sku ? `- SKU: ${focusSnap.sku}` : null,
           focusSnap.category ? `- Categoría: ${focusSnap.category}` : null,
           focusSnap.description
             ? `- Descripción / materiales: ${String(focusSnap.description).slice(0, 1200)}`
             : null,
-          obs ? `\nOBSERVACIÓN DEL VENDEDOR:\n${obs.slice(0, 1500)}` : null,
-          `Si no sabes un dato, dilo y ofrece verificarlo. No inventes otro producto.`,
+          obs ? `\nOBSERVACIÓN DEL VENDEDOR (prioridad máxima):\n${obs.slice(0, 2000)}` : null,
+          prev?.name
+            ? `\nProducto anterior en el hilo: "${prev.name}". Solo úsalo si el cliente lo menciona o compara.`
+            : null,
+          `Si no sabes un dato que no esté arriba, dilo y ofrece verificarlo. No inventes otro producto.`,
         ]
           .filter(Boolean)
           .join("\n"),
