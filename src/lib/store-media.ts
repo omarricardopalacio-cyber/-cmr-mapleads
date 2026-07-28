@@ -29,18 +29,19 @@ export function driveEmbedUrl(url: string): string | null {
   return null;
 }
 
-/** URL reproducible en <video src> (no YouTube/Drive/páginas). */
+/** URL reproducible en <video src> (no YouTube/Drive/páginas/imágenes). */
 export function isDirectPlayableVideo(url: string | null | undefined): boolean {
   if (!url) return false;
   const u = String(url).trim();
   if (!/^https?:\/\//i.test(u)) return false;
   if (youtubeEmbedUrl(u) || vimeoEmbedUrl(u) || driveEmbedUrl(u)) return false;
   if (/dropbox\.com\/s\/|facebook\.com|tiktok\.com|instagram\.com/i.test(u)) return false;
+  // Imágenes nunca son video
+  if (/\.(jpe?g|png|gif|webp|svg|bmp|avif|pdf|html?)(\?|#|$)/i.test(u)) return false;
   if (/\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(u)) return true;
-  if (/supabase\.co\/storage|cloudinary|mux\.com|videodelivery|cdn\.|blob\.core|amazonaws\.com/i.test(u)) {
+  if (/\/video\/|\/videos\/|video_upload|mux\.com|videodelivery|\.m3u8(\?|#|$)/i.test(u)) {
     return true;
   }
-  if (!/\.(jpe?g|png|gif|webp|svg|pdf|html?)(\?|#|$)/i.test(u)) return true;
   return false;
 }
 
@@ -52,7 +53,7 @@ export type StoreMediaMode =
   | { kind: "image"; src: string }
   | { kind: "none" };
 
-/** Prioriza video embebible/directo; si no, imagen. */
+/** Prioriza video embebible/directo real; si no, imagen. */
 export function resolveStoreMedia(
   videoUrl: string | null | undefined,
   imageUrl: string | null | undefined,
@@ -66,11 +67,17 @@ export function resolveStoreMedia(
     if (vim) return { kind: "vimeo", embed: vim };
     const drive = driveEmbedUrl(v);
     if (drive) return { kind: "drive", embed: drive };
-    // Intentar siempre <video> si parece URL de archivo/CDN
-    if (isDirectPlayableVideo(v) || /^https?:\/\//i.test(v)) {
+    if (isDirectPlayableVideo(v)) {
       return { kind: "video", src: v };
     }
   }
   if (img) return { kind: "image", src: img };
   return { kind: "none" };
 }
+
+export function hasRealStoreVideo(videoUrl: string | null | undefined): boolean {
+  if (!videoUrl?.trim()) return false;
+  const m = resolveStoreMedia(videoUrl, null);
+  return m.kind === "youtube" || m.kind === "vimeo" || m.kind === "drive" || m.kind === "video";
+}
+

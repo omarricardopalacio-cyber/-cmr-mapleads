@@ -1,4 +1,9 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import {
+  isFlowFieldEnabled,
+  normalizeFlowFieldOrder,
+  type FlowFieldId,
+} from "@/lib/product-chat-flow";
 
 export type FocusStoreProductResult = {
   productId: string;
@@ -7,6 +12,7 @@ export type FocusStoreProductResult = {
   introSent: boolean;
   imageUrl: string | null;
   videoUrl: string | null;
+  galleryImages: string[];
   price: number | null;
   product?: Record<string, unknown>;
 };
@@ -37,31 +43,45 @@ function parseGalleryImages(raw: unknown): string[] {
   return [];
 }
 
+function linesForField(product: any, id: FlowFieldId): string[] {
+  switch (id) {
+    case "name":
+      return [`📦 *${product.name}*`];
+    case "badge":
+      return product.badge ? [`Etiqueta: ${product.badge}`] : [];
+    case "category":
+      return product.category ? [`Categoría: ${product.category}`] : [];
+    case "price":
+      return [`Precio: ${formatCop(product.price)}`];
+    case "sku":
+      return product.sku ? [`SKU: ${product.sku}`] : [];
+    case "stock":
+      return product.stock != null ? [`Stock: ${product.stock}`] : [];
+    case "image":
+      return product.image_url ? [`Imagen: ${product.image_url}`] : [];
+    case "video":
+      return product.video_url ? [`Video: ${product.video_url}`] : [];
+    case "description":
+      return product.description
+        ? [`Descripción: ${String(product.description).slice(0, 800)}`]
+        : [];
+    case "gallery": {
+      const gallery = parseGalleryImages(product.gallery_images);
+      if (!gallery.length) return [];
+      return [`Galería (${gallery.length}):`, ...gallery.map((u, i) => `${i + 1}. ${u}`)];
+    }
+    default:
+      return [];
+  }
+}
+
 function buildSpecs(product: any) {
   const flow = (product.chat_flow as Record<string, unknown>) || {};
-  // Nombre siempre; el resto se activa/desactiva por producto
-  const lines: string[] = [`📦 *${product.name}*`];
-  if (flow.send_badge !== false && product.badge) lines.push(`Etiqueta: ${product.badge}`);
-  if (flow.send_category !== false && product.category) {
-    lines.push(`Categoría: ${product.category}`);
-  }
-  if (flow.send_price !== false) lines.push(`Precio: ${formatCop(product.price)}`);
-  if (flow.send_sku !== false && product.sku) lines.push(`SKU: ${product.sku}`);
-  if (flow.send_stock !== false && product.stock != null) {
-    lines.push(`Stock: ${product.stock}`);
-  }
-  if (flow.send_image === true && product.image_url) {
-    lines.push(`Imagen: ${product.image_url}`);
-  }
-  if (flow.send_description === true && product.description) {
-    lines.push(`Descripción: ${String(product.description).slice(0, 800)}`);
-  }
-  if (flow.send_gallery === true) {
-    const gallery = parseGalleryImages(product.gallery_images);
-    if (gallery.length) {
-      lines.push(`Galería (${gallery.length}):`);
-      gallery.forEach((u, i) => lines.push(`${i + 1}. ${u}`));
-    }
+  const order = normalizeFlowFieldOrder(flow.field_order);
+  const lines: string[] = [];
+  for (const id of order) {
+    if (!isFlowFieldEnabled(flow, id)) continue;
+    lines.push(...linesForField(product, id));
   }
   return lines.join("\n");
 }
@@ -197,6 +217,7 @@ export async function focusStoreProduct(opts: {
     introSent,
     imageUrl: product.image_url ? String(product.image_url) : null,
     videoUrl: product.video_url ? String(product.video_url) : null,
+    galleryImages: parseGalleryImages(product.gallery_images),
     price: product.price != null ? Number(product.price) : null,
     product,
   };
@@ -338,6 +359,7 @@ export async function presentProductToThread(opts: {
     introSent: true,
     imageUrl: product.image_url ? String(product.image_url) : null,
     videoUrl: product.video_url ? String(product.video_url) : null,
+    galleryImages: parseGalleryImages(product.gallery_images),
     price: product.price != null ? Number(product.price) : null,
     product,
   };

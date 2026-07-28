@@ -7,13 +7,20 @@ import {
   updateStoreProduct,
   uploadProductImage,
 } from "@/lib/catalog-products.functions";
+import {
+  DEFAULT_FLOW_FIELD_ORDER,
+  FLOW_FIELD_LABELS,
+  isFlowFieldEnabled,
+  normalizeFlowFieldOrder,
+  type FlowFieldId,
+} from "@/lib/product-chat-flow";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Search, Package, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { Search, Package, Pencil, Plus, Trash2, Upload, ChevronUp, ChevronDown } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/catalog")({
   component: CatalogProductsPage,
@@ -28,8 +35,10 @@ type ChatFlowFlags = {
   send_badge?: boolean;
   send_category?: boolean;
   send_image?: boolean;
+  send_video?: boolean;
   send_description?: boolean;
   send_gallery?: boolean;
+  field_order?: FlowFieldId[];
 };
 
 type CatalogRow = {
@@ -111,8 +120,10 @@ function CatalogProductsPage() {
     send_badge: true,
     send_category: true,
     send_image: false,
+    send_video: false,
     send_description: false,
     send_gallery: false,
+    field_order: [...DEFAULT_FLOW_FIELD_ORDER] as FlowFieldId[],
     newGalleryUrl: "",
   });
 
@@ -176,8 +187,10 @@ function CatalogProductsPage() {
       send_badge: flow.send_badge !== false,
       send_category: flow.send_category !== false,
       send_image: flow.send_image === true,
+      send_video: flow.send_video === true,
       send_description: flow.send_description === true,
       send_gallery: flow.send_gallery === true,
+      field_order: normalizeFlowFieldOrder(flow.field_order),
       newGalleryUrl: "",
     });
   }
@@ -244,8 +257,10 @@ function CatalogProductsPage() {
             send_badge: form.send_badge,
             send_category: form.send_category,
             send_image: form.send_image,
+            send_video: form.send_video,
             send_description: form.send_description,
             send_gallery: form.send_gallery,
+            field_order: form.field_order,
           },
         },
       }),
@@ -260,16 +275,56 @@ function CatalogProductsPage() {
   const askPreview =
     form.chat_ask_text.trim() || "¿Dime qué te gustaría saber del producto?";
 
-  const fieldToggles: { key: keyof typeof form; label: string; note?: string }[] = [
-    { key: "send_price", label: "Precio" },
-    { key: "send_stock", label: "Stock" },
-    { key: "send_sku", label: "SKU" },
-    { key: "send_badge", label: "Etiqueta" },
-    { key: "send_category", label: "Categoría" },
-    { key: "send_image", label: "URL imagen principal", note: "en la ficha de texto" },
-    { key: "send_description", label: "Descripción" },
-    { key: "send_gallery", label: "Imágenes extra (galería)", note: "URLs en la ficha" },
-  ];
+  const flowFlags = {
+    send_price: form.send_price,
+    send_stock: form.send_stock,
+    send_sku: form.send_sku,
+    send_badge: form.send_badge,
+    send_category: form.send_category,
+    send_image: form.send_image,
+    send_video: form.send_video,
+    send_description: form.send_description,
+    send_gallery: form.send_gallery,
+  };
+
+  function setFlowFieldEnabled(id: FlowFieldId, enabled: boolean) {
+    if (id === "name") return;
+    const map: Record<Exclude<FlowFieldId, "name">, keyof typeof form> = {
+      badge: "send_badge",
+      category: "send_category",
+      price: "send_price",
+      sku: "send_sku",
+      stock: "send_stock",
+      image: "send_image",
+      video: "send_video",
+      description: "send_description",
+      gallery: "send_gallery",
+    };
+    setForm({ ...form, [map[id]]: enabled });
+  }
+
+  function moveFlowField(from: number, to: number) {
+    if (to < 1 || to >= form.field_order.length) return; // 0 = name fixed
+    if (from < 1) return;
+    const next = [...form.field_order];
+    const [item] = next.splice(from, 1);
+    if (!item) return;
+    next.splice(to, 0, item);
+    setForm({ ...form, field_order: normalizeFlowFieldOrder(next) });
+  }
+
+  function moveGallery(from: number, to: number) {
+    if (to < 0 || to >= form.gallery_images.length) return;
+    const next = [...form.gallery_images];
+    const [item] = next.splice(from, 1);
+    if (!item) return;
+    next.splice(to, 0, item);
+    setForm({ ...form, gallery_images: next });
+  }
+
+  const orderedPreviewLabels = form.field_order
+    .filter((id) => isFlowFieldEnabled(flowFlags, id))
+    .map((id) => FLOW_FIELD_LABELS[id]);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
@@ -408,18 +463,20 @@ function CatalogProductsPage() {
                   <div className="rounded-md border bg-muted/30 p-3 text-xs">
                     <p className="mb-2 font-semibold">Vista previa del flujo automático</p>
                     <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
-                      <li>Media fija arriba (imagen/video del producto)</li>
+                      <li>Media fija arriba (imagen/video + galería con flechas)</li>
                       {selected.chat_flow?.send_specs !== false ? (
                         <li>
-                          Ficha: Nombre
-                          {selected.chat_flow?.send_badge !== false ? " · Etiqueta" : ""}
-                          {selected.chat_flow?.send_category !== false ? " · Categoría" : ""}
-                          {selected.chat_flow?.send_price !== false ? " · Precio" : ""}
-                          {selected.chat_flow?.send_sku !== false ? " · SKU" : ""}
-                          {selected.chat_flow?.send_stock !== false ? " · Stock" : ""}
-                          {selected.chat_flow?.send_image === true ? " · URL imagen" : ""}
-                          {selected.chat_flow?.send_description === true ? " · Descripción" : ""}
-                          {selected.chat_flow?.send_gallery === true ? " · Galería" : ""}
+                          Ficha (
+                          {normalizeFlowFieldOrder(selected.chat_flow?.field_order)
+                            .filter((id) =>
+                              isFlowFieldEnabled(
+                                (selected.chat_flow || {}) as Record<string, unknown>,
+                                id,
+                              ),
+                            )
+                            .map((id) => FLOW_FIELD_LABELS[id])
+                            .join(" → ") || "Nombre"}
+                          )
                         </li>
                       ) : null}
                       {selected.chat_flow?.send_ask !== false ? (
@@ -534,8 +591,8 @@ function CatalogProductsPage() {
                   <div className="rounded-md border p-3 space-y-3">
                     <p className="text-sm font-semibold">Flujo automático del chat</p>
                     <p className="text-[11px] text-muted-foreground">
-                      El <span className="font-semibold text-foreground">Nombre</span> siempre se envía.
-                      Activa o desactiva el resto de datos de la ficha.
+                      Activa cada dato y usa ↑↓ para definir el <span className="font-semibold text-foreground">orden de envío</span> en la ficha.
+                      El Nombre siempre va primero.
                     </p>
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="send-specs">Enviar ficha</Label>
@@ -546,27 +603,64 @@ function CatalogProductsPage() {
                       />
                     </div>
                     {form.send_specs ? (
-                      <div className="space-y-2 rounded border bg-muted/20 p-2">
-                        <div className="flex items-center justify-between gap-2 opacity-70">
-                          <Label>Nombre</Label>
-                          <Switch checked disabled />
-                        </div>
-                        {fieldToggles.map((t) => (
-                          <div key={t.key} className="flex items-center justify-between gap-2">
-                            <Label htmlFor={`flow-${t.key}`}>
-                              {t.label}
-                              {t.note ? (
-                                <span className="ml-1 text-[10px] text-muted-foreground">({t.note})</span>
-                              ) : null}
-                            </Label>
-                            <Switch
-                              id={`flow-${t.key}`}
-                              checked={Boolean(form[t.key])}
-                              onCheckedChange={(v) => setForm({ ...form, [t.key]: v })}
-                            />
-                          </div>
-                        ))}
-                      </div>
+                      <ul className="space-y-1.5 rounded border bg-muted/20 p-2">
+                        {form.field_order.map((id, i) => {
+                          const enabled = isFlowFieldEnabled(flowFlags, id);
+                          const locked = id === "name";
+                          return (
+                            <li
+                              key={id}
+                              className={`flex items-center gap-2 rounded border bg-background/60 px-2 py-1.5 ${
+                                enabled ? "" : "opacity-55"
+                              }`}
+                            >
+                              <span className="w-5 shrink-0 text-center text-[11px] font-semibold text-muted-foreground">
+                                {i + 1}
+                              </span>
+                              <div className="flex shrink-0 flex-col">
+                                <button
+                                  type="button"
+                                  className="rounded p-0.5 hover:bg-muted disabled:opacity-25"
+                                  disabled={locked || i <= 1}
+                                  aria-label="Subir en el orden"
+                                  onClick={() => moveFlowField(i, i - 1)}
+                                >
+                                  <ChevronUp className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded p-0.5 hover:bg-muted disabled:opacity-25"
+                                  disabled={locked || i >= form.field_order.length - 1}
+                                  aria-label="Bajar en el orden"
+                                  onClick={() => moveFlowField(i, i + 1)}
+                                >
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              <Label
+                                htmlFor={`flow-field-${id}`}
+                                className="min-w-0 flex-1 text-sm leading-tight"
+                              >
+                                {FLOW_FIELD_LABELS[id]}
+                                {id === "image" ||
+                                id === "video" ||
+                                id === "description" ||
+                                id === "gallery" ? (
+                                  <span className="ml-1 text-[10px] text-muted-foreground">
+                                    (en la ficha)
+                                  </span>
+                                ) : null}
+                              </Label>
+                              <Switch
+                                id={`flow-field-${id}`}
+                                checked={enabled}
+                                disabled={locked}
+                                onCheckedChange={(v) => setFlowFieldEnabled(id, v)}
+                              />
+                            </li>
+                          );
+                        })}
+                      </ul>
                     ) : null}
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="send-ask">Enviar pregunta</Label>
@@ -585,17 +679,45 @@ function CatalogProductsPage() {
                       />
                     </div>
                     <div className="rounded bg-muted/40 p-2 text-[11px] text-muted-foreground">
-                      Vista previa: media arriba →{" "}
-                      {form.send_specs ? "ficha → " : ""}
-                      {form.send_ask ? `“${askPreview}”` : "(sin pregunta)"}
+                      Orden de envío:{" "}
+                      <span className="text-foreground">
+                        {form.send_specs
+                          ? orderedPreviewLabels.join(" → ") || "Nombre"
+                          : "(sin ficha)"}
+                      </span>
+                      {form.send_ask ? ` → “${askPreview}”` : ""}
                     </div>
                   </div>
 
                   <div className="space-y-2 rounded-md border p-3">
-                    <Label>Imágenes extra (galería)</Label>
-                    <p className="text-[11px] text-muted-foreground">
-                      Sube un archivo o pega una URL. Guarda el producto para persistir los cambios.
-                    </p>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <Label>Imágenes extra (galería)</Label>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          Orden = orden en el chat (flechas del carrusel). Sube archivo o pega URL.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Label htmlFor="send-gallery-flow" className="text-xs whitespace-nowrap">
+                          Enviar en el flujo
+                        </Label>
+                        <Switch
+                          id="send-gallery-flow"
+                          checked={form.send_gallery}
+                          onCheckedChange={(v) => setForm({ ...form, send_gallery: v })}
+                        />
+                      </div>
+                    </div>
+                    {form.send_gallery ? (
+                      <p className="rounded bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                        Las URLs de la galería (en este orden) se incluirán en la ficha automática del chat.
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        Las imágenes sí se ven con las flechas del chat; no se listan en el texto de la ficha
+                        hasta activar “Enviar en el flujo”.
+                      </p>
+                    )}
                     <div className="flex flex-wrap gap-2">
                       <input
                         ref={galleryFileRef}
@@ -646,20 +768,50 @@ function CatalogProductsPage() {
                     {form.gallery_images.length === 0 ? (
                       <p className="text-[11px] text-muted-foreground">Sin imágenes en galería.</p>
                     ) : (
-                      <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      <ul className="space-y-2">
                         {form.gallery_images.map((url, i) => (
-                          <li key={`${url}-${i}`} className="group relative overflow-hidden rounded border">
+                          <li
+                            key={`${url}-${i}`}
+                            className="flex items-center gap-2 rounded border bg-muted/20 p-1.5"
+                          >
+                            <span className="flex h-8 w-6 shrink-0 items-center justify-center text-[11px] font-semibold text-muted-foreground">
+                              {i + 1}
+                            </span>
                             <img
                               src={url}
                               alt=""
-                              className="aspect-square w-full bg-muted object-cover"
+                              className="h-12 w-12 shrink-0 rounded object-cover bg-muted"
                               onError={(e) => {
                                 (e.target as HTMLImageElement).style.opacity = "0.25";
                               }}
                             />
+                            <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
+                              {url}
+                            </span>
+                            <div className="flex shrink-0 flex-col gap-0.5">
+                              <button
+                                type="button"
+                                className="rounded p-1 hover:bg-muted disabled:opacity-30"
+                                disabled={i === 0}
+                                aria-label="Subir"
+                                onClick={() => moveGallery(i, i - 1)}
+                              >
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded p-1 hover:bg-muted disabled:opacity-30"
+                                disabled={i === form.gallery_images.length - 1}
+                                aria-label="Bajar"
+                                onClick={() => moveGallery(i, i + 1)}
+                              >
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                             <button
                               type="button"
-                              className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white"
+                              className="rounded p-1.5 text-rose-500 hover:bg-rose-500/10"
+                              aria-label="Quitar"
                               onClick={() =>
                                 setForm({
                                   ...form,
@@ -667,7 +819,7 @@ function CatalogProductsPage() {
                                 })
                               }
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </li>
                         ))}

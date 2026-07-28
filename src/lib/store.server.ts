@@ -132,12 +132,30 @@ export type StoreProductRow = {
   stock?: number | null;
   image_url?: string | null;
   video_url?: string | null;
+  gallery_images?: string[] | null;
   slug?: string | null;
   sku?: string | null;
   badge?: string | null;
   category?: string | null;
   is_active?: boolean;
 };
+
+function parseProductGallery(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((u): u is string => typeof u === "string" && !!u.trim())
+      .map((u) => u.trim())
+      .slice(0, 12);
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      return parseProductGallery(JSON.parse(raw));
+    } catch {
+      if (raw.startsWith("http")) return [raw.trim()];
+    }
+  }
+  return [];
+}
 
 export async function listStoreProducts(
   orgId: string,
@@ -146,6 +164,8 @@ export async function listStoreProducts(
   const limit = Math.min(Math.max(opts?.limit ?? 24, 1), 48);
   const offset = Math.max(opts?.offset ?? 0, 0);
 
+  const selectWithGallery =
+    "id, name, description, price, stock, image_url, video_url, gallery_images, slug, sku, badge, category, is_active";
   const selectWithCat =
     "id, name, description, price, stock, image_url, video_url, slug, sku, badge, category, is_active";
   const selectLegacy =
@@ -153,7 +173,7 @@ export async function listStoreProducts(
 
   let query = (supabaseAdmin as any)
     .from("products")
-    .select(selectWithCat, { count: "exact" })
+    .select(selectWithGallery, { count: "exact" })
     .eq("org_id", orgId)
     .eq("is_active", true)
     .order("name", { ascending: true })
@@ -162,7 +182,7 @@ export async function listStoreProducts(
   if (opts?.id) {
     query = (supabaseAdmin as any)
       .from("products")
-      .select(selectWithCat)
+      .select(selectWithGallery)
       .eq("org_id", orgId)
       .eq("id", opts.id)
       .limit(1);
@@ -177,6 +197,34 @@ export async function listStoreProducts(
   }
 
   let { data, error, count } = await query;
+
+  if (error && (error.message?.includes("gallery_images") || error.code === "42703")) {
+    let qGal = (supabaseAdmin as any)
+      .from("products")
+      .select(selectWithCat, { count: "exact" })
+      .eq("org_id", orgId)
+      .eq("is_active", true)
+      .order("name", { ascending: true })
+      .range(offset, offset + limit - 1);
+    if (opts?.id) {
+      qGal = (supabaseAdmin as any)
+        .from("products")
+        .select(selectWithCat)
+        .eq("org_id", orgId)
+        .eq("id", opts.id)
+        .limit(1);
+    } else {
+      if (opts?.q?.trim()) {
+        const q = opts.q.trim().replace(/%/g, "");
+        qGal = qGal.or(`name.ilike.%${q}%,description.ilike.%${q}%,sku.ilike.%${q}%`);
+      }
+      if (opts?.category?.trim()) qGal = qGal.eq("category", opts.category.trim());
+    }
+    const galRes = await qGal;
+    data = galRes.data;
+    error = galRes.error;
+    count = galRes.count;
+  }
 
   if (error && (error.message?.includes("category") || error.code === "42703")) {
     let q2 = (supabaseAdmin as any)
@@ -204,7 +252,10 @@ export async function listStoreProducts(
   }
 
   if (error) throw new Error(error.message);
-  const products = (data ?? []) as StoreProductRow[];
+  const products = ((data ?? []) as any[]).map((row) => ({
+    ...row,
+    gallery_images: parseProductGallery(row.gallery_images),
+  })) as StoreProductRow[];
   const total = typeof count === "number" ? count : products.length;
   return {
     products,

@@ -145,8 +145,26 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
             send_badge: z.boolean().optional(),
             send_category: z.boolean().optional(),
             send_image: z.boolean().optional(),
+            send_video: z.boolean().optional(),
             send_description: z.boolean().optional(),
             send_gallery: z.boolean().optional(),
+            field_order: z
+              .array(
+                z.enum([
+                  "name",
+                  "badge",
+                  "category",
+                  "price",
+                  "sku",
+                  "stock",
+                  "image",
+                  "video",
+                  "description",
+                  "gallery",
+                ]),
+              )
+              .max(20)
+              .optional(),
           })
           .optional(),
         is_active: z.boolean().optional(),

@@ -13,4 +13,4 @@ COMMENT ON COLUMN public.products.chat_ask_text IS
 COMMENT ON COLUMN public.products.gallery_images IS
   'URLs de imágenes extra del producto (galería)';
 COMMENT ON COLUMN public.products.chat_flow IS
-  'Flags: send_specs, send_ask, send_price, send_stock, send_sku, send_badge, send_category, send_image, send_description, send_gallery';
+  'Flags + field_order: send_specs/ask/price/stock/sku/badge/category/image/video/description/gallery';

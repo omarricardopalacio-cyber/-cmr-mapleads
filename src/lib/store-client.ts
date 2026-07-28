@@ -19,6 +19,7 @@ export type StoreProduct = {
   stock?: number | null;
   image_url?: string | null;
   video_url?: string | null;
+  gallery_images?: string[] | null;
   slug?: string | null;
   sku?: string | null;
   badge?: string | null;
@@ -128,6 +129,7 @@ export async function openChatSession(
       introSent: boolean;
       imageUrl: string | null;
       videoUrl: string | null;
+      galleryImages?: string[];
       price: number | null;
     } | null;
     brandName: string;

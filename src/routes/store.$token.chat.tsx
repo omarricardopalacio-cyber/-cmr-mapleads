@@ -11,14 +11,14 @@ import {
   sendChatMessage,
   visitorStorageKey,
 } from "@/lib/store-client";
-import { ArrowLeft, Gift, Play, Send } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Gift, Play, Send } from "lucide-react";
 import {
   StoreInstallBanner,
   clearStoreBadgeAndMarkRead,
   enableStorePush,
   registerStoreServiceWorker,
 } from "@/components/store/StoreInstallBanner";
-import { resolveStoreMedia } from "@/lib/store-media";
+import { hasRealStoreVideo, resolveStoreMedia } from "@/lib/store-media";
 
 const searchSchema = z.object({
   productId: z.string().optional(),
@@ -44,6 +44,45 @@ type Bubble = {
   sent_at: string;
 };
 
+type MediaSlide =
+  | { key: string; kind: "video"; videoUrl: string; poster: string | null }
+  | { key: string; kind: "image"; url: string };
+
+function buildMediaSlides(
+  videoUrl: string | null,
+  imageUrl: string | null,
+  galleryImages: string[],
+): MediaSlide[] {
+  const slides: MediaSlide[] = [];
+  const seen = new Set<string>();
+  const addImage = (url: string, key: string) => {
+    const u = url.trim();
+    if (!u || seen.has(u)) return;
+    seen.add(u);
+    slides.push({ key, kind: "image", url: u });
+  };
+
+  if (hasRealStoreVideo(videoUrl)) {
+    slides.push({
+      key: "video",
+      kind: "video",
+      videoUrl: videoUrl!.trim(),
+      poster: imageUrl?.trim() || null,
+    });
+    if (imageUrl?.trim()) seen.add(imageUrl.trim());
+  } else if (imageUrl?.trim()) {
+    addImage(imageUrl, "main");
+  }
+
+  for (let i = 0; i < galleryImages.length; i++) {
+    addImage(galleryImages[i]!, `g-${i}`);
+  }
+
+  // Si no había video/imagen principal pero sí galería, ya están en slides
+  if (slides.length === 0 && imageUrl?.trim()) addImage(imageUrl, "main");
+  return slides;
+}
+
 function mediaKind(media: BubbleMedia): "image" | "video" | null {
   if (!media?.url) return null;
   const t = `${media.type || ""} ${media.mimeType || ""}`.toLowerCase();
@@ -64,27 +103,59 @@ function isValidWhatsApp(raw: string): boolean {
 function StickyProductMedia({
   videoUrl,
   imageUrl,
+  galleryImages = [],
   productName,
 }: {
   videoUrl: string | null;
   imageUrl: string | null;
+  galleryImages?: string[];
   productName: string | null;
 }) {
-  const media = resolveStoreMedia(videoUrl, imageUrl);
+  const slides = buildMediaSlides(videoUrl, imageUrl, galleryImages);
+  const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
 
   useEffect(() => {
+    setIndex(0);
     setPlaying(false);
     setVideoFailed(false);
-  }, [videoUrl, imageUrl]);
+  }, [videoUrl, imageUrl, galleryImages.join("|")]);
 
-  if (media.kind === "none") return null;
+  useEffect(() => {
+    setPlaying(false);
+    setVideoFailed(false);
+  }, [index]);
+
+  if (slides.length === 0) return null;
+
+  const safeIndex = Math.min(index, slides.length - 1);
+  const slide = slides[safeIndex]!;
+  const canNavigate = slides.length > 1;
+
+  const media =
+    slide.kind === "video"
+      ? resolveStoreMedia(slide.videoUrl, slide.poster)
+      : ({ kind: "image" as const, src: slide.url });
 
   const showEmbed =
     media.kind === "youtube" || media.kind === "vimeo" || media.kind === "drive";
-  const canVideo = media.kind === "video" && !videoFailed;
-  const showPoster = (canVideo && !playing) || media.kind === "image" || (media.kind === "video" && videoFailed);
+  const canVideo = slide.kind === "video" && media.kind === "video" && !videoFailed;
+  const showVideoButton = canVideo && !playing;
+
+  const posterSrc =
+    slide.kind === "image"
+      ? slide.url
+      : slide.poster || (media.kind === "image" ? media.src : null);
+
+  const go = (dir: -1 | 1) => {
+    setIndex((i) => {
+      const next = i + dir;
+      if (next < 0) return slides.length - 1;
+      if (next >= slides.length) return 0;
+      return next;
+    });
+  };
 
   return (
     <div className="shrink-0 border-b border-black/10 bg-black shadow-md">
@@ -107,7 +178,7 @@ function StickyProductMedia({
             playsInline
             autoPlay
             preload="auto"
-            poster={imageUrl || undefined}
+            poster={slide.kind === "video" ? slide.poster || undefined : undefined}
             className="absolute inset-0 h-full w-full object-cover"
             onError={() => {
               setVideoFailed(true);
@@ -119,19 +190,24 @@ function StickyProductMedia({
           />
         ) : null}
 
-        {showPoster && (imageUrl || media.kind === "image") ? (
+        {!showEmbed &&
+        (slide.kind === "image" ||
+          (slide.kind === "video" && (!playing || videoFailed)) ||
+          (slide.kind === "video" && media.kind === "image")) &&
+        posterSrc ? (
           <img
-            src={media.kind === "image" ? media.src : imageUrl!}
+            src={posterSrc}
             alt={productName || "Producto"}
             className="absolute inset-0 h-full w-full object-cover"
           />
         ) : null}
 
-        {canVideo && !playing ? (
+        {/* Solo si hay video real en esta diapositiva */}
+        {showVideoButton ? (
           <button
             type="button"
             onClick={() => setPlaying(true)}
-            className="absolute inset-0 flex items-center justify-center bg-black/30"
+            className="absolute inset-0 z-[1] flex items-center justify-center bg-black/30"
           >
             <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-bold text-black shadow-lg">
               <Play className="h-5 w-5 fill-black" />
@@ -139,10 +215,45 @@ function StickyProductMedia({
             </span>
           </button>
         ) : null}
+
+        {canNavigate ? (
+          <>
+            <button
+              type="button"
+              aria-label="Anterior"
+              onClick={() => go(-1)}
+              className="absolute left-2 top-1/2 z-[2] flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white shadow hover:bg-black/75"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Siguiente"
+              onClick={() => go(1)}
+              className="absolute right-2 top-1/2 z-[2] flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white shadow hover:bg-black/75"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+            <div className="absolute bottom-2 left-0 right-0 z-[2] flex justify-center gap-1.5">
+              {slides.map((s, i) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  aria-label={`Media ${i + 1}`}
+                  onClick={() => setIndex(i)}
+                  className={`h-1.5 rounded-full transition-all ${
+                    i === safeIndex ? "w-4 bg-white" : "w-1.5 bg-white/45"
+                  }`}
+                />
+              ))}
+            </div>
+          </>
+        ) : null}
       </div>
       {productName ? (
         <p className="truncate bg-[#0b101a] px-3 py-1.5 text-center text-[11px] font-medium text-white/70">
           {productName}
+          {canNavigate ? ` · ${safeIndex + 1}/${slides.length}` : ""}
         </p>
       ) : null}
     </div>
@@ -275,6 +386,7 @@ function StoreChatPage() {
   const [focusedName, setFocusedName] = useState<string | null>(search.productName || null);
   const [stickyImage, setStickyImage] = useState<string | null>(null);
   const [stickyVideo, setStickyVideo] = useState<string | null>(null);
+  const [stickyGallery, setStickyGallery] = useState<string[]>([]);
   const [brandName, setBrandName] = useState("Tienda");
   const [pushEnabled, setPushEnabled] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -373,14 +485,20 @@ function StoreChatPage() {
 
         let img = session.productFocus?.imageUrl || null;
         let vid = session.productFocus?.videoUrl || null;
+        let gallery = Array.isArray(session.productFocus?.galleryImages)
+          ? [...session.productFocus.galleryImages]
+          : [];
 
-        if (search.productId && (!img || !vid)) {
+        if (search.productId && (!img || !vid || gallery.length === 0)) {
           try {
             const res = await fetchStoreProducts(token, { id: search.productId });
             const p = res.products[0];
             if (p) {
               if (!img && p.image_url) img = p.image_url;
               if (!vid && p.video_url) vid = p.video_url;
+              if (gallery.length === 0 && Array.isArray(p.gallery_images)) {
+                gallery = p.gallery_images.filter((u): u is string => typeof u === "string" && !!u.trim());
+              }
               if (!session.productFocus?.productName) setFocusedName(p.name);
             }
           } catch {
@@ -391,6 +509,7 @@ function StoreChatPage() {
         if (!cancelled) {
           setStickyImage(img);
           setStickyVideo(vid);
+          setStickyGallery(gallery);
           stickToBottom.current = true;
           await refresh(session.visitorToken, { forceScroll: true });
           setReady(true);
@@ -504,10 +623,11 @@ function StoreChatPage() {
         </div>
       </div>
 
-      {(stickyVideo || stickyImage) ? (
+      {(stickyVideo || stickyImage || stickyGallery.length > 0) ? (
         <StickyProductMedia
           videoUrl={stickyVideo}
           imageUrl={stickyImage}
+          galleryImages={stickyGallery}
           productName={focusedName}
         />
       ) : null}
