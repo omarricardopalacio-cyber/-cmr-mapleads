@@ -2,6 +2,7 @@ import { Outlet, createFileRoute, Link, useParams } from "@tanstack/react-router
 import { useEffect, useState } from "react";
 import { fetchStoreConfig, type StoreConfigPublic } from "@/lib/store-client";
 import { MessageCircle, Store } from "lucide-react";
+import { registerStoreServiceWorker } from "@/components/store/StoreInstallBanner";
 
 export const Route = createFileRoute("/store/$token")({
   component: StoreLayout,
@@ -16,6 +17,17 @@ function upsertMeta(attr: "name" | "property", key: string, content: string) {
     document.head.appendChild(el);
   }
   el.content = content;
+}
+
+function upsertLink(rel: string, href: string) {
+  if (typeof document === "undefined") return;
+  let el = document.head.querySelector(`link[rel="${rel}"]`) as HTMLLinkElement | null;
+  if (!el) {
+    el = document.createElement("link");
+    el.rel = rel;
+    document.head.appendChild(el);
+  }
+  el.href = href;
 }
 
 function StoreLayout() {
@@ -38,6 +50,10 @@ function StoreLayout() {
   }, [token]);
 
   useEffect(() => {
+    registerStoreServiceWorker().catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (!cfg) return;
     const primary = cfg.primaryColor || "#0056AD";
     const accent = cfg.accentColor || "#FF2D95";
@@ -50,6 +66,10 @@ function StoreLayout() {
     const url = typeof window !== "undefined" ? window.location.href : "";
 
     upsertMeta("name", "description", desc);
+    upsertMeta("name", "theme-color", accent || "#008069");
+    upsertMeta("name", "mobile-web-app-capable", "yes");
+    upsertMeta("name", "apple-mobile-web-app-capable", "yes");
+    upsertMeta("name", "apple-mobile-web-app-title", cfg.brandName.slice(0, 12));
     upsertMeta("property", "og:title", cfg.socialTitle || cfg.brandName);
     upsertMeta("property", "og:description", desc);
     upsertMeta("property", "og:type", "website");
@@ -59,7 +79,13 @@ function StoreLayout() {
     upsertMeta("name", "twitter:title", cfg.socialTitle || cfg.brandName);
     upsertMeta("name", "twitter:description", desc);
     if (image) upsertMeta("name", "twitter:image", image);
-  }, [cfg]);
+
+    const manifestHref = `/store-manifest?token=${encodeURIComponent(token)}&name=${encodeURIComponent(cfg.brandName)}&theme=${encodeURIComponent(accent || "#008069")}${
+      cfg.logoUrl ? `&logo=${encodeURIComponent(cfg.logoUrl)}` : ""
+    }&start=chat`;
+    upsertLink("manifest", manifestHref);
+    upsertLink("apple-touch-icon", cfg.logoUrl || "/store-pwa-icon.svg");
+  }, [cfg, token]);
 
   if (err) {
     return (
@@ -164,11 +190,6 @@ function StoreLayout() {
       <div className="relative z-10 flex-1">
         <Outlet />
       </div>
-
-      <link
-        rel="manifest"
-        href={`/store-manifest?token=${encodeURIComponent(token)}&name=${encodeURIComponent(cfg.brandName)}`}
-      />
     </div>
   );
 }

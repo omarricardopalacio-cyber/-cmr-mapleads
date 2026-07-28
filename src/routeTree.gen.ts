@@ -50,6 +50,7 @@ import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/pub
 import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public/mapleads/ingest'
 import { Route as ApiPublicStoreConfigRouteImport } from './routes/api/public/store/config'
 import { Route as ApiPublicStoreProductsRouteImport } from './routes/api/public/store/products'
+import { Route as ApiPublicStorePushRouteImport } from './routes/api/public/store/push'
 import { Route as StoreTokenProductProductIdRouteImport } from './routes/store.$token.product.$productId'
 import { Route as ApiPublicStoreChatMessagesRouteImport } from './routes/api/public/store/chat/messages'
 import { Route as ApiPublicStoreChatSessionRouteImport } from './routes/api/public/store/chat/session'
@@ -271,6 +272,11 @@ const ApiPublicStoreProductsRoute = ApiPublicStoreProductsRouteImport.update({
   path: '/api/public/store/products',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicStorePushRoute = ApiPublicStorePushRouteImport.update({
+  id: '/api/public/store/push',
+  path: '/api/public/store/push',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StoreTokenProductProductIdRoute =
   StoreTokenProductProductIdRouteImport.update({
     id: '/product/$productId',
@@ -331,6 +337,7 @@ export interface FileRoutesByFullPath {
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
   '/api/public/store/config': typeof ApiPublicStoreConfigRoute
   '/api/public/store/products': typeof ApiPublicStoreProductsRoute
+  '/api/public/store/push': typeof ApiPublicStorePushRoute
   '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
   '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
   '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
@@ -374,6 +381,7 @@ export interface FileRoutesByTo {
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
   '/api/public/store/config': typeof ApiPublicStoreConfigRoute
   '/api/public/store/products': typeof ApiPublicStoreProductsRoute
+  '/api/public/store/push': typeof ApiPublicStorePushRoute
   '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
   '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
   '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
@@ -421,6 +429,7 @@ export interface FileRoutesById {
   '/api/public/mapleads/ingest': typeof ApiPublicMapleadsIngestRoute
   '/api/public/store/config': typeof ApiPublicStoreConfigRoute
   '/api/public/store/products': typeof ApiPublicStoreProductsRoute
+  '/api/public/store/push': typeof ApiPublicStorePushRoute
   '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
   '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
   '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
@@ -468,6 +477,7 @@ export interface FileRouteTypes {
     | '/api/public/mapleads/ingest'
     | '/api/public/store/config'
     | '/api/public/store/products'
+    | '/api/public/store/push'
     | '/store/$token/product/$productId'
     | '/api/public/store/chat/messages'
     | '/api/public/store/chat/session'
@@ -511,6 +521,7 @@ export interface FileRouteTypes {
     | '/api/public/mapleads/ingest'
     | '/api/public/store/config'
     | '/api/public/store/products'
+    | '/api/public/store/push'
     | '/store/$token/product/$productId'
     | '/api/public/store/chat/messages'
     | '/api/public/store/chat/session'
@@ -557,6 +568,7 @@ export interface FileRouteTypes {
     | '/api/public/mapleads/ingest'
     | '/api/public/store/config'
     | '/api/public/store/products'
+    | '/api/public/store/push'
     | '/store/$token/product/$productId'
     | '/api/public/store/chat/messages'
     | '/api/public/store/chat/session'
@@ -582,6 +594,7 @@ export interface RootRouteChildren {
   ApiPublicMapleadsIngestRoute: typeof ApiPublicMapleadsIngestRoute
   ApiPublicStoreConfigRoute: typeof ApiPublicStoreConfigRoute
   ApiPublicStoreProductsRoute: typeof ApiPublicStoreProductsRoute
+  ApiPublicStorePushRoute: typeof ApiPublicStorePushRoute
   ApiPublicStoreChatMessagesRoute: typeof ApiPublicStoreChatMessagesRoute
   ApiPublicStoreChatSessionRoute: typeof ApiPublicStoreChatSessionRoute
 }
@@ -875,6 +888,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicStoreProductsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/store/push': {
+      id: '/api/public/store/push'
+      path: '/api/public/store/push'
+      fullPath: '/api/public/store/push'
+      preLoaderRoute: typeof ApiPublicStorePushRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/store/$token/product/$productId': {
       id: '/store/$token/product/$productId'
       path: '/product/$productId'
@@ -998,6 +1018,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicMapleadsIngestRoute: ApiPublicMapleadsIngestRoute,
   ApiPublicStoreConfigRoute: ApiPublicStoreConfigRoute,
   ApiPublicStoreProductsRoute: ApiPublicStoreProductsRoute,
+  ApiPublicStorePushRoute: ApiPublicStorePushRoute,
   ApiPublicStoreChatMessagesRoute: ApiPublicStoreChatMessagesRoute,
   ApiPublicStoreChatSessionRoute: ApiPublicStoreChatSessionRoute,
 }

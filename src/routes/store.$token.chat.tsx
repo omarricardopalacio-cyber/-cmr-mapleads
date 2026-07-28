@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
   fetchChatMessages,
+  fetchStoreConfig,
   fetchStoreProducts,
   loadStoreLead,
   openChatSession,
@@ -11,6 +12,12 @@ import {
   visitorStorageKey,
 } from "@/lib/store-client";
 import { ArrowLeft, Gift, Send } from "lucide-react";
+import {
+  StoreInstallBanner,
+  clearStoreBadgeAndMarkRead,
+  enableStorePush,
+  registerStoreServiceWorker,
+} from "@/components/store/StoreInstallBanner";
 
 const searchSchema = z.object({
   productId: z.string().optional(),
@@ -290,6 +297,8 @@ function StoreChatPage() {
   const [focusedName, setFocusedName] = useState<string | null>(search.productName || null);
   const [stickyImage, setStickyImage] = useState<string | null>(null);
   const [stickyVideo, setStickyVideo] = useState<string | null>(null);
+  const [brandName, setBrandName] = useState("Tienda");
+  const [pushEnabled, setPushEnabled] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -303,7 +312,16 @@ function StoreChatPage() {
       setLeadPhone(existing.phone);
       setLeadReady(true);
     }
+    registerStoreServiceWorker().catch(() => {});
+    fetchStoreConfig(token)
+      .then((c) => setBrandName(c.brandName || "Tienda"))
+      .catch(() => {});
   }, [token]);
+
+  useEffect(() => {
+    if (!visitorToken || !ready) return;
+    clearStoreBadgeAndMarkRead({ storeToken: token, visitorToken }).catch(() => {});
+  }, [visitorToken, ready, token]);
 
   const scrollDown = useCallback((force = false) => {
     if (!force && !stickToBottom.current) return;
@@ -607,6 +625,25 @@ function StoreChatPage() {
           <Send className="h-5 w-5" />
         </button>
       </form>
+
+      {visitorToken && ready ? (
+        <StoreInstallBanner
+          brandName={brandName}
+          pushEnabled={pushEnabled}
+          onEnablePush={async () => {
+            const r = await enableStorePush({
+              storeToken: token,
+              visitorToken,
+            });
+            if (r.ok) {
+              setPushEnabled(true);
+              return true;
+            }
+            setError(r.error || "No se pudieron activar avisos");
+            return false;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

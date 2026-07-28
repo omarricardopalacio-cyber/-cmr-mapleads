@@ -208,6 +208,18 @@ export async function runChannelAiReply(
         .update({ last_message_at: new Date().toISOString() })
         .eq("id", threadId)
         .eq("org_id", orgId);
+
+      try {
+        const { bumpStoreVisitorUnreadAndNotify } = await import("@/lib/store-web-push.server");
+        await bumpStoreVisitorUnreadAndNotify({
+          orgId,
+          threadId,
+          title: "Nuevo mensaje",
+          body: finalReply,
+        });
+      } catch (pushErr) {
+        console.warn("[channel-ai] web push failed", pushErr);
+      }
     } else if (sessionId && chatId) {
       const scheduleAt =
         delayAfterAutoReplies > 0
