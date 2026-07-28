@@ -57,10 +57,10 @@ function compactFlowGuide(promptMode: string, needsPrice: boolean): string {
   }
   if (promptMode === "product_detail" || promptMode === "product_focus") {
     return `=== GUÍA (producto en foco) ===
-1. Prioridad ABSOLUTA: ficha del producto + OBSERVACIÓN DEL VENDEDOR. No uses base de conocimiento ni tarifas de otros productos.
-2. Responde solo de este producto. Si el cliente pide OTRO producto por nombre/SKU, usa present_product para cambiar el foco.
-3. Si menciona un producto anterior y la consulta es compleja, usa historial + ambos bloques de observación.
-4. Si falta un dato exacto y no está en ficha/observación, dilo breve y ofrece verificarlo. No inventes.`;
+1. Prioridad ABSOLUTA: ficha + OBSERVACIÓN DEL VENDEDOR. Ahí están precio, envío y cómo atender. NO uses base de conocimiento ni tarifas de otros productos.
+2. Si el cliente pregunta precio, envío o ciudad: responde YA con lo que diga la OBSERVACIÓN. PROHIBIDO decir "no tengo esa información" o transferir a humano.
+3. Si pide OTRO producto por nombre/SKU, usa present_product. Si compara con el anterior, usa historial + ambos bloques.
+4. Solo si un dato NO aparece en ficha ni observación, dilo breve. No inventes. No transfieras por precio/envío.`;
   }
   return `=== GUÍA (general) ===
 1. Continúa desde el contexto consolidado.
@@ -176,14 +176,13 @@ export function buildCompactSystemPrompt(p: SystemPromptParts): string {
     !!p.fechaLine &&
     (p.needsPriceContext || includeOrder || /\b(ma[nñ]ana|entrega|llega|horario)\b/i.test(p.lastUserText));
 
-  // En product_focus: identidad corta + producto/observación + reglas + historial (sin KB/paquetes)
+  // En product_focus: identidad corta + producto/observación PRIMERO + reglas (sin KB/paquetes)
   if (p.promptMode === "product_focus") {
     return [
-      clipIdentityPrompt(p.identity, 600),
+      clipIdentityPrompt(p.identity, 500),
       modeLine,
-      p.conversationStateText,
-      `\n\n${COMPACT_RULES}`,
       includeProduct ? p.selectedProductText : "",
+      `\n\n${COMPACT_RULES}`,
       `\n\n${compactFlowGuide(p.promptMode, false)}`,
       includeOrder ? p.orderStateText : "",
       includeOrder ? clipBlock(p.orderFieldsText, 1200) : "",

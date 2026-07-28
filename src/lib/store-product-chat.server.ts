@@ -288,6 +288,19 @@ export async function focusStoreProduct(opts: {
     .eq("id", threadId)
     .eq("org_id", orgId);
 
+  if (switched) {
+    console.info("[focusStoreProduct] cambio de producto → nueva observación", {
+      orgId,
+      threadId,
+      from: prevId,
+      to: product.id,
+      toName: product.name,
+      hasAiObservation: !!String(product.ai_observation || "").trim(),
+      observationChars: String(product.ai_observation || "").trim().length,
+      previousKept: previousBlock?.name || null,
+    });
+  }
+
   let introSent = false;
   const flow = (product.chat_flow as any) || {};
   const sendSpecs = flow.send_specs !== false;

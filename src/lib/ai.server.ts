@@ -1319,18 +1319,19 @@ function formatProductObservationBlock(
   p: CatalogProduct & { ai_observation?: string | null },
   title: string,
 ): string {
+  const obs = p.ai_observation?.trim() || "";
   const lines = [
     `=== ${title} ===`,
     `Nombre: ${p.name}`,
     p.sku ? `SKU: ${p.sku}` : null,
-    p.price != null && p.price !== "" ? `Precio: ${p.price}` : null,
+    p.price != null && p.price !== "" ? `Precio catálogo: ${p.price}` : null,
     p.stock != null ? `Stock: ${p.stock}` : null,
     p.category ? `Categoría: ${p.category}` : null,
     p.badge ? `Etiqueta: ${p.badge}` : null,
     p.description ? `Descripción: ${String(p.description).slice(0, 1200)}` : null,
-    p.ai_observation?.trim()
-      ? `\nOBSERVACIÓN / PROMPT DEL VENDEDOR (OBLIGATORIO):\n${p.ai_observation.trim().slice(0, 2000)}`
-      : null,
+    obs
+      ? `\n=== OBSERVACIÓN / PROMPT DEL VENDEDOR (OBLIGATORIO EN CADA RESPUESTA) ===\n${obs.slice(0, 4000)}\n\nINSTRUCCIÓN: Precio, envío, ciudad y forma de atender salen de este bloque. Respóndelos de inmediato. PROHIBIDO decir que no tienes el dato o transferir a un humano por precio/envío.`
+      : `\n(Sin observación del vendedor cargada para este producto.)`,
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -1846,6 +1847,25 @@ export async function executeToolCall(
     result = `Recordatorio creado para dentro de ${minutes} minutos.`;
     details = `Programo un recordatorio: "${note}" para ${dueAt}`;
   } else if (name === "transfer_to_human") {
+    // Con producto en foco + observación: no apagar IA por precio/envío (dato está en la observación)
+    try {
+      const { data: th } = await (supabaseAdmin as any)
+        .from("threads")
+        .select("focused_product_id, focused_product_snapshot")
+        .eq("id", threadId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+      const snap = th?.focused_product_snapshot as Record<string, unknown> | null;
+      const hasObs = !!(snap?.ai_observation && String(snap.ai_observation).trim());
+      if (th?.focused_product_id && hasObs) {
+        result =
+          "NO transfieras. Hay producto en foco con OBSERVACIÓN DEL VENDEDOR. Responde precio/envío/ciudad desde esa observación y continúa la atención.";
+        details = "transfer_to_human bloqueado: producto con ai_observation";
+        return { result, details };
+      }
+    } catch {
+      /* continuar con transferencia normal */
+    }
     try {
       await (supabaseAdmin as any)
         .from("threads")
@@ -2243,8 +2263,16 @@ export async function executeToolCall(
           result = "Producto no disponible.";
           details = result;
         } else {
-          result = `Producto presentado: "${presented.productName}" (id: ${presented.productId}). Ficha enviada. Ahora responde SOLO con la ficha + observación de este producto (sin base de conocimiento de otros artículos).`;
-          details = `present_product: ${presented.productId}`;
+          const newObs = String((presented.product as any)?.ai_observation || "").trim();
+          result = [
+            `CAMBIO DE PRODUCTO ACTIVO: ahora es "${presented.productName}" (id: ${presented.productId}).`,
+            `Ficha enviada. Descarta la observación/prompt del producto anterior.`,
+            `Responde SOLO con la ficha + OBSERVACIÓN de ESTE producto (sin KB de otros).`,
+            newObs
+              ? `\nOBSERVACIÓN DEL VENDEDOR (PRODUCTO ACTUAL — úsala YA):\n${newObs.slice(0, 4000)}`
+              : "\n(Este producto no tiene observación cargada.)",
+          ].join("\n");
+          details = `present_product: ${presented.productId} (switch)`;
           if (presented.product) {
             ctx.lastProducts = [presented.product as any];
             await saveFocusedProduct(ctx, {
@@ -2899,10 +2927,18 @@ export async function runAiAgent({
     promptMode === "pedido"
       ? CRM_TOOLS
       : promptMode === "product_focus"
-        ? // Foco de producto: CRM + present_product / media (sin search masivo)
-          [...CRM_TOOLS, ...CATALOG_TOOLS]
+        ? // Sin transfer_to_human: la observación del producto debe responder precio/envío
+          [
+            ...CRM_TOOLS.filter(
+              (t) =>
+                t.function?.name !== "transfer_to_human" &&
+                t.function?.name !== "list_flows" &&
+                t.function?.name !== "activate_flow",
+            ),
+            ...CATALOG_TOOLS,
+          ]
         : promptMode === "product_detail"
-          ? CRM_TOOLS
+          ? CRM_TOOLS.filter((t) => t.function?.name !== "transfer_to_human")
           : catalogCfg
             ? [...CRM_TOOLS, ...CATALOG_TOOLS]
             : CRM_TOOLS;
@@ -2949,7 +2985,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const activeFlowGuide =
     promptMode === "product_focus"
-      ? `MODO PRODUCTO EN FOCO:\n1. Usa SOLO ficha + OBSERVACIÓN DEL VENDEDOR de este producto. NO uses base de conocimiento ni precios de otros artículos.\n2. Si el cliente pide OTRO producto por nombre/SKU, llama present_product para cambiar el foco.\n3. Si compara con el producto anterior, usa el bloque PRODUCTO ANTERIOR + historial.\n4. Respuestas breves; una pregunta de cierre.`
+      ? `MODO PRODUCTO EN FOCO:\n1. En CADA respuesta usa la OBSERVACIÓN DEL VENDEDOR (precio, envío, ciudad, guion de atención).\n2. PROHIBIDO transferir a humano o decir "no tengo esa información" si el dato está en la observación.\n3. Si pide OTRO producto por nombre/SKU, llama present_product.\n4. Respuestas breves; una pregunta de cierre.`
       : promptMode === "product_detail"
       ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la observación del vendedor.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
       : promptMode === "pedido"
@@ -3259,24 +3295,26 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     (mentionsBoth || (mentionsPrev && isComplexProductCompareQuery(lastUserText)) || mentionsPrev);
 
   const observationText = contextProductForPrompt?.ai_observation?.trim()
-    ? `\n\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${contextProductForPrompt.ai_observation.trim().slice(0, 2000)}`
+    ? `\n\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${contextProductForPrompt.ai_observation.trim().slice(0, 4000)}\n\nResponde precio/envío/ciudad desde este bloque. No digas que faltan datos ni transfieras a humano por eso.`
     : "";
   const focusLockText =
     promptMode === "product_focus" && focusedProduct
-      ? `\n\n=== BLOQUEO DE PRODUCTO ===\nHabla ÚNICAMENTE de "${focusedProduct.name}"${focusedProduct.sku ? ` (SKU ${focusedProduct.sku})` : ""}. PROHIBIDO inventar precios/datos de otros productos o de la base de conocimiento general. Si el cliente pide otro producto por nombre/SKU, usa present_product.`
+      ? `\n\n=== BLOQUEO DE PRODUCTO ===\nHabla ÚNICAMENTE de "${focusedProduct.name}"${focusedProduct.sku ? ` (SKU ${focusedProduct.sku})` : ""}. Si el cliente CAMBIÓ de producto, usa la observación del producto ACTUAL (no la del anterior). PROHIBIDO inventar con base de conocimiento, decir que no tienes precio/envío, o transferir a humano por esas consultas. Si pide otro producto por nombre/SKU, usa present_product.`
       : focusedProduct
         ? `\n\n=== BLOQUEO DE PRODUCTO ===\nHabla ÚNICAMENTE de "${focusedProduct.name}"${focusedProduct.sku ? ` (SKU ${focusedProduct.sku})` : ""}. PROHIBIDO mencionar otros productos del historial. Si el cliente pide otro producto explícitamente por nombre, entonces sí puedes buscarlo.`
         : "";
 
   const dualPreviousText = useDualProductPrompt
-    ? `\n\n${formatProductObservationBlock(previousProduct!, "PRODUCTO ANTERIOR (historial)")}\n\nUsa el producto actual como prioridad. El anterior solo si la pregunta lo requiere o compara ambos.`
-    : "";
+    ? `\n\n${formatProductObservationBlock(previousProduct!, "PRODUCTO ANTERIOR (solo si el cliente lo menciona — NO es el activo)")}\n\nPrioridad: PRODUCTO ACTUAL. El anterior solo si pregunta por él o compara ambos.`
+    : previousProduct
+      ? `\n\n(Hay un producto anterior "${previousProduct.name}" en el historial. NO uses su observación salvo que el cliente lo pida.)`
+      : "";
 
   const selectedProductText = contextProductForPrompt
     ? promptMode === "product_focus"
       ? `\n\n${formatProductObservationBlock(
           contextProductForPrompt,
-          "PRODUCTO EN FOCO (prioridad máxima)",
+          "PRODUCTO ACTUAL (prioridad máxima — observación de ESTE producto)",
         )}${focusLockText}${dualPreviousText}${
           startOrderFlow
             ? "\n\nEl cliente quiere hacer el pedido de ESTE producto. Continúa el flujo de pedido."
@@ -3336,12 +3374,18 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     promptAssemblyMode === "legacy",
   );
 
-  // channel-ai-reply inyecta un system con la observación; Vertex solo toma el primer system
-  // y descarta el resto. Fusionamos para que la Observación del producto SIEMPRE llegue.
+  // channel-ai-reply inyecta un system con la observación; la ponemos PRIMERO
+  // para que en cada petición tenga prioridad máxima sobre el resto del prompt.
   const inboundSystemBlocks = messages
     .filter((m) => m.role === "system" && m.content?.trim())
     .map((m) => m.content.trim());
-  const mergedSystem = [system, ...inboundSystemBlocks].filter(Boolean).join("\n\n");
+  const observationFirst = inboundSystemBlocks.filter((b) =>
+    /OBSERVACI[OÓ]N/i.test(b),
+  );
+  const otherInbound = inboundSystemBlocks.filter((b) => !/OBSERVACI[OÓ]N/i.test(b));
+  const mergedSystem = [...observationFirst, system, ...otherInbound]
+    .filter(Boolean)
+    .join("\n\n");
 
   const approxPromptChars =
     mergedSystem.length + historyForPrompt.reduce((acc, m) => acc + (m.content?.length || 0), 0);
@@ -4221,6 +4265,44 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         /enviado al cliente/i.test(exec.result)
       ) {
         deliveredProductMedia = true;
+      }
+      // Tras present_product: sustituir el system con ficha + observación del NUEVO producto
+      if (exec.name === "present_product" && /CAMBIO DE PRODUCTO ACTIVO/i.test(exec.result)) {
+        try {
+          const switched = await loadFocusedProduct(ctx);
+          if (switched?.id) {
+            const switchBlock = [
+              formatProductObservationBlock(
+                switched as CatalogProduct & { ai_observation?: string | null },
+                "PRODUCTO ACTUAL (acabas de cambiar de producto)",
+              ),
+              "",
+              "=== CAMBIO DE FOCO ===",
+              "El cliente cambió de producto. Descarta por completo la observación/prompt del producto anterior.",
+              "Usa SOLO la ficha y OBSERVACIÓN del PRODUCTO ACTUAL en esta y las siguientes respuestas.",
+              "Si pregunta por el producto anterior, entonces sí usa el bloque anterior del historial.",
+            ].join("\n");
+            if (msgs[0]?.role === "system") {
+              msgs[0] = {
+                role: "system",
+                content: `${switchBlock}\n\n${msgs[0].content || ""}`,
+              };
+            } else {
+              msgs.unshift({ role: "system", content: switchBlock });
+            }
+            console.info("[runAiAgent] prompt actualizado tras cambio de producto", {
+              orgId,
+              threadId,
+              productId: switched.id,
+              hasAiObservation: !!String((switched as any).ai_observation || "").trim(),
+            });
+          }
+        } catch (switchErr) {
+          console.warn(
+            "[runAiAgent] no se pudo refrescar observación tras present_product",
+            switchErr instanceof Error ? switchErr.message : String(switchErr),
+          );
+        }
       }
       msgs.push({ role: "tool", tool_call_id: tc.id, name: exec.name, content: exec.result });
     }

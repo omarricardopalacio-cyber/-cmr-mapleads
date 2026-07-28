@@ -145,11 +145,24 @@ export async function runChannelAiReply(
         .eq("id", focusId)
         .maybeSingle();
       if (fresh) {
+        // Snapshot limpio del producto ACTUAL (no mezclar observación del anterior)
+        const prevKept =
+          snap && String(snap.id) !== String(fresh.id)
+            ? {
+                id: snap.id,
+                name: snap.name,
+                price: snap.price ?? null,
+                sku: snap.sku ?? null,
+                description: snap.description ?? null,
+                category: snap.category ?? null,
+                ai_observation: snap.ai_observation ?? null,
+              }
+            : (snap as any)?._previous_product || null;
         focusSnap = {
-          ...snap,
           ...fresh,
           source: (snap as any)?.source || "store_web",
           _lock: true,
+          _previous_product: prevKept,
         };
         await supabaseAdmin
           .from("threads")
@@ -183,27 +196,30 @@ export async function runChannelAiReply(
         threadId,
         productId: focusSnap.id,
         observationChars: obs.length,
+        previousProduct: prev?.name || null,
       });
     }
     historyWithContext = [
       {
         role: "system" as const,
         content: [
-          `=== BLOQUEO DE PRODUCTO (OBLIGATORIO) ===`,
-          `El cliente está preguntando SOLO por: "${pname}" (id: ${focusSnap.id}).`,
-          `PROHIBIDO usar base de conocimiento, tarifas u otros productos (aunque aparezcan en el historial).`,
-          `Responde únicamente con la ficha de este producto y la OBSERVACIÓN DEL VENDEDOR.`,
-          `- Precio: ${focusSnap.price ?? "consultar"}`,
+          `=== PRODUCTO ACTUAL (ÚNICO ACTIVO) ===`,
+          `El cliente está en: "${pname}" (id: ${focusSnap.id}).`,
+          `Usa SOLO la ficha y la OBSERVACIÓN de ESTE producto. Si hubo un producto anterior, descarta su observación salvo que el cliente pregunte por él.`,
+          `PROHIBIDO usar base de conocimiento, tarifas u otros productos del historial como si fueran el actual.`,
+          `- Precio catálogo: ${focusSnap.price ?? "consultar"}`,
           focusSnap.sku ? `- SKU: ${focusSnap.sku}` : null,
           focusSnap.category ? `- Categoría: ${focusSnap.category}` : null,
           focusSnap.description
             ? `- Descripción / materiales: ${String(focusSnap.description).slice(0, 1200)}`
             : null,
-          obs ? `\nOBSERVACIÓN DEL VENDEDOR (prioridad máxima):\n${obs.slice(0, 2000)}` : null,
-          prev?.name
-            ? `\nProducto anterior en el hilo: "${prev.name}". Solo úsalo si el cliente lo menciona o compara.`
+          obs
+            ? `\nOBSERVACIÓN DEL VENDEDOR — PRODUCTO ACTUAL (prioridad máxima en CADA respuesta):\n${obs.slice(0, 4000)}\n\nPrecio, envío y atención salen de AQUÍ. PROHIBIDO decir que no tienes esa info o transferir a humano por precio/envío/ciudad.`
             : null,
-          `Si no sabes un dato que no esté arriba, dilo y ofrece verificarlo. No inventes otro producto.`,
+          prev?.name
+            ? `\nProducto anterior en el hilo: "${prev.name}"${prev.sku ? ` (SKU ${prev.sku})` : ""}. NO uses su observación. Solo si el cliente lo menciona o compara, el sistema añadirá ese contexto.`
+            : null,
+          `Si un dato NO está en la ficha ni en la observación ACTUAL, dilo breve. No inventes otro producto.`,
         ]
           .filter(Boolean)
           .join("\n"),
