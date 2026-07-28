@@ -61,12 +61,29 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
     }
 
     if (error) throw new Error(error.message);
+    const products = (rows ?? []).map((r: any) => ({
+      ...r,
+      gallery_images: (() => {
+        const g = r.gallery_images;
+        if (Array.isArray(g)) return g.filter((u: unknown) => typeof u === "string" && String(u).trim());
+        if (typeof g === "string" && g.trim()) {
+          try {
+            const p = JSON.parse(g);
+            if (Array.isArray(p)) return p.filter((u: unknown) => typeof u === "string" && String(u).trim());
+          } catch {
+            if (g.startsWith("http")) return [g.trim()];
+          }
+        }
+        return [];
+      })(),
+      chat_flow: r.chat_flow && typeof r.chat_flow === "object" ? r.chat_flow : { send_specs: true, send_ask: true },
+    }));
     return {
-      products: rows ?? [],
+      products,
       total: count ?? 0,
       offset,
       limit,
-      hasMore: offset + (rows?.length || 0) < (count ?? 0),
+      hasMore: offset + (products.length || 0) < (count ?? 0),
     };
   });
 
@@ -110,18 +127,26 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
         description: z.string().max(8000).nullable().optional(),
         price: z.number().nullable().optional(),
         stock: z.number().nullable().optional(),
-        image_url: z.string().max(1000).nullable().optional(),
-        video_url: z.string().max(1000).nullable().optional(),
+        image_url: z.string().max(2000).nullable().optional(),
+        video_url: z.string().max(2000).nullable().optional(),
         sku: z.string().max(80).nullable().optional(),
         badge: z.string().max(40).nullable().optional(),
         category: z.string().max(80).nullable().optional(),
         ai_observation: z.string().max(4000).nullable().optional(),
         chat_ask_text: z.string().max(300).nullable().optional(),
-        gallery_images: z.array(z.string().max(1000)).max(12).optional(),
+        gallery_images: z.array(z.string().max(2000)).max(12).optional(),
         chat_flow: z
           .object({
             send_specs: z.boolean().optional(),
             send_ask: z.boolean().optional(),
+            send_price: z.boolean().optional(),
+            send_stock: z.boolean().optional(),
+            send_sku: z.boolean().optional(),
+            send_badge: z.boolean().optional(),
+            send_category: z.boolean().optional(),
+            send_image: z.boolean().optional(),
+            send_description: z.boolean().optional(),
+            send_gallery: z.boolean().optional(),
           })
           .optional(),
         is_active: z.boolean().optional(),
@@ -164,4 +189,45 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
     }
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+/** Sube imagen de producto a Storage y devuelve URL pública. */
+export const uploadProductImage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        productId: z.string().uuid(),
+        fileName: z.string().min(1).max(180),
+        contentBase64: z.string().min(32).max(8_000_000),
+        contentType: z.string().min(3).max(80),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const { data: prod } = await (supabaseAdmin as any)
+      .from("products")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("id", data.productId)
+      .maybeSingle();
+    if (!prod) throw new Error("Producto no encontrado");
+
+    const safeName = data.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+    const path = `products/${orgId}/${data.productId}/${Date.now()}-${safeName}`;
+    const buf = Buffer.from(data.contentBase64, "base64");
+    if (buf.length > 6_000_000) throw new Error("Imagen demasiado grande (máx ~4.5 MB)");
+
+    const { error: upErr } = await supabaseAdmin.storage
+      .from("media")
+      .upload(path, buf, {
+        contentType: data.contentType || "image/jpeg",
+        upsert: true,
+      });
+    if (upErr) throw new Error(upErr.message || "Error al subir imagen");
+
+    const { data: pub } = supabaseAdmin.storage.from("media").getPublicUrl(path);
+    if (!pub?.publicUrl) throw new Error("No se pudo obtener URL pública");
+    return { url: pub.publicUrl, path };
   });

@@ -20,17 +20,50 @@ function formatCop(price: number | null | undefined) {
   }).format(Number(price));
 }
 
+function parseGalleryImages(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((u): u is string => typeof u === "string" && !!u.trim())
+      .map((u) => u.trim())
+      .slice(0, 12);
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      return parseGalleryImages(JSON.parse(raw));
+    } catch {
+      if (raw.startsWith("http")) return [raw.trim()];
+    }
+  }
+  return [];
+}
+
 function buildSpecs(product: any) {
-  return [
-    `📦 *${product.name}*`,
-    product.badge ? `Etiqueta: ${product.badge}` : null,
-    product.category ? `Categoría: ${product.category}` : null,
-    `Precio: ${formatCop(product.price)}`,
-    product.sku ? `SKU: ${product.sku}` : null,
-    product.stock != null ? `Stock: ${product.stock}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const flow = (product.chat_flow as Record<string, unknown>) || {};
+  // Nombre siempre; el resto se activa/desactiva por producto
+  const lines: string[] = [`📦 *${product.name}*`];
+  if (flow.send_badge !== false && product.badge) lines.push(`Etiqueta: ${product.badge}`);
+  if (flow.send_category !== false && product.category) {
+    lines.push(`Categoría: ${product.category}`);
+  }
+  if (flow.send_price !== false) lines.push(`Precio: ${formatCop(product.price)}`);
+  if (flow.send_sku !== false && product.sku) lines.push(`SKU: ${product.sku}`);
+  if (flow.send_stock !== false && product.stock != null) {
+    lines.push(`Stock: ${product.stock}`);
+  }
+  if (flow.send_image === true && product.image_url) {
+    lines.push(`Imagen: ${product.image_url}`);
+  }
+  if (flow.send_description === true && product.description) {
+    lines.push(`Descripción: ${String(product.description).slice(0, 800)}`);
+  }
+  if (flow.send_gallery === true) {
+    const gallery = parseGalleryImages(product.gallery_images);
+    if (gallery.length) {
+      lines.push(`Galería (${gallery.length}):`);
+      gallery.forEach((u, i) => lines.push(`${i + 1}. ${u}`));
+    }
+  }
+  return lines.join("\n");
 }
 
 async function loadProduct(orgId: string, productId: string) {
@@ -122,6 +155,7 @@ export async function focusStoreProduct(opts: {
 
   let introSent = false;
   const flow = (product.chat_flow as any) || {};
+  // Si send_specs === false, no envía ficha. Si no está, envía con campos individuales.
   const sendSpecs = flow.send_specs !== false;
   const sendAsk = flow.send_ask !== false;
 

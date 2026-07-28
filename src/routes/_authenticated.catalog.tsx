@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   listStoreCatalogProducts,
   updateStoreProduct,
+  uploadProductImage,
 } from "@/lib/catalog-products.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,11 +13,24 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Search, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { Search, Package, Pencil, Plus, Trash2, Upload } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/catalog")({
   component: CatalogProductsPage,
 });
+
+type ChatFlowFlags = {
+  send_specs?: boolean;
+  send_ask?: boolean;
+  send_price?: boolean;
+  send_stock?: boolean;
+  send_sku?: boolean;
+  send_badge?: boolean;
+  send_category?: boolean;
+  send_image?: boolean;
+  send_description?: boolean;
+  send_gallery?: boolean;
+};
 
 type CatalogRow = {
   id: string;
@@ -33,7 +47,7 @@ type CatalogRow = {
   ai_observation?: string | null;
   chat_ask_text?: string | null;
   gallery_images?: string[] | null;
-  chat_flow?: { send_specs?: boolean; send_ask?: boolean } | null;
+  chat_flow?: ChatFlowFlags | null;
 };
 
 function formatCop(price: number | null | undefined) {
@@ -45,16 +59,35 @@ function formatCop(price: number | null | undefined) {
   }).format(Number(price));
 }
 
+function parseGallery(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((u): u is string => typeof u === "string" && !!u.trim())
+      .map((u) => u.trim());
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      return parseGallery(JSON.parse(raw));
+    } catch {
+      if (raw.startsWith("http")) return [raw.trim()];
+    }
+  }
+  return [];
+}
+
 const PAGE = 40;
 
 function CatalogProductsPage() {
   const listFn = useServerFn(listStoreCatalogProducts);
   const updateFn = useServerFn(updateStoreProduct);
+  const uploadFn = useServerFn(uploadProductImage);
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [uploadingGallery, setUploadingGallery] = useState(false);
+  const galleryFileRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const [form, setForm] = useState({
@@ -72,6 +105,14 @@ function CatalogProductsPage() {
     gallery_images: [] as string[],
     send_specs: true,
     send_ask: true,
+    send_price: true,
+    send_stock: true,
+    send_sku: true,
+    send_badge: true,
+    send_category: true,
+    send_image: false,
+    send_description: false,
+    send_gallery: false,
     newGalleryUrl: "",
   });
 
@@ -113,6 +154,7 @@ function CatalogProductsPage() {
   function selectProduct(p: CatalogRow) {
     setSelectedId(p.id);
     setEditing(false);
+    const flow = p.chat_flow || {};
     setForm({
       name: p.name || "",
       description: p.description || "",
@@ -125,11 +167,55 @@ function CatalogProductsPage() {
       category: p.category || "",
       ai_observation: p.ai_observation || "",
       chat_ask_text: p.chat_ask_text || "",
-      gallery_images: Array.isArray(p.gallery_images) ? [...p.gallery_images] : [],
-      send_specs: p.chat_flow?.send_specs !== false,
-      send_ask: p.chat_flow?.send_ask !== false,
+      gallery_images: parseGallery(p.gallery_images),
+      send_specs: flow.send_specs !== false,
+      send_ask: flow.send_ask !== false,
+      send_price: flow.send_price !== false,
+      send_stock: flow.send_stock !== false,
+      send_sku: flow.send_sku !== false,
+      send_badge: flow.send_badge !== false,
+      send_category: flow.send_category !== false,
+      send_image: flow.send_image === true,
+      send_description: flow.send_description === true,
+      send_gallery: flow.send_gallery === true,
       newGalleryUrl: "",
     });
+  }
+
+  async function onGalleryFile(file: File | null) {
+    if (!file || !selectedId) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Solo imágenes");
+      return;
+    }
+    setUploadingGallery(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+      const contentBase64 = btoa(binary);
+      const res = await uploadFn({
+        data: {
+          productId: selectedId,
+          fileName: file.name,
+          contentBase64,
+          contentType: file.type || "image/jpeg",
+        },
+      });
+      if (res?.url) {
+        setForm((f) => ({
+          ...f,
+          gallery_images: [...f.gallery_images, res.url].slice(0, 12),
+        }));
+        toast.success("Imagen agregada a la galería");
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo subir la imagen");
+    } finally {
+      setUploadingGallery(false);
+      if (galleryFileRef.current) galleryFileRef.current.value = "";
+    }
   }
 
   const mut = useMutation({
@@ -149,7 +235,18 @@ function CatalogProductsPage() {
           ai_observation: form.ai_observation.trim() || null,
           chat_ask_text: form.chat_ask_text.trim() || null,
           gallery_images: form.gallery_images,
-          chat_flow: { send_specs: form.send_specs, send_ask: form.send_ask },
+          chat_flow: {
+            send_specs: form.send_specs,
+            send_ask: form.send_ask,
+            send_price: form.send_price,
+            send_stock: form.send_stock,
+            send_sku: form.send_sku,
+            send_badge: form.send_badge,
+            send_category: form.send_category,
+            send_image: form.send_image,
+            send_description: form.send_description,
+            send_gallery: form.send_gallery,
+          },
         },
       }),
     onSuccess: () => {
@@ -162,6 +259,17 @@ function CatalogProductsPage() {
 
   const askPreview =
     form.chat_ask_text.trim() || "¿Dime qué te gustaría saber del producto?";
+
+  const fieldToggles: { key: keyof typeof form; label: string; note?: string }[] = [
+    { key: "send_price", label: "Precio" },
+    { key: "send_stock", label: "Stock" },
+    { key: "send_sku", label: "SKU" },
+    { key: "send_badge", label: "Etiqueta" },
+    { key: "send_category", label: "Categoría" },
+    { key: "send_image", label: "URL imagen principal", note: "en la ficha de texto" },
+    { key: "send_description", label: "Descripción" },
+    { key: "send_gallery", label: "Imágenes extra (galería)", note: "URLs en la ficha" },
+  ];
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
@@ -302,7 +410,17 @@ function CatalogProductsPage() {
                     <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
                       <li>Media fija arriba (imagen/video del producto)</li>
                       {selected.chat_flow?.send_specs !== false ? (
-                        <li>Ficha: nombre, etiqueta, categoría, precio, stock</li>
+                        <li>
+                          Ficha: Nombre
+                          {selected.chat_flow?.send_badge !== false ? " · Etiqueta" : ""}
+                          {selected.chat_flow?.send_category !== false ? " · Categoría" : ""}
+                          {selected.chat_flow?.send_price !== false ? " · Precio" : ""}
+                          {selected.chat_flow?.send_sku !== false ? " · SKU" : ""}
+                          {selected.chat_flow?.send_stock !== false ? " · Stock" : ""}
+                          {selected.chat_flow?.send_image === true ? " · URL imagen" : ""}
+                          {selected.chat_flow?.send_description === true ? " · Descripción" : ""}
+                          {selected.chat_flow?.send_gallery === true ? " · Galería" : ""}
+                        </li>
                       ) : null}
                       {selected.chat_flow?.send_ask !== false ? (
                         <li>
@@ -313,6 +431,21 @@ function CatalogProductsPage() {
                         </li>
                       ) : null}
                     </ol>
+                    {parseGallery(selected.gallery_images).length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {parseGallery(selected.gallery_images).map((url, i) => (
+                          <img
+                            key={`${url}-${i}`}
+                            src={url}
+                            alt=""
+                            className="h-14 w-14 rounded object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.opacity = "0.3";
+                            }}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   {selected.ai_observation ? (
                     <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
@@ -400,14 +533,41 @@ function CatalogProductsPage() {
 
                   <div className="rounded-md border p-3 space-y-3">
                     <p className="text-sm font-semibold">Flujo automático del chat</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      El <span className="font-semibold text-foreground">Nombre</span> siempre se envía.
+                      Activa o desactiva el resto de datos de la ficha.
+                    </p>
                     <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor="send-specs">Enviar ficha (precio/stock)</Label>
+                      <Label htmlFor="send-specs">Enviar ficha</Label>
                       <Switch
                         id="send-specs"
                         checked={form.send_specs}
                         onCheckedChange={(v) => setForm({ ...form, send_specs: v })}
                       />
                     </div>
+                    {form.send_specs ? (
+                      <div className="space-y-2 rounded border bg-muted/20 p-2">
+                        <div className="flex items-center justify-between gap-2 opacity-70">
+                          <Label>Nombre</Label>
+                          <Switch checked disabled />
+                        </div>
+                        {fieldToggles.map((t) => (
+                          <div key={t.key} className="flex items-center justify-between gap-2">
+                            <Label htmlFor={`flow-${t.key}`}>
+                              {t.label}
+                              {t.note ? (
+                                <span className="ml-1 text-[10px] text-muted-foreground">({t.note})</span>
+                              ) : null}
+                            </Label>
+                            <Switch
+                              id={`flow-${t.key}`}
+                              checked={Boolean(form[t.key])}
+                              onCheckedChange={(v) => setForm({ ...form, [t.key]: v })}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="send-ask">Enviar pregunta</Label>
                       <Switch
@@ -433,11 +593,34 @@ function CatalogProductsPage() {
 
                   <div className="space-y-2 rounded-md border p-3">
                     <Label>Imágenes extra (galería)</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Sube un archivo o pega una URL. Guarda el producto para persistir los cambios.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        ref={galleryFileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => void onGalleryFile(e.target.files?.[0] || null)}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={uploadingGallery || !selectedId}
+                        className="gap-1.5"
+                        onClick={() => galleryFileRef.current?.click()}
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                        {uploadingGallery ? "Subiendo…" : "Subir imagen"}
+                      </Button>
+                    </div>
                     <div className="flex gap-2">
                       <Input
                         value={form.newGalleryUrl}
                         onChange={(e) => setForm({ ...form, newGalleryUrl: e.target.value })}
-                        placeholder="URL de imagen…"
+                        placeholder="https://… URL de imagen"
                       />
                       <Button
                         type="button"
@@ -446,9 +629,13 @@ function CatalogProductsPage() {
                         onClick={() => {
                           const u = form.newGalleryUrl.trim();
                           if (!u) return;
+                          if (!/^https?:\/\//i.test(u)) {
+                            toast.error("La URL debe empezar por http:// o https://");
+                            return;
+                          }
                           setForm({
                             ...form,
-                            gallery_images: [...form.gallery_images, u],
+                            gallery_images: [...form.gallery_images, u].slice(0, 12),
                             newGalleryUrl: "",
                           });
                         }}
@@ -456,26 +643,36 @@ function CatalogProductsPage() {
                         <Plus className="h-4 w-4" />
                       </Button>
                     </div>
-                    <ul className="space-y-1">
-                      {form.gallery_images.map((url, i) => (
-                        <li key={`${url}-${i}`} className="flex items-center gap-2 text-xs">
-                          <img src={url} alt="" className="h-8 w-8 rounded object-cover" />
-                          <span className="min-w-0 flex-1 truncate">{url}</span>
-                          <button
-                            type="button"
-                            className="text-rose-500"
-                            onClick={() =>
-                              setForm({
-                                ...form,
-                                gallery_images: form.gallery_images.filter((_, j) => j !== i),
-                              })
-                            }
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    {form.gallery_images.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">Sin imágenes en galería.</p>
+                    ) : (
+                      <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                        {form.gallery_images.map((url, i) => (
+                          <li key={`${url}-${i}`} className="group relative overflow-hidden rounded border">
+                            <img
+                              src={url}
+                              alt=""
+                              className="aspect-square w-full bg-muted object-cover"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.opacity = "0.25";
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="absolute right-1 top-1 rounded bg-black/70 p-1 text-white"
+                              onClick={() =>
+                                setForm({
+                                  ...form,
+                                  gallery_images: form.gallery_images.filter((_, j) => j !== i),
+                                })
+                              }
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
 
                   <Button

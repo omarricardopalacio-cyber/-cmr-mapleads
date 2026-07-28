@@ -187,7 +187,7 @@ function LeadGateForm({
   }
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-57px)] max-w-lg flex-col bg-[#E5DDD5]">
+    <div className="mx-auto flex h-[calc(100vh-57px)] max-w-lg flex-col bg-[#E5DDD5] text-black">
       <div className="flex items-center gap-3 px-3 py-2.5 text-white shadow" style={{ background: "#075E54" }}>
         <Link to="/store/$token" params={{ token }} className="rounded p-1 hover:bg-white/10">
           <ArrowLeft className="h-5 w-5" />
@@ -223,7 +223,8 @@ function LeadGateForm({
             onChange={(e) => setName(e.target.value)}
             placeholder="Tu nombre"
             autoComplete="name"
-            className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-500"
+            className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-black caret-black outline-none focus:border-emerald-500"
+            style={{ color: "#000000", WebkitTextFillColor: "#000000" }}
             disabled={submitting}
           />
 
@@ -236,7 +237,8 @@ function LeadGateForm({
             placeholder="Ej: 300 123 4567"
             inputMode="tel"
             autoComplete="tel"
-            className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-500"
+            className="mt-1 w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-black caret-black outline-none focus:border-emerald-500"
+            style={{ color: "#000000", WebkitTextFillColor: "#000000" }}
             disabled={submitting}
           />
 
@@ -479,7 +481,7 @@ function StoreChatPage() {
   }
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-57px)] max-w-lg flex-col bg-[#E5DDD5]">
+    <div className="mx-auto flex h-[calc(100vh-57px)] max-w-lg flex-col bg-[#E5DDD5] text-black [color-scheme:light]">
       <div
         className="flex shrink-0 items-center gap-3 px-3 py-2.5 text-white shadow"
         style={{ background: "#075E54" }}
@@ -576,13 +578,14 @@ function StoreChatPage() {
 
       <form
         onSubmit={onSend}
-        className="flex shrink-0 items-end gap-2 bg-[#F0F2F5] px-2 py-2"
+        className="flex shrink-0 items-end gap-2 bg-[#F0F2F5] px-2 py-2 text-black"
       >
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Escribe un mensaje"
-          className="min-h-[42px] flex-1 rounded-full border-0 bg-white px-4 py-2.5 text-sm outline-none"
+          className="min-h-[42px] flex-1 rounded-full border-0 bg-white px-4 py-2.5 text-sm text-black caret-black outline-none placeholder:text-stone-400 !text-black"
+          style={{ color: "#000000", WebkitTextFillColor: "#000000" }}
           disabled={!ready || sending}
         />
         <button
