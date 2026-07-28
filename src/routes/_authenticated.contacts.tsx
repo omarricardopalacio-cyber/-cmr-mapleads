@@ -30,7 +30,20 @@ type ContactRow = {
   updated_at: string;
   message_count: number | null;
   purchased: boolean;
+  asked_products?: string | null;
+  asked_questions?: string | null;
 };
+
+function previewLines(raw: string | null | undefined, max = 3): string {
+  const lines = String(raw || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "—";
+  const shown = lines.slice(0, max);
+  const extra = lines.length > max ? ` (+${lines.length - max})` : "";
+  return shown.join(" · ") + extra;
+}
 
 function ContactsPage() {
   const fn = useServerFn(listContacts);
@@ -39,17 +52,32 @@ function ContactsPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | "bought" | "not">("all");
   const [minMessages, setMinMessages] = useState<string>("");
   const [sortMessages, setSortMessages] = useState<"none" | "asc" | "desc">("none");
+  const [q, setQ] = useState("");
 
   const contacts = (data?.contacts ?? []) as ContactRow[];
 
   const filtered = useMemo(() => {
     const min = Number.parseInt(minMessages, 10);
     const hasMin = Number.isFinite(min) && min > 0;
+    const needle = q.trim().toLowerCase();
 
     let rows = contacts.filter((c) => {
       if (statusFilter === "bought" && !c.purchased) return false;
       if (statusFilter === "not" && c.purchased) return false;
       if (hasMin && (c.message_count ?? 0) < min) return false;
+      if (needle) {
+        const hay = [
+          c.display_name,
+          c.phone,
+          c.wa_id,
+          c.asked_products,
+          c.asked_questions,
+        ]
+          .filter(Boolean)
+          .join("\n")
+          .toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
       return true;
     });
 
@@ -61,7 +89,7 @@ function ContactsPage() {
       });
     }
     return rows;
-  }, [contacts, statusFilter, minMessages, sortMessages]);
+  }, [contacts, statusFilter, minMessages, sortMessages, q]);
 
   function toggleSortMessages() {
     setSortMessages((prev) => (prev === "desc" ? "asc" : prev === "asc" ? "none" : "desc"));
@@ -73,7 +101,16 @@ function ContactsPage() {
       return;
     }
     const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const header = ["Nombre", "WhatsApp ID", "Teléfono", "Estado", "Mensajes", "Actualizado"];
+    const header = [
+      "Nombre",
+      "WhatsApp ID",
+      "Teléfono",
+      "Estado",
+      "Mensajes",
+      "Productos consultados",
+      "Preguntas",
+      "Actualizado",
+    ];
     const rows = filtered.map((c) =>
       [
         escape(c.display_name || ""),
@@ -81,10 +118,11 @@ function ContactsPage() {
         escape(c.phone || ""),
         escape(c.purchased ? "Compró" : "No compró"),
         escape(c.message_count ?? 0),
+        escape(c.asked_products || ""),
+        escape(c.asked_questions || ""),
         escape(new Date(c.updated_at).toLocaleString()),
       ].join(","),
     );
-    // BOM para que Excel respete acentos y emojis.
     const csv = "\ufeff" + [header.map(escape).join(","), ...rows].join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
@@ -131,6 +169,15 @@ function ContactsPage() {
             onChange={(e) => setMinMessages(e.target.value)}
           />
         </div>
+        <div className="space-y-1 min-w-[220px] flex-1">
+          <label className="text-xs text-muted-foreground block">Buscar (nombre, producto, pregunta)</label>
+          <Input
+            className="h-9"
+            placeholder="Ej. envío, AB VERTICAL…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
         <div className="text-xs text-muted-foreground ml-auto">
           {filtered.length} de {contacts.length} contactos
         </div>
@@ -141,7 +188,6 @@ function ContactsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Nombre</TableHead>
-              <TableHead>WhatsApp ID</TableHead>
               <TableHead>Teléfono</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead>
@@ -160,20 +206,22 @@ function ContactsPage() {
                   )}
                 </button>
               </TableHead>
+              <TableHead className="min-w-[160px]">Productos consultados</TableHead>
+              <TableHead className="min-w-[200px]">Preguntas</TableHead>
               <TableHead>Actualizado</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   Cargando...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   {contacts.length === 0
                     ? "Sin contactos todavía. Conecta una sesión de WhatsApp."
                     : "Ningún contacto coincide con los filtros."}
@@ -182,8 +230,10 @@ function ContactsPage() {
             )}
             {filtered.map((c) => (
               <TableRow key={c.id}>
-                <TableCell>{c.display_name || "—"}</TableCell>
-                <TableCell className="font-mono text-xs">{c.wa_id}</TableCell>
+                <TableCell>
+                  <div className="font-medium">{c.display_name || "—"}</div>
+                  <div className="font-mono text-[10px] text-muted-foreground">{c.wa_id}</div>
+                </TableCell>
                 <TableCell>{c.phone || "—"}</TableCell>
                 <TableCell>
                   {c.purchased ? (
@@ -193,7 +243,13 @@ function ContactsPage() {
                   )}
                 </TableCell>
                 <TableCell>{c.message_count ?? "—"}</TableCell>
-                <TableCell>{new Date(c.updated_at).toLocaleString()}</TableCell>
+                <TableCell className="text-xs whitespace-pre-wrap max-w-[220px]" title={c.asked_products || ""}>
+                  {previewLines(c.asked_products, 4)}
+                </TableCell>
+                <TableCell className="text-xs whitespace-pre-wrap max-w-[280px]" title={c.asked_questions || ""}>
+                  {previewLines(c.asked_questions, 3)}
+                </TableCell>
+                <TableCell className="text-xs">{new Date(c.updated_at).toLocaleString()}</TableCell>
               </TableRow>
             ))}
           </TableBody>

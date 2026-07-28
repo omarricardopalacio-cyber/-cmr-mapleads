@@ -59,13 +59,14 @@ function compactFlowGuide(promptMode: string, needsPrice: boolean): string {
     return `=== GUÍA (producto en foco) ===
 1. Prioridad ABSOLUTA: ficha + OBSERVACIÓN DEL VENDEDOR. Ahí están precio, envío y cómo atender. NO uses base de conocimiento ni tarifas de otros productos.
 2. Si el cliente pregunta precio, envío o ciudad: responde YA con lo que diga la OBSERVACIÓN. PROHIBIDO decir "no tengo esa información" o transferir a humano.
-3. Si pide OTRO producto por nombre/SKU, usa present_product. Si compara con el anterior, usa historial + ambos bloques.
+3. Usa los FLUJOS DE ESTE PRODUCTO (activate_flow) cuando encajen. Si pide OTRO producto por nombre/SKU, usa present_product.
 4. Solo si un dato NO aparece en ficha ni observación, dilo breve. No inventes. No transfieras por precio/envío.`;
   }
   return `=== GUÍA (general) ===
-1. Continúa desde el contexto consolidado.
-2. Una pregunta por mensaje.
-3. Si el cliente cotiza (ciudad/precio), usa el conocimiento del turno.`;
+1. Si el cliente menciona un producto por nombre, SKU o características: búscalo en catálogo y usa present_product. Si no está, responde con base de conocimiento.
+2. Continúa desde el contexto consolidado y paquetes generales si aplican.
+3. Una pregunta por mensaje.
+4. Si el cliente cotiza (ciudad/precio), usa el conocimiento del turno.`;
 }
 
 function looksLikeNumberSelection(text: string): boolean {
@@ -105,9 +106,11 @@ export function buildLegacySystemPrompt(p: SystemPromptParts): string {
   if (p.promptMode === "product_focus") {
     return [
       clipIdentityPrompt(p.identity, 600),
-      `\n\n=== MODO PRODUCTO EN FOCO ===\nUsa SOLO la ficha y la OBSERVACIÓN DEL VENDEDOR. Prohibido inventar con base de conocimiento u otros productos.`,
+      `\n\n=== MODO PRODUCTO EN FOCO ===\nUsa SOLO la ficha, la OBSERVACIÓN DEL VENDEDOR y los FLUJOS de este producto. Prohibido inventar con base de conocimiento u otros productos.`,
       p.conversationStateText,
       p.selectedProductText,
+      p.salesPackagesText,
+      p.activePackageContextText,
       `\n\n${compactFlowGuide("product_focus", false)}`,
       p.isCollectingOrder || p.startOrderFlow ? p.orderStateText : "",
       p.isCollectingOrder || p.startOrderFlow ? p.orderFieldsText : "",
@@ -146,13 +149,6 @@ export function buildCompactSystemPrompt(p: SystemPromptParts): string {
   const identity = clipIdentityPrompt(p.identity, 1200);
   const modeLine = `\n\nmodo: ${p.promptMode}${p.needsPriceContext ? " | cotizar" : ""}`;
 
-  const includePackages =
-    !!p.salesPackagesText &&
-    !p.needsPriceContext &&
-    !p.isCollectingOrder &&
-    !p.startOrderFlow &&
-    /\b(paquete|combo|plan|quiero|tienen|busco|info|informaci[oó]n)\b/i.test(p.lastUserText);
-
   const includeMemory =
     !!p.customerMemoryText &&
     p.factCount < 2; // al inicio; luego mandan los hechos
@@ -176,12 +172,14 @@ export function buildCompactSystemPrompt(p: SystemPromptParts): string {
     !!p.fechaLine &&
     (p.needsPriceContext || includeOrder || /\b(ma[nñ]ana|entrega|llega|horario)\b/i.test(p.lastUserText));
 
-  // En product_focus: identidad corta + producto/observación PRIMERO + reglas (sin KB/paquetes)
+  // En product_focus: identidad corta + producto/observación + flujos del producto
   if (p.promptMode === "product_focus") {
     return [
       clipIdentityPrompt(p.identity, 500),
       modeLine,
       includeProduct ? p.selectedProductText : "",
+      p.salesPackagesText ? clipBlock(p.salesPackagesText, 1600) : "",
+      p.activePackageContextText ? clipBlock(p.activePackageContextText, 900) : "",
       `\n\n${COMPACT_RULES}`,
       `\n\n${compactFlowGuide(p.promptMode, false)}`,
       includeOrder ? p.orderStateText : "",
@@ -198,7 +196,8 @@ export function buildCompactSystemPrompt(p: SystemPromptParts): string {
     `\n\n${COMPACT_RULES}`,
     p.threadPromptExtensionText ? clipBlock(p.threadPromptExtensionText, 800) : "",
     includeMemory ? clipBlock(p.customerMemoryText, 300) : "",
-    includePackages ? clipBlock(p.salesPackagesText, 1200) : "",
+    // Sin foco: siempre mostrar paquetes generales si hay (descubrimiento WhatsApp)
+    p.salesPackagesText ? clipBlock(p.salesPackagesText, 1400) : "",
     packageShort,
     includeProduct ? p.selectedProductText : "",
     knowledgeTurn,

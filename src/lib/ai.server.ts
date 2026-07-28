@@ -1188,6 +1188,18 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
         .update({ crm_data: crmData })
         .eq("id", thread.contact_id);
     }
+
+    try {
+      const { appendContactAskedProduct } = await import("@/lib/contact-inquiry.server");
+      await appendContactAskedProduct({
+        orgId: ctx.orgId,
+        contactId: thread?.contact_id || ctx.contactId,
+        productName: p.name,
+        productId: p.id,
+      });
+    } catch {
+      /* ignore */
+    }
   } catch (err) {
     console.warn(
       "[saveFocusedProduct] no se pudo guardar el foco",
@@ -2225,22 +2237,50 @@ export async function executeToolCall(
       const query = String((args as any).query || "").trim();
       let resolvedId = productId;
       if (!resolvedId && query) {
-        const { data: hits } = await (supabaseAdmin as any)
-          .from("products")
-          .select("id, name, sku")
-          .eq("org_id", ctx.orgId)
-          .eq("is_active", true)
-          .or(`name.ilike.%${query}%,sku.ilike.%${query}%`)
-          .limit(5);
-        const list = hits || [];
+        const qSafe = query.replace(/[%(),]/g, " ").trim();
+        let hits: any[] = [];
+        {
+          const res = await (supabaseAdmin as any)
+            .from("products")
+            .select("id, name, sku, search_keywords")
+            .eq("org_id", ctx.orgId)
+            .eq("is_active", true)
+            .or(
+              `name.ilike.%${qSafe}%,sku.ilike.%${qSafe}%,search_keywords.ilike.%${qSafe}%`,
+            )
+            .limit(8);
+          if (res.error && (String(res.error.message || "").includes("search_keywords") || res.error.code === "42703")) {
+            const legacy = await (supabaseAdmin as any)
+              .from("products")
+              .select("id, name, sku")
+              .eq("org_id", ctx.orgId)
+              .eq("is_active", true)
+              .or(`name.ilike.%${qSafe}%,sku.ilike.%${qSafe}%`)
+              .limit(8);
+            hits = legacy.data || [];
+          } else {
+            hits = res.data || [];
+          }
+        }
+        const list = hits;
         if (list.length === 1) resolvedId = list[0].id;
         else if (list.length > 1) {
+          const norm = (s: string) =>
+            s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+          const lc = norm(query);
           const exact = list.find(
             (p: any) =>
-              String(p.sku || "").toLowerCase() === query.toLowerCase() ||
-              String(p.name || "").toLowerCase() === query.toLowerCase(),
+              norm(String(p.sku || "")) === lc ||
+              norm(String(p.name || "")) === lc ||
+              String(p.search_keywords || "")
+                .split(/[,;\n|]+/)
+                .map((x: string) => norm(x))
+                .includes(lc),
           );
-          resolvedId = exact?.id || list[0].id;
+          const kwHit = list.find((p: any) =>
+            norm(String(p.search_keywords || "")).includes(lc),
+          );
+          resolvedId = exact?.id || kwHit?.id || list[0].id;
         }
       }
       if (!resolvedId && catalogCfg) {
@@ -2288,17 +2328,47 @@ export async function executeToolCall(
     }
   } else if (name === "list_flows") {
     try {
-      const { data: flows } = await (supabaseAdmin as any)
+      let focusedProductId: string | null = null;
+      if (threadId) {
+        const { data: th } = await (supabaseAdmin as any)
+          .from("threads")
+          .select("focused_product_id")
+          .eq("id", threadId)
+          .eq("org_id", orgId)
+          .maybeSingle();
+        focusedProductId = th?.focused_product_id ? String(th.focused_product_id) : null;
+      }
+      let q = (supabaseAdmin as any)
         .from("flows")
-        .select("id, name, description")
+        .select("id, name, description, ai_instructions, product_id")
         .eq("org_id", orgId)
         .eq("is_active", true)
         .eq("ai_selectable", true);
+      if (focusedProductId) q = q.eq("product_id", focusedProductId);
+      else q = q.is("product_id", null);
+      let { data: flows, error: listErr } = await q;
+      if (listErr && (String(listErr.message || "").includes("product_id") || listErr.code === "42703")) {
+        const legacy = await (supabaseAdmin as any)
+          .from("flows")
+          .select("id, name, description")
+          .eq("org_id", orgId)
+          .eq("is_active", true)
+          .eq("ai_selectable", true);
+        flows = focusedProductId ? [] : legacy.data;
+      }
       if (!flows || flows.length === 0) {
-        result = "No hay paquetes disponibles para ofrecer.";
+        result = focusedProductId
+          ? "No hay flujos disponibles para este producto."
+          : "No hay paquetes generales disponibles para ofrecer.";
       } else {
         result = flows
-          .map((f: any) => `- ${f.name}${f.description ? `: ${f.description}` : ""} (id: ${f.id})`)
+          .map((f: any) => {
+            const note = String(f.ai_instructions || f.description || "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 220);
+            return `- ${f.name}${note ? `: ${note}` : ""} (id: ${f.id})`;
+          })
           .join("\n");
       }
       details = `list_flows: ${flows?.length ?? 0} paquetes`;
@@ -2311,18 +2381,41 @@ export async function executeToolCall(
       if (!contactId) {
         result = "No se puede activar el paquete: falta el contacto.";
       } else {
+        let focusedProductId: string | null = null;
+        if (threadId) {
+          const { data: th } = await (supabaseAdmin as any)
+            .from("threads")
+            .select("focused_product_id")
+            .eq("id", threadId)
+            .eq("org_id", orgId)
+            .maybeSingle();
+          focusedProductId = th?.focused_product_id ? String(th.focused_product_id) : null;
+        }
+
         let flowId = typeof args.flow_id === "string" ? args.flow_id.trim() : "";
         const flowName = typeof args.flow_name === "string" ? args.flow_name.trim() : "";
 
-        // Si no vino id, resolver por nombre entre los paquetes ofertables.
+        // Si no vino id, resolver por nombre entre los paquetes ofertables del alcance actual.
         if (!flowId && flowName) {
-          const { data: cand } = await (supabaseAdmin as any)
+          let candQ = (supabaseAdmin as any)
             .from("flows")
-            .select("id, name")
+            .select("id, name, product_id")
             .eq("org_id", orgId)
             .eq("is_active", true)
             .eq("ai_selectable", true);
-          const list = (cand ?? []) as Array<{ id: string; name: string }>;
+          if (focusedProductId) candQ = candQ.eq("product_id", focusedProductId);
+          else candQ = candQ.is("product_id", null);
+          const { data: cand, error: candErr } = await candQ;
+          let list = (cand ?? []) as Array<{ id: string; name: string }>;
+          if (candErr && (String(candErr.message || "").includes("product_id") || candErr.code === "42703")) {
+            const legacy = await (supabaseAdmin as any)
+              .from("flows")
+              .select("id, name")
+              .eq("org_id", orgId)
+              .eq("is_active", true)
+              .eq("ai_selectable", true);
+            list = focusedProductId ? [] : ((legacy.data ?? []) as any);
+          }
           const norm = (s: string) =>
             s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
           const lc = norm(flowName);
@@ -2338,7 +2431,12 @@ export async function executeToolCall(
         }
 
         if (flowId) {
-          const r = await startFlowForContact({ orgId, contactId, flowId });
+          const r = await startFlowForContact({
+            orgId,
+            contactId,
+            flowId,
+            focusedProductId,
+          });
           result = r.message;
           details = `activate_flow: ${flowId} (${r.started ? "iniciado" : "no iniciado"})`;
         } else if (!result) {
@@ -2666,34 +2764,9 @@ export async function runAiAgent({
     }
   }
 
-  // === PAQUETES QUE LA IA PUEDE OFRECER (flujos ai_selectable) ===
-  // Lista compacta y acotada para que la IA reconozca la intención del cliente
-  // y active el paquete correcto con la herramienta activate_flow.
+  // === PAQUETES / FLUJOS (se filtran después según producto en foco) ===
   let salesPackagesText = "";
-  try {
-    const { data: pkgs } = await (supabaseAdmin as any)
-      .from("flows")
-      .select("id, name, description")
-      .eq("org_id", orgId)
-      .eq("is_active", true)
-      .eq("ai_selectable", true)
-      .limit(100);
-    if (pkgs && pkgs.length) {
-      // IMPORTANTE: siempre incluir nombre + id de TODOS los paquetes; solo se
-      // recorta la descripción de cada uno. Antes se recortaba la lista completa
-      // (tope de caracteres) y se perdían paquetes, confundiendo a la IA.
-      const lines = pkgs
-        .map((p: any) => {
-          const desc = String(p.description || "").replace(/\s+/g, " ").trim().slice(0, 160);
-          return `- ${p.name} (id: ${p.id})${desc ? ` — ${desc}` : ""}`;
-        })
-        .join("\n");
-      salesPackagesText =
-        `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nActiva con activate_flow el paquete cuyo TEMA coincida con lo que pide el cliente, pasando el id EXACTO de la lista. NO actives un paquete de otro tema. El sistema envía su contenido en orden; tú NO lo describas ni lo reenvíes. Después responde dudas con el historial y la base de conocimiento.\n${lines}`;
-    }
-  } catch (err) {
-    console.error("[runAiAgent] load sales packages failed", err, { orgId });
-  }
+  // Placeholder: se completa tras resolver focusedProduct / promptMode
 
   // === CONTEXTO DEL PAQUETE ACTIVO / RECIENTE PARA ESTE CLIENTE ===
   // Si ya se le envió (o se está enviando) un flujo con instrucciones de IA,
@@ -2923,18 +2996,68 @@ export async function runAiAgent({
           ? "product_detail"
           : "general";
 
+  // Paquetes/flujos: con foco → solo del producto; sin foco → solo generales (product_id null)
+  try {
+    let pkgQuery = (supabaseAdmin as any)
+      .from("flows")
+      .select("id, name, description, ai_instructions, product_id")
+      .eq("org_id", orgId)
+      .eq("is_active", true)
+      .eq("ai_selectable", true)
+      .limit(100);
+    if (focusedProduct?.id && promptMode === "product_focus") {
+      pkgQuery = pkgQuery.eq("product_id", focusedProduct.id);
+    } else {
+      pkgQuery = pkgQuery.is("product_id", null);
+    }
+    const { data: pkgs, error: pkgErr } = await pkgQuery;
+    if (pkgErr && (String(pkgErr.message || "").includes("product_id") || pkgErr.code === "42703")) {
+      const { data: legacyPkgs } = await (supabaseAdmin as any)
+        .from("flows")
+        .select("id, name, description, ai_instructions")
+        .eq("org_id", orgId)
+        .eq("is_active", true)
+        .eq("ai_selectable", true)
+        .limit(100);
+      if (legacyPkgs?.length && promptMode !== "product_focus") {
+        const lines = legacyPkgs
+          .map((p: any) => {
+            const desc = String(p.description || "").replace(/\s+/g, " ").trim().slice(0, 160);
+            return `- ${p.name} (id: ${p.id})${desc ? ` — ${desc}` : ""}`;
+          })
+          .join("\n");
+        salesPackagesText =
+          `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nActiva con activate_flow el paquete cuyo TEMA coincida. Usa id EXACTO. No reenvíes su contenido.\n${lines}`;
+      }
+    } else if (pkgs && pkgs.length) {
+      const lines = pkgs
+        .map((p: any) => {
+          const desc = String(p.description || p.ai_instructions || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 200);
+          return `- ${p.name} (id: ${p.id})${desc ? ` — ${desc}` : ""}`;
+        })
+        .join("\n");
+      if (promptMode === "product_focus") {
+        salesPackagesText =
+          `\n\n=== FLUJOS DE ESTE PRODUCTO ===\nNombre + observaciones/instrucciones. Activa con activate_flow usando el id EXACTO. El sistema envía el contenido; tú no lo copies.\n${lines}`;
+      } else {
+        salesPackagesText =
+          `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nActiva con activate_flow el paquete cuyo TEMA coincida con lo que pide el cliente, pasando el id EXACTO de la lista. NO actives un paquete de otro tema. El sistema envía su contenido en orden; tú NO lo describas ni lo reenvíes. Después responde dudas con el historial y la base de conocimiento.\n${lines}`;
+      }
+    }
+  } catch (err) {
+    console.error("[runAiAgent] load sales packages failed", err, { orgId });
+  }
+
   const tools =
     promptMode === "pedido"
       ? CRM_TOOLS
       : promptMode === "product_focus"
-        ? // Sin transfer_to_human: la observación del producto debe responder precio/envío
+        ? // Sin transfer_to_human; sí list_flows/activate_flow del producto
           [
-            ...CRM_TOOLS.filter(
-              (t) =>
-                t.function?.name !== "transfer_to_human" &&
-                t.function?.name !== "list_flows" &&
-                t.function?.name !== "activate_flow",
-            ),
+            ...CRM_TOOLS.filter((t) => t.function?.name !== "transfer_to_human"),
             ...CATALOG_TOOLS,
           ]
         : promptMode === "product_detail"
@@ -2985,13 +3108,14 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const activeFlowGuide =
     promptMode === "product_focus"
-      ? `MODO PRODUCTO EN FOCO:\n1. En CADA respuesta usa la OBSERVACIÓN DEL VENDEDOR (precio, envío, ciudad, guion de atención).\n2. PROHIBIDO transferir a humano o decir "no tengo esa información" si el dato está en la observación.\n3. Si pide OTRO producto por nombre/SKU, llama present_product.\n4. Respuestas breves; una pregunta de cierre.`
+      ? `MODO PRODUCTO EN FOCO:\n1. En CADA respuesta usa la OBSERVACIÓN DEL VENDEDOR (precio, envío, ciudad, guion).\n2. Usa los FLUJOS DE ESTE PRODUCTO (list_flows / activate_flow) cuando el cliente pida lo que cubren.\n3. PROHIBIDO transferir a humano o decir "no tengo esa información" si el dato está en la observación.\n4. Si pide OTRO producto por nombre/SKU, llama present_product.\n5. Respuestas breves; una pregunta de cierre.`
       : promptMode === "product_detail"
       ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la observación del vendedor.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
       : promptMode === "pedido"
         ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
         : catalogCfg
-          ? PRODUCT_FLOW_GUIDE
+          ? PRODUCT_FLOW_GUIDE +
+            `\n\nMODO DESCUBRIMIENTO CATÁLOGO (WhatsApp / sin producto en foco):\n1. Si el cliente menciona un producto por nombre, SKU o características, BÚSCALO con search_products o present_product.\n2. Si lo encuentras en el catálogo, USA present_product para enfocarlo (activa ficha + flujo inicial del producto).\n3. Si NO está en el catálogo, responde con la BASE DE CONOCIMIENTO y el prompt principal. No inventes un producto del catálogo.`
           : `MODO GENERAL:\nResponde breve y natural. Si el cliente muestra intención de compra, guía hacia el pedido.`;
 
   // Load order fields con manejo de error
@@ -3329,10 +3453,10 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const toolsHintLegacy =
     promptMode === "product_focus"
-      ? "\n\nProducto en foco activo: responde con ficha + observación. Si pide otro producto, present_product. No uses tarifas/KB de otros artículos."
+      ? "\n\nProducto en foco: responde con ficha + observación + flujos de ESTE producto. Si pide otro producto, present_product."
       : activePackageName || needsPriceContext
         ? "\n\nHay cotización o PAQUETE activo. Para precios/tarifas por ciudad prioriza TARIFAS Y PRECIOS, FUENTES y CONTEXTO DEL PAQUETE. No digas que faltan datos si están ahí."
-        : "\n\nResponde con el contexto y las herramientas CRM disponibles (etiquetas, recordatorios, pedido, transferir).";
+        : "\n\nSi el cliente habla de un producto del catálogo (nombre/características), búscalo y usa present_product. Si no está, responde con base de conocimiento. También puedes ofrecer paquetes generales con activate_flow.";
 
   const { system, mode: promptAssemblyMode } = assembleSystemPrompt({
     identity:
@@ -3343,8 +3467,9 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     threadPromptExtensionText: promptMode === "product_focus" ? "" : threadPromptExtensionText,
     conversationRulesText: promptMode === "product_focus" ? "" : conversationRulesText,
     customerMemoryText: promptMode === "product_focus" ? "" : customerMemoryText,
-    salesPackagesText: promptMode === "product_focus" ? "" : salesPackagesText,
-    activePackageContextText: promptMode === "product_focus" ? "" : activePackageContextText,
+    salesPackagesText,
+    activePackageContextText:
+      promptMode === "product_focus" ? activePackageContextText : activePackageContextText,
     selectedProductText,
     knowledgeBase: promptMode === "product_focus" ? "" : knowledgeBase,
     mandatoryPriceKnowledgeText:
@@ -3359,7 +3484,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     isCollectingOrder,
     startOrderFlow,
     lastUserText,
-    hasActivePackage: promptMode === "product_focus" ? false : !!activePackageName,
+    hasActivePackage: !!activePackageName,
     factCount: promptPlan?.summary
       ? (promptPlan.summary.match(/^\d+\./gm) || []).length
       : conversationStateText

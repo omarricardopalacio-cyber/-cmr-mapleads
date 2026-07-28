@@ -44,6 +44,8 @@ export const listContacts = createServerFn({ method: "GET" })
           updated_at: r.updated_at,
           message_count: Number(r.message_count ?? 0),
           purchased: !!r.purchased,
+          asked_products: r.asked_products ?? null,
+          asked_questions: r.asked_questions ?? null,
         })),
       };
     }
@@ -51,12 +53,26 @@ export const listContacts = createServerFn({ method: "GET" })
     // Fallback si el RPC aún no está creado en la BD: al menos calculamos "compró"
     // con una consulta barata a orders; el conteo de mensajes queda en null.
     console.warn("[listContacts] contacts_report RPC no disponible, usando fallback:", rpcError?.message);
-    const { data } = await supabaseAdmin
-      .from("contacts")
-      .select("id, wa_id, display_name, phone, updated_at")
-      .eq("org_id", orgId)
-      .order("updated_at", { ascending: false })
-      .limit(200);
+    let data: any[] | null = null;
+    {
+      const res = await supabaseAdmin
+        .from("contacts")
+        .select("id, wa_id, display_name, phone, updated_at, asked_products, asked_questions")
+        .eq("org_id", orgId)
+        .order("updated_at", { ascending: false })
+        .limit(200);
+      if (res.error && (String(res.error.message || "").includes("asked_") || res.error.code === "42703")) {
+        const retry = await supabaseAdmin
+          .from("contacts")
+          .select("id, wa_id, display_name, phone, updated_at")
+          .eq("org_id", orgId)
+          .order("updated_at", { ascending: false })
+          .limit(200);
+        data = retry.data;
+      } else {
+        data = res.data;
+      }
+    }
 
     const contacts = data ?? [];
     let purchasedSet = new Set<string>();
@@ -76,6 +92,8 @@ export const listContacts = createServerFn({ method: "GET" })
         ...c,
         message_count: null as number | null,
         purchased: purchasedSet.has(c.id),
+        asked_products: c.asked_products ?? null,
+        asked_questions: c.asked_questions ?? null,
       })),
     };
   });
@@ -188,12 +206,32 @@ export const getContactCrmData = createServerFn({ method: "GET" })
   .inputValidator((d) => z.object({ contactId: z.string().uuid() }).parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
-    const { data: contact, error } = await supabaseAdmin
-      .from("contacts")
-      .select("id, wa_id, phone, display_name, profile_picture_url, origin, entry_date, exit_date, deal_value, company, position, interested_products, observations")
-      .eq("id", data.contactId)
-      .eq("org_id", orgId)
-      .single();
+    let contact: any = null;
+    let error: any = null;
+    {
+      const res = await supabaseAdmin
+        .from("contacts")
+        .select("id, wa_id, phone, display_name, profile_picture_url, origin, entry_date, exit_date, deal_value, company, position, interested_products, observations, asked_products, asked_questions")
+        .eq("id", data.contactId)
+        .eq("org_id", orgId)
+        .single();
+      contact = res.data;
+      error = res.error;
+    }
+    if (error && (String(error.message || "").includes("asked_") || error.code === "42703")) {
+      const res = await supabaseAdmin
+        .from("contacts")
+        .select("id, wa_id, phone, display_name, profile_picture_url, origin, entry_date, exit_date, deal_value, company, position, interested_products, observations")
+        .eq("id", data.contactId)
+        .eq("org_id", orgId)
+        .single();
+      contact = res.data;
+      error = res.error;
+      if (contact) {
+        contact.asked_products = null;
+        contact.asked_questions = null;
+      }
+    }
     if (error) throw new Error(error.message);
     return { contact };
   });
@@ -211,6 +249,8 @@ export const updateContactCrmData = createServerFn({ method: "POST" })
       position: z.string().nullable().optional(),
       interested_products: z.string().nullable().optional(),
       observations: z.string().nullable().optional(),
+      asked_products: z.string().nullable().optional(),
+      asked_questions: z.string().nullable().optional(),
     }).parse(d)
   )
   .handler(async ({ context, data }) => {

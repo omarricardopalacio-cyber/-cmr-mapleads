@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
 
 const PRODUCT_COLS =
-  "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, chat_ask_text, chat_flow, gallery_images, updated_at";
+  "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, chat_ask_text, chat_flow, gallery_images, updated_at";
 
 export const listStoreCatalogProducts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -33,12 +33,14 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
       .range(offset, offset + limit - 1);
 
     if (q) {
-      query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%,category.ilike.%${q}%`);
+      query = query.or(
+        `name.ilike.%${q}%,sku.ilike.%${q}%,category.ilike.%${q}%,search_keywords.ilike.%${q}%`,
+      );
     }
 
     let { data: rows, error, count } = await query;
 
-    if (error?.message?.includes("chat_ask") || error?.message?.includes("ai_observation") || error?.code === "42703") {
+    if (error?.message?.includes("chat_ask") || error?.message?.includes("ai_observation") || error?.message?.includes("search_keywords") || error?.code === "42703") {
       const legacyCols =
         "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, updated_at";
       let legacy = (supabaseAdmin as any)
@@ -52,6 +54,7 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
       rows = (res.data || []).map((r: any) => ({
         ...r,
         ai_observation: null,
+        search_keywords: null,
         chat_ask_text: null,
         chat_flow: { send_specs: true, send_ask: true },
         gallery_images: [],
@@ -133,6 +136,7 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
         badge: z.string().max(40).nullable().optional(),
         category: z.string().max(80).nullable().optional(),
         ai_observation: z.string().max(4000).nullable().optional(),
+        search_keywords: z.string().max(1000).nullable().optional(),
         chat_ask_text: z.string().max(300).nullable().optional(),
         gallery_images: z.array(z.string().max(2000)).max(12).optional(),
         chat_flow: z
@@ -188,6 +192,7 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
       "badge",
       "category",
       "ai_observation",
+      "search_keywords",
       "chat_ask_text",
       "gallery_images",
       "chat_flow",
@@ -196,6 +201,9 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
     for (const k of keys) {
       if ((data as any)[k] !== undefined) (patch as any)[k] = (data as any)[k];
     }
+    if (typeof patch.search_keywords === "string") {
+      patch.search_keywords = String(patch.search_keywords).trim() || null;
+    }
 
     const { error } = await (supabaseAdmin as any)
       .from("products")
@@ -203,9 +211,13 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
       .eq("org_id", orgId)
       .eq("id", data.productId);
 
-    if (error?.message?.includes("chat_ask") || error?.code === "42703") {
+    if (
+      error?.message?.includes("chat_ask") ||
+      error?.message?.includes("search_keywords") ||
+      error?.code === "42703"
+    ) {
       throw new Error(
-        "Faltan columnas de edición. Ejecuta en Supabase 20260727230000_products_chat_flow_edit.sql",
+        "Faltan columnas de edición. Ejecuta en Supabase las migraciones de productos (chat_flow / search_keywords).",
       );
     }
     if (error) throw new Error(error.message);

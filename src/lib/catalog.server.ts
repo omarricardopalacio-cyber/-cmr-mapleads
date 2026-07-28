@@ -42,6 +42,8 @@ export type CatalogProduct = {
   attributes?: Record<string, unknown>;
   /** Instrucciones especiales del vendedor para la IA (tienda / CRM) */
   ai_observation?: string | null;
+  /** Nombres alternativos / palabras clave para búsqueda IA (texto libre) */
+  search_keywords?: string | null;
 };
 
 function extractProductAttributes(
@@ -266,6 +268,9 @@ function mapProductRow(r: any, cfg: CatalogConfig): CatalogProduct {
     sku: r.sku || raw.sku || undefined,
     badge: r.badge || raw.badge || undefined,
     attributes: extractProductAttributes(raw),
+    ai_observation: r.ai_observation ?? null,
+    search_keywords: r.search_keywords ?? null,
+    category: r.category || raw.category || undefined,
   };
 }
 
@@ -420,13 +425,21 @@ export function rankProductsMeta(
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
+    const keywordsClean = String(p.search_keywords || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[,;|]+/g, " ");
 
     // EXCLUSIÓN SUAVE: si el nombre contiene una palabra de exclusión Y no contiene
     // ningún token de búsqueda (en su forma raw/sin normalizar), se penaliza el score.
     // Se usa rawTokens para que "almohada" no se confunda con "almohadon" u otras
     // variantes cercanas que el corrector ortográfico podría generar.
     const nameHasQueryToken = rawTokens.some(
-      (t) => t.length >= 3 && nameClean.includes(singularizeSpanish(t)),
+      (t) =>
+        t.length >= 3 &&
+        (nameClean.includes(singularizeSpanish(t)) ||
+          keywordsClean.includes(singularizeSpanish(t))),
     );
     if (!nameHasQueryToken && exclusions.length > 0) {
       for (const exclusion of exclusions) {
@@ -442,6 +455,10 @@ export function rankProductsMeta(
       score += 50;
       nameHit = true;
     }
+    if (keywordsClean && keywordsClean.includes(q)) {
+      score += 55;
+      nameHit = true;
+    }
 
     // 2. Coincidencia por conceptos normalizados. Un match singular/plural en
     // nombre es una señal fuerte por sigo sola y no puede quedar bajo el umbral.
@@ -449,6 +466,9 @@ export function rankProductsMeta(
       if (token.length < 2) continue;
       if (nameClean.includes(token)) {
         score += 24;
+        nameHit = true;
+      } else if (keywordsClean.includes(token)) {
+        score += 30;
         nameHit = true;
       } else if (descClean.includes(token)) {
         score += 9;

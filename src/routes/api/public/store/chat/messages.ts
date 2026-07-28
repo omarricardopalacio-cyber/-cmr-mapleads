@@ -100,6 +100,17 @@ export const Route = createFileRoute("/api/public/store/chat/messages")({
         });
         if (inErr) return json(500, { error: inErr.message });
 
+        try {
+          const { appendContactAskedQuestion } = await import("@/lib/contact-inquiry.server");
+          await appendContactAskedQuestion({
+            orgId: store.org_id,
+            contactId: thread.contact_id,
+            text,
+          });
+        } catch {
+          /* no bloquear chat */
+        }
+
         await supabaseAdmin
           .from("threads")
           .update({

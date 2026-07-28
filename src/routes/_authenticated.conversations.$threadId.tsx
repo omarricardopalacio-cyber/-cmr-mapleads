@@ -1294,6 +1294,26 @@ function ContactContextPanel({ contactId, threadId }: { contactId: string; threa
             <Textarea className="text-xs resize-none" rows={2} defaultValue={(crmData as any)?.contact?.interested_products || ""} onBlur={(e) => updateCrmMut.mutate({ interested_products: e.target.value })} />
           </div>
           <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Productos consultados (auto)</Label>
+            <Textarea
+              className="text-xs resize-none bg-muted/40"
+              rows={3}
+              readOnly
+              value={(crmData as any)?.contact?.asked_products || ""}
+              placeholder="Se llena solo cuando el cliente ve o pregunta por productos"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Preguntas del cliente (auto)</Label>
+            <Textarea
+              className="text-xs resize-none bg-muted/40"
+              rows={4}
+              readOnly
+              value={(crmData as any)?.contact?.asked_questions || ""}
+              placeholder="Solo preguntas/consultas del cliente (no respuestas de la IA)"
+            />
+          </div>
+          <div className="space-y-1">
             <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Observaciones</Label>
             <Textarea className="text-xs resize-none" rows={3} defaultValue={(crmData as any)?.contact?.observations || ""} onBlur={(e) => updateCrmMut.mutate({ observations: e.target.value })} />
           </div>

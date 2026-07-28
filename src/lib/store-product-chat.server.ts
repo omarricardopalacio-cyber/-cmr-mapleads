@@ -301,6 +301,29 @@ export async function focusStoreProduct(opts: {
     });
   }
 
+  try {
+    const { appendContactAskedProduct } = await import("@/lib/contact-inquiry.server");
+    await appendContactAskedProduct({
+      orgId,
+      contactId: opts.contactId,
+      productName: product.name,
+      productId: String(product.id),
+    });
+  } catch {
+    /* no bloquear foco */
+  }
+
+  try {
+    const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
+    await startProductEntryFlow({
+      orgId,
+      contactId: opts.contactId,
+      productId: String(product.id),
+    });
+  } catch {
+    /* no bloquear foco */
+  }
+
   let introSent = false;
   const flow = (product.chat_flow as any) || {};
   const sendSpecs = flow.send_specs !== false;
@@ -385,6 +408,29 @@ export async function presentProductToThread(opts: {
     } as any)
     .eq("id", opts.threadId)
     .eq("org_id", opts.orgId);
+
+  try {
+    const { appendContactAskedProduct } = await import("@/lib/contact-inquiry.server");
+    await appendContactAskedProduct({
+      orgId: opts.orgId,
+      contactId: opts.contactId,
+      productName: product.name,
+      productId: String(product.id),
+    });
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
+    await startProductEntryFlow({
+      orgId: opts.orgId,
+      contactId: opts.contactId,
+      productId: String(product.id),
+    });
+  } catch {
+    /* ignore */
+  }
 
   const now = Date.now();
   const flow = (product.chat_flow as any) || {};

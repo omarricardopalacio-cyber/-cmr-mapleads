@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getFlow, upsertFlow, listFlowSteps, upsertSteps, runFlowManually, listContactsLite } from "@/lib/flows.functions";
+import { listStoreCatalogProducts } from "@/lib/catalog-products.functions";
 import { STEPS } from "@/lib/flow-blocks";
 import { FlowCanvas } from "./FlowCanvas";
 import { TriggerSelector } from "./TriggerSelector";
@@ -16,6 +17,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Save, ArrowLeft, PlayCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -25,6 +33,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
   const upsertStepsFn = useServerFn(upsertSteps);
   const runFlowManuallyFn = useServerFn(runFlowManually);
   const listContactsLiteFn = useServerFn(listContactsLite);
+  const listProductsFn = useServerFn(listStoreCatalogProducts);
 
   const isNew = flowId === "new";
 
@@ -37,6 +46,16 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
     queryFn: () => listContactsLiteFn({}),
     enabled: !isNew,
   });
+
+  const { data: productsData } = useQuery({
+    queryKey: ["catalogProductsLite"],
+    queryFn: () => listProductsFn({ data: { limit: 100 } }),
+  });
+  const catalogProducts = ((productsData as any)?.products ?? []) as Array<{
+    id: string;
+    name: string;
+    is_active?: boolean;
+  }>;
 
   const contacts = (contactsData as any)?.contacts ?? [];
   const filteredContacts = useMemo(() => {
@@ -69,6 +88,8 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
   const [maxSendsPerContact, setMaxSendsPerContact] = useState<string>("");
   const [triggerType, setTriggerType] = useState("manual");
   const [triggerValue, setTriggerValue] = useState("");
+  const [productId, setProductId] = useState<string>("");
+  const [isProductEntry, setIsProductEntry] = useState(false);
   const [steps, setSteps] = useState<any[]>([]);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
 
@@ -87,6 +108,8 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
       );
       setTriggerType(f.trigger_type || "manual");
       setTriggerValue(f.trigger_value || "");
+      setProductId(f.product_id || "");
+      setIsProductEntry(!!f.is_product_entry);
     }
   }, [flowData]);
 
@@ -122,6 +145,8 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
           max_sends_per_contact: parsedMax,
           trigger_type: triggerType,
           trigger_value: triggerValue || null,
+          product_id: productId || null,
+          is_product_entry: !!productId && isProductEntry,
         }
       });
       
@@ -308,6 +333,49 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
                 className="resize-none text-sm"
                 placeholder="¿Qué hace este flujo? La IA usa esta descripción para saber cuándo ofrecerlo."
               />
+            </div>
+
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="space-y-2">
+                <Label className="text-sm">Producto del catálogo (opcional)</Label>
+                <Select
+                  value={productId || "__none__"}
+                  onValueChange={(v) => {
+                    if (v === "__none__") {
+                      setProductId("");
+                      setIsProductEntry(false);
+                    } else {
+                      setProductId(v);
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="General (sin producto)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">General (sin producto)</SelectItem>
+                    {catalogProducts.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}{p.is_active === false ? " (inactivo)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Si eliges un producto, este flujo solo aplica cuando el cliente está en ese producto (catálogo o WhatsApp).
+                </p>
+              </div>
+              {!!productId && (
+                <div className="flex items-start justify-between gap-3 pt-1 border-t">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm">Flujo inicial al entrar al producto</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Se arranca solo al enfocar este producto. Solo uno por producto.
+                    </p>
+                  </div>
+                  <Switch checked={isProductEntry} onCheckedChange={setIsProductEntry} />
+                </div>
+              )}
             </div>
 
             <div className="space-y-3 rounded-md border p-3">

@@ -136,17 +136,22 @@ export async function ensureFlowRunForContact(params: {
  * Inicia (o reinicia) un flujo para un contacto y lo ejecuta al instante,
  * enviando sus pasos en orden. Pensado para que la IA active "paquetes".
  * No duplica si ya hay una ejecución en curso. Respeta max_sends_per_contact.
+ * Si el flujo tiene product_id, solo arranca con ese producto en foco.
  */
 export async function startFlowForContact(params: {
   orgId: string;
   contactId: string;
   flowId: string;
+  /** Producto en foco del hilo; requerido si el flujo está ligado a un producto */
+  focusedProductId?: string | null;
 }): Promise<{ started: boolean; message: string }> {
-  const { orgId, contactId, flowId } = params;
+  const { orgId, contactId, flowId, focusedProductId = null } = params;
 
   const { data: flow } = await supabaseAdmin
     .from("flows")
-    .select("id, name, is_active, ai_selectable, max_sends_per_contact, ai_instructions")
+    .select(
+      "id, name, is_active, ai_selectable, max_sends_per_contact, ai_instructions, product_id",
+    )
     .eq("org_id", orgId)
     .eq("id", flowId)
     .maybeSingle();
@@ -155,6 +160,21 @@ export async function startFlowForContact(params: {
   if (!flow.is_active) return { started: false, message: `El paquete "${flow.name}" no está activo.` };
   if (!flow.ai_selectable) {
     return { started: false, message: `El paquete "${flow.name}" no está habilitado para que la IA lo ofrezca.` };
+  }
+
+  const flowProductId = (flow as any).product_id ? String((flow as any).product_id) : null;
+  if (flowProductId) {
+    if (!focusedProductId || focusedProductId !== flowProductId) {
+      return {
+        started: false,
+        message: `El paquete "${flow.name}" solo aplica cuando ese producto está en foco.`,
+      };
+    }
+  } else if (focusedProductId) {
+    return {
+      started: false,
+      message: `Con producto en foco solo puedes activar flujos de ese producto (no paquetes generales).`,
+    };
   }
 
   const { data: firstStep } = await supabaseAdmin
@@ -193,18 +213,119 @@ export async function startFlowForContact(params: {
   return result;
 }
 
+/**
+ * Arranca el flujo marcado como inicial (is_product_entry) para un producto.
+ * No exige ai_selectable: es automático al enfocar el producto.
+ */
+export async function startProductEntryFlow(params: {
+  orgId: string;
+  contactId: string | null | undefined;
+  productId: string;
+}): Promise<{ started: boolean; message: string; flowId?: string }> {
+  const { orgId, productId } = params;
+  const contactId = params.contactId ? String(params.contactId) : "";
+  if (!contactId || !productId) {
+    return { started: false, message: "Falta contacto o producto." };
+  }
+
+  try {
+    const { data: flow, error } = await (supabaseAdmin as any)
+      .from("flows")
+      .select("id, name, is_active, max_sends_per_contact, ai_instructions, product_id")
+      .eq("org_id", orgId)
+      .eq("product_id", productId)
+      .eq("is_product_entry", true)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (error) {
+      if (String(error.message || "").includes("product_id") || error.code === "42703") {
+        return { started: false, message: "Migración de flujos por producto pendiente." };
+      }
+      return { started: false, message: error.message };
+    }
+    if (!flow) return { started: false, message: "Sin flujo inicial para este producto." };
+
+    const { data: firstStep } = await supabaseAdmin
+      .from("flow_steps")
+      .select("id")
+      .eq("flow_id", flow.id)
+      .is("parent_step_id", null)
+      .order("step_order", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!firstStep) {
+      return { started: false, message: `El flujo inicial "${flow.name}" está vacío.` };
+    }
+
+    const result = await ensureFlowRunForContact({
+      orgId,
+      contactId,
+      flowId: flow.id,
+      firstStepId: firstStep.id,
+      maxSends: flow.max_sends_per_contact,
+      flowName: flow.name,
+      processNow: true,
+    });
+
+    const instructions = String(flow.ai_instructions || "").trim();
+    if (result.started && instructions) {
+      return {
+        ...result,
+        flowId: flow.id,
+        message:
+          `${result.message}\n\n=== INSTRUCCIONES DEL FLUJO INICIAL ===\n${instructions}`,
+      };
+    }
+    return { ...result, flowId: flow.id };
+  } catch (err: any) {
+    console.warn("[startProductEntryFlow]", err?.message || err);
+    return { started: false, message: err?.message || "Error arrancando flujo inicial" };
+  }
+}
+
+/** ¿El flujo aplica según el producto en foco del hilo? */
+export function flowMatchesProductFocus(
+  flowProductId: string | null | undefined,
+  focusedProductId: string | null | undefined,
+): boolean {
+  const fp = flowProductId ? String(flowProductId) : null;
+  const focus = focusedProductId ? String(focusedProductId) : null;
+  if (fp) return focus === fp;
+  return !focus;
+}
+
 export async function triggerFlows(params: {
   orgId: string;
   triggerType: string;
   contactId: string;
   triggerValue?: string;
+  focusedProductId?: string | null;
 }) {
   try {
     const { orgId, triggerType, contactId, triggerValue } = params;
+    let focusedProductId = params.focusedProductId ?? null;
+
+    if (focusedProductId === undefined || focusedProductId === null) {
+      try {
+        const { data: th } = await (supabaseAdmin as any)
+          .from("threads")
+          .select("focused_product_id")
+          .eq("org_id", orgId)
+          .eq("contact_id", contactId)
+          .order("last_message_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        focusedProductId = th?.focused_product_id ? String(th.focused_product_id) : null;
+      } catch {
+        focusedProductId = null;
+      }
+    }
 
     let query = supabaseAdmin
       .from("flows")
-      .select("id, name, max_sends_per_contact")
+      .select("id, name, max_sends_per_contact, product_id")
       .eq("org_id", orgId)
       .eq("trigger_type", triggerType)
       .eq("is_active", true);
@@ -217,6 +338,8 @@ export async function triggerFlows(params: {
     if (error || !flows || flows.length === 0) return;
 
     for (const flow of flows) {
+      if (!flowMatchesProductFocus((flow as any).product_id, focusedProductId)) continue;
+
       const { data: firstStep } = await supabaseAdmin
         .from("flow_steps")
         .select("id")

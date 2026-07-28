@@ -40,6 +40,14 @@ export function FlowList({ flows, onEdit }: { flows: any[]; onEdit: (id: string)
                   <Badge variant={flow.is_active ? "default" : "secondary"} className="text-[10px]">
                     {flow.is_active ? "Activo" : "Inactivo"}
                   </Badge>
+                  {flow.product_id ? (
+                    <Badge variant="outline" className="text-[10px] border-amber-500 text-amber-700 max-w-[160px] truncate" title={flow.product_name || flow.product_id}>
+                      {flow.is_product_entry ? "Inicial · " : ""}
+                      {flow.product_name || "Producto"}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px]">General</Badge>
+                  )}
                   {flow.active_runs > 0 && (
                     <Badge variant="outline" className="text-[10px] text-blue-500 border-blue-500">
                       {flow.active_runs} ejecutándose

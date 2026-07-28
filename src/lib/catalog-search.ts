@@ -120,9 +120,11 @@ export function resolveProductFromReference(
   for (const p of products) {
     const nameNorm = normalizeText(p.name);
     const skuNorm = p.sku ? normalizeText(p.sku) : "";
+    const kwNorm = p.search_keywords ? normalizeText(String(p.search_keywords)) : "";
     let score = 0;
 
     if (ref.length >= 4 && nameNorm.includes(ref)) score += 50;
+    if (kwNorm && ref.length >= 3 && kwNorm.includes(ref)) score += 55;
     if (p.sku && ref.includes(skuNorm)) score += 80;
     if (p.sku && refTokens.some((t) => skuNorm.includes(t))) score += 60;
 
@@ -130,14 +132,17 @@ export function resolveProductFromReference(
       if (t.length < 2) continue;
       if (/^\d+$/.test(t) && nameNorm.includes(t)) score += 25;
       if (nameNorm.includes(t)) score += 15;
+      if (kwNorm && kwNorm.includes(t)) score += 22;
       if (skuNorm && skuNorm.includes(t)) score += 20;
     }
 
     const refNums = refTokens.filter((t) => /^\d+$/.test(t));
     const refWords = refTokens.filter((t) => !/^\d+$/.test(t));
     if (refNums.length && refWords.length) {
-      const allNums = refNums.every((n) => nameNorm.includes(n));
-      const wordHits = refWords.filter((w) => nameNorm.includes(w)).length;
+      const allNums = refNums.every((n) => nameNorm.includes(n) || kwNorm.includes(n));
+      const wordHits = refWords.filter(
+        (w) => nameNorm.includes(w) || kwNorm.includes(w),
+      ).length;
       if (allNums && wordHits >= Math.min(1, refWords.length)) score += 40;
     }
 
@@ -178,6 +183,11 @@ export function buildSearchVocabulary(products: CatalogProduct[]): string[] {
       if (t.length >= 4) vocab.add(singularizeSpanish(t));
     }
     if (p.sku) vocab.add(normalizeText(p.sku));
+    if (p.search_keywords) {
+      for (const t of tokenize(String(p.search_keywords))) {
+        if (t.length >= 3) vocab.add(singularizeSpanish(t));
+      }
+    }
   }
   return [...vocab];
 }

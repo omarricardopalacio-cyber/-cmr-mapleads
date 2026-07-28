@@ -57,6 +57,7 @@ type CatalogRow = {
   category?: string | null;
   is_active?: boolean | null;
   ai_observation?: string | null;
+  search_keywords?: string | null;
   chat_ask_text?: string | null;
   gallery_images?: string[] | null;
   chat_flow?: ChatFlowFlags | null;
@@ -113,6 +114,7 @@ function CatalogProductsPage() {
     badge: "",
     category: "",
     ai_observation: "",
+    search_keywords: "",
     chat_ask_text: "",
     gallery_images: [] as string[],
     send_specs: true,
@@ -181,6 +183,7 @@ function CatalogProductsPage() {
       badge: p.badge || "",
       category: p.category || "",
       ai_observation: p.ai_observation || "",
+      search_keywords: p.search_keywords || "",
       chat_ask_text: p.chat_ask_text || "",
       gallery_images: parseGallery(p.gallery_images),
       send_specs: flow.send_specs !== false,
@@ -251,6 +254,7 @@ function CatalogProductsPage() {
           badge: form.badge.trim() || null,
           category: form.category.trim() || null,
           ai_observation: form.ai_observation.trim() || null,
+          search_keywords: form.search_keywords.trim() || null,
           chat_ask_text: form.chat_ask_text.trim() || null,
           gallery_images: form.gallery_images,
           chat_flow: {
@@ -518,12 +522,29 @@ function CatalogProductsPage() {
                       <span className="font-semibold">Obs. IA:</span> {selected.ai_observation}
                     </p>
                   ) : null}
+                  {selected.search_keywords ? (
+                    <p className="rounded-md border bg-muted/40 p-2 text-xs">
+                      <span className="font-semibold">Keywords IA:</span> {selected.search_keywords}
+                    </p>
+                  ) : null}
                 </>
               ) : (
                 <div className="space-y-3">
                   <div className="space-y-1">
                     <Label>Nombre</Label>
                     <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Palabras clave / nombres para la IA</Label>
+                    <Textarea
+                      rows={2}
+                      value={form.search_keywords}
+                      onChange={(e) => setForm({ ...form, search_keywords: e.target.value })}
+                      placeholder="Ej: ab vertical, masajeador facial, jjf-071, ab1 (separadas por coma)"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Nombres o palabras con las que el cliente suele pedir este producto. Ayuda a la IA a encontrarlo y activar el flujo correcto aunque el nombre oficial no coincida.
+                    </p>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">

@@ -1248,7 +1248,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 },
                 { onConflict: 'session_id,contact_id' },
               )
-              .select('id')
+              .select('id, focused_product_id')
               .single()
             if (!thread) continue
 
@@ -1676,6 +1676,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             })
 
             if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
+              try {
+                const { appendContactAskedQuestion } = await import('@/lib/contact-inquiry.server')
+                await appendContactAskedQuestion({
+                  orgId: session.org_id,
+                  contactId,
+                  text: e.text,
+                })
+              } catch (_) { /* ignore */ }
+
               // Use phone@c.us when we have a real phone (avoids @lid issues)
               const sendChatId = e.contact?.phone
                 ? `${e.contact.phone}@c.us`
@@ -1781,13 +1790,25 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
               // Keyword flow enrollment (wrapped to avoid breaking bridge on DB errors)
               try {
+                const focusedProductId = (thread as any)?.focused_product_id
+                  ? String((thread as any).focused_product_id)
+                  : null;
                 const { data: keywordFlows } = await dyn()
                   .from('flows')
-                  .select('id, trigger_value, max_sends_per_contact')
+                  .select('id, trigger_value, max_sends_per_contact, product_id')
                   .eq('org_id', session.org_id)
                   .eq('trigger_type', 'keyword')
                   .eq('is_active', true);
                 for (const flow of keywordFlows ?? []) {
+                  const flowPid = (flow as any).product_id
+                    ? String((flow as any).product_id)
+                    : null;
+                  // Flujos de producto solo con ese producto en foco; generales solo sin foco
+                  if (flowPid) {
+                    if (focusedProductId !== flowPid) continue;
+                  } else if (focusedProductId) {
+                    continue;
+                  }
                   const { data: firstStep } = await dyn()
                     .from('flow_steps')
                     .select('id')
@@ -1825,11 +1846,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   if (!trigger.shouldTrigger) continue;
                   const { data: flows } = await dyn()
                     .from('flows')
-                    .select('id, max_sends_per_contact')
+                    .select('id, max_sends_per_contact, product_id')
                     .eq('org_id', session.org_id)
                     .eq('trigger_type', trigger.type)
                     .eq('is_active', true);
                   for (const flow of flows ?? []) {
+                    const flowPid = (flow as any).product_id
+                      ? String((flow as any).product_id)
+                      : null;
+                    if (flowPid) {
+                      if (focusedProductId !== flowPid) continue;
+                    } else if (focusedProductId) {
+                      continue;
+                    }
                     const { data: firstStep } = await dyn()
                       .from('flow_steps')
                       .select('id')

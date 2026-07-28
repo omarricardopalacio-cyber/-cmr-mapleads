@@ -13,11 +13,24 @@ export const listFlows = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await ensureUserOrg(context.userId);
-    const { data: flows } = await supabaseAdmin
-      .from("flows")
-      .select("*")
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: false });
+    let flows: any[] | null = null;
+    {
+      const res = await supabaseAdmin
+        .from("flows")
+        .select("*, products:product_id(id, name)")
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: false });
+      if (res.error && (String(res.error.message || "").includes("product_id") || res.error.code === "42703")) {
+        const legacy = await supabaseAdmin
+          .from("flows")
+          .select("*")
+          .eq("org_id", orgId)
+          .order("created_at", { ascending: false });
+        flows = legacy.data;
+      } else {
+        flows = res.data;
+      }
+    }
       
     // Enriquecer con conteo de runs activos si es necesario
     const flowsWithCounts = await Promise.all(
@@ -27,7 +40,12 @@ export const listFlows = createServerFn({ method: "GET" })
           .select("id", { count: "exact", head: true })
           .eq("flow_id", f.id)
           .in("status", ["active", "running", "wait_node"]);
-        return { ...f, active_runs: count ?? 0 };
+        const prod = Array.isArray(f.products) ? f.products[0] : f.products;
+        return {
+          ...f,
+          active_runs: count ?? 0,
+          product_name: prod?.name || null,
+        };
       })
     );
       
@@ -66,10 +84,27 @@ export const upsertFlow = createServerFn({ method: "POST" })
     // null / omitido = ilimitado; entero >= 1 = tope de envíos por cliente
     max_sends_per_contact: z.number().int().min(1).nullable().optional(),
     ai_instructions: z.string().nullable().optional(),
+    product_id: z.string().uuid().nullable().optional(),
+    is_product_entry: z.boolean().optional(),
   }).passthrough().parse(d))
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
     const { id, ...payload } = data;
+
+    // Un solo flujo inicial activo por producto
+    if (payload.product_id && payload.is_product_entry) {
+      let clearQ = supabaseAdmin
+        .from("flows")
+        .update({ is_product_entry: false })
+        .eq("org_id", orgId)
+        .eq("product_id", payload.product_id)
+        .eq("is_product_entry", true);
+      if (id) clearQ = clearQ.neq("id", id);
+      await clearQ;
+    }
+    if (!payload.product_id) {
+      payload.is_product_entry = false;
+    }
     
     if (id) {
       const { data: flow, error } = await supabaseAdmin
