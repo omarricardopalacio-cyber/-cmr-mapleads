@@ -3331,23 +3331,44 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     recentProductsBlock: promptMode === "product_focus" ? "" : recentProductsContextBlock,
   });
 
-  const historyForPrompt = selectHistoryForPrompt(messages, promptAssemblyMode === "legacy");
+  const historyForPrompt = selectHistoryForPrompt(
+    messages.filter((m) => m.role !== "system"),
+    promptAssemblyMode === "legacy",
+  );
+
+  // channel-ai-reply inyecta un system con la observación; Vertex solo toma el primer system
+  // y descarta el resto. Fusionamos para que la Observación del producto SIEMPRE llegue.
+  const inboundSystemBlocks = messages
+    .filter((m) => m.role === "system" && m.content?.trim())
+    .map((m) => m.content.trim());
+  const mergedSystem = [system, ...inboundSystemBlocks].filter(Boolean).join("\n\n");
 
   const approxPromptChars =
-    system.length + historyForPrompt.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+    mergedSystem.length + historyForPrompt.reduce((acc, m) => acc + (m.content?.length || 0), 0);
   console.info("[runAiAgent] prompt size", {
     orgId,
     threadId,
     promptAssemblyMode,
     promptModeLabel: getAiPromptModeLabel(),
-    systemChars: system.length,
+    promptMode,
+    systemChars: mergedSystem.length,
     historyMsgs: historyForPrompt.length,
     historyMsgsLoaded: messages.length,
     approxPromptChars,
     approxTokens: Math.round(approxPromptChars / 4),
+    focusedProductId: focusedProduct?.id || null,
+    hasAiObservation: !!(
+      focusedProduct?.ai_observation?.trim() ||
+      contextProductForPrompt?.ai_observation?.trim()
+    ),
+    aiObservationChars:
+      (focusedProduct?.ai_observation?.trim() ||
+        contextProductForPrompt?.ai_observation?.trim() ||
+        "").length,
+    inboundSystemBlocks: inboundSystemBlocks.length,
   });
 
-  const msgs: Msg[] = [{ role: "system", content: system }, ...historyForPrompt];
+  const msgs: Msg[] = [{ role: "system", content: mergedSystem }, ...historyForPrompt];
 
   const actions: string[] = [];
   const executedToolCalls = new Set<string>();

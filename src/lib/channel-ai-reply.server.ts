@@ -170,6 +170,21 @@ export async function runChannelAiReply(
     const obs = focusSnap.ai_observation ? String(focusSnap.ai_observation).trim() : "";
     const pname = String(focusSnap.name || "");
     const prev = (focusSnap as any)._previous_product as Record<string, unknown> | null;
+    if (!obs) {
+      console.warn("[runChannelAiReply] producto en foco SIN ai_observation", {
+        orgId,
+        threadId,
+        productId: focusSnap.id,
+        productName: pname,
+      });
+    } else {
+      console.info("[runChannelAiReply] ai_observation inyectada", {
+        orgId,
+        threadId,
+        productId: focusSnap.id,
+        observationChars: obs.length,
+      });
+    }
     historyWithContext = [
       {
         role: "system" as const,
