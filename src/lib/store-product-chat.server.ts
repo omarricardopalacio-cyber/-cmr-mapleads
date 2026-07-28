@@ -1,5 +1,4 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { runChannelAiReply } from "@/lib/channel-ai-reply.server";
 
 export type FocusStoreProductResult = {
   productId: string;
@@ -97,8 +96,7 @@ export async function focusStoreProduct(opts: {
   if (switched) {
     const now = Date.now();
 
-    // Descripción primero; ficha (precio/stock/etc.) al final.
-    const desc = product.description ? String(product.description).trim().slice(0, 1200) : "";
+    // Solo ficha corta en el chat (la descripción larga queda en el snapshot para la IA).
     const specs = [
       `📦 *${product.name}*`,
       product.badge ? `Etiqueta: ${product.badge}` : null,
@@ -110,43 +108,27 @@ export async function focusStoreProduct(opts: {
       .filter(Boolean)
       .join("\n");
 
-    const lines = desc ? `${desc}\n\n${specs}` : specs;
-
     await supabaseAdmin.from("messages").insert({
       org_id: orgId,
       thread_id: threadId,
       direction: "out",
-      text: lines,
+      text: specs,
       wa_message_id: `web-prod-info-${product.id}-${now}`,
       sent_at: new Date().toISOString(),
       raw: { channel: "web", kind: "product_info", productId: product.id },
     } as any);
 
-    const interest = `Me interesa el producto: ${product.name}`;
     await supabaseAdmin.from("messages").insert({
       org_id: orgId,
       thread_id: threadId,
-      direction: "in",
-      text: interest,
-      wa_message_id: `web-prod-interest-${product.id}-${now}`,
-      sent_at: new Date(Date.now() + 20).toISOString(),
-      raw: { channel: "web", kind: "product_interest", productId: product.id },
+      direction: "out",
+      text: "¿Dime qué te gustaría saber del producto?",
+      wa_message_id: `web-prod-ask-${product.id}-${now}`,
+      sent_at: new Date(Date.now() + 15).toISOString(),
+      raw: { channel: "web", kind: "product_ask", productId: product.id },
     } as any);
 
     introSent = true;
-
-    try {
-      await runChannelAiReply({
-        orgId,
-        threadId,
-        contactId,
-        text: interest,
-        channel: "web",
-        forceReply: true,
-      });
-    } catch (err) {
-      console.error("[focusStoreProduct] AI intro failed", err);
-    }
   }
 
   return {
