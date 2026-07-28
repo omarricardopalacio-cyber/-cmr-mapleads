@@ -78,7 +78,7 @@ export async function runChannelAiReply(
 
   const { data: thread } = await supabaseAdmin
     .from("threads")
-    .select("ai_enabled, focused_product_snapshot")
+    .select("ai_enabled, focused_product_id, focused_product_snapshot")
     .eq("id", threadId)
     .maybeSingle();
 
@@ -127,22 +127,64 @@ export async function runChannelAiReply(
   let historyWithContext = history;
 
   const snap = (thread as any)?.focused_product_snapshot as Record<string, unknown> | null;
-  if (snap && (snap.name || snap.id)) {
-    const obs = snap.ai_observation ? String(snap.ai_observation).trim() : "";
+  let focusSnap = snap;
+  // Recargar producto fresco desde BD para no usar snapshot viejo/equivocado
+  const focusId = (thread as any)?.focused_product_id
+    ? String((thread as any).focused_product_id)
+    : snap?.id
+      ? String(snap.id)
+      : null;
+  if (focusId) {
+    try {
+      const { data: fresh } = await (supabaseAdmin as any)
+        .from("products")
+        .select(
+          "id, name, description, price, stock, image_url, video_url, sku, badge, category, ai_observation",
+        )
+        .eq("org_id", orgId)
+        .eq("id", focusId)
+        .maybeSingle();
+      if (fresh) {
+        focusSnap = {
+          ...snap,
+          ...fresh,
+          source: (snap as any)?.source || "store_web",
+          _lock: true,
+        };
+        await supabaseAdmin
+          .from("threads")
+          .update({
+            focused_product_id: String(fresh.id),
+            focused_product_snapshot: focusSnap as any,
+            focused_updated_at: new Date().toISOString(),
+          } as any)
+          .eq("id", threadId)
+          .eq("org_id", orgId);
+      }
+    } catch {
+      /* keep snap */
+    }
+  }
+
+  if (focusSnap && (focusSnap.name || focusSnap.id)) {
+    const obs = focusSnap.ai_observation ? String(focusSnap.ai_observation).trim() : "";
+    const pname = String(focusSnap.name || "");
     historyWithContext = [
       {
         role: "system" as const,
         content: [
-          "PRODUCTO EN FOCO (el cliente lo abrió en la tienda web; vende ESTE producto salvo que pida otro):",
-          `- Nombre: ${snap.name ?? ""}`,
-          snap.price != null ? `- Precio: ${snap.price}` : null,
-          snap.sku ? `- SKU: ${snap.sku}` : null,
-          snap.category ? `- Categoría: ${snap.category}` : null,
-          snap.description ? `- Descripción: ${String(snap.description).slice(0, 800)}` : null,
-          obs
-            ? `\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${obs.slice(0, 1500)}`
+          `=== BLOQUEO DE PRODUCTO (OBLIGATORIO) ===`,
+          `El cliente está preguntando SOLO por: "${pname}" (id: ${focusSnap.id}).`,
+          `PROHIBIDO mencionar, cotizar o vender OTRO producto (aunque aparezca en el historial).`,
+          `Si el historial habla de otros artículos, IGNÓRALOS. Responde únicamente sobre "${pname}".`,
+          `- Precio: ${focusSnap.price ?? "consultar"}`,
+          focusSnap.sku ? `- SKU: ${focusSnap.sku}` : null,
+          focusSnap.category ? `- Categoría: ${focusSnap.category}` : null,
+          focusSnap.description
+            ? `- Descripción / materiales: ${String(focusSnap.description).slice(0, 1200)}`
             : null,
-          "Usa precio y datos de este producto. Si el cliente cambia de producto, el foco se actualizará.",
+          obs ? `\nOBSERVACIÓN DEL VENDEDOR:\n${obs.slice(0, 1500)}` : null,
+          `Si no sabes un dato, dilo y ofrece verificarlo. No inventes otro producto.`,
         ]
           .filter(Boolean)
           .join("\n"),

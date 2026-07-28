@@ -71,15 +71,25 @@ function StickyProductMedia({
   productName: string | null;
 }) {
   const media = resolveStoreMedia(videoUrl, imageUrl);
+  const [playing, setPlaying] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+
+  useEffect(() => {
+    setPlaying(false);
+    setVideoFailed(false);
+  }, [videoUrl, imageUrl]);
+
   if (media.kind === "none") return null;
 
-  const externalVideo =
-    videoUrl && media.kind === "image" ? videoUrl : null;
+  const showEmbed =
+    media.kind === "youtube" || media.kind === "vimeo" || media.kind === "drive";
+  const canVideo = media.kind === "video" && !videoFailed;
+  const showPoster = (canVideo && !playing) || media.kind === "image" || (media.kind === "video" && videoFailed);
 
   return (
     <div className="shrink-0 border-b border-black/10 bg-black shadow-md">
-      <div className="relative h-44 w-full overflow-hidden bg-black sm:h-52">
-        {media.kind === "youtube" || media.kind === "vimeo" ? (
+      <div className="relative h-48 w-full overflow-hidden bg-black sm:h-56">
+        {showEmbed ? (
           <iframe
             src={media.embed}
             title={productName || "Video del producto"}
@@ -89,42 +99,45 @@ function StickyProductMedia({
           />
         ) : null}
 
-        {media.kind === "video" ? (
+        {canVideo && playing ? (
           <video
-            key={media.src}
+            key={`${media.src}-play`}
             src={media.src}
             controls
             playsInline
-            muted
             autoPlay
-            loop
             preload="auto"
             poster={imageUrl || undefined}
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={() => {
+              setVideoFailed(true);
+              setPlaying(false);
+            }}
+            ref={(el) => {
+              if (el) void el.play().catch(() => {});
+            }}
+          />
+        ) : null}
+
+        {showPoster && (imageUrl || media.kind === "image") ? (
+          <img
+            src={media.kind === "image" ? media.src : imageUrl!}
+            alt={productName || "Producto"}
             className="absolute inset-0 h-full w-full object-cover"
           />
         ) : null}
 
-        {media.kind === "image" ? (
-          <>
-            <img
-              src={media.src}
-              alt={productName || "Producto"}
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-            {externalVideo ? (
-              <a
-                href={externalVideo}
-                target="_blank"
-                rel="noreferrer"
-                className="absolute inset-0 flex items-center justify-center bg-black/35"
-              >
-                <span className="inline-flex items-center gap-2 rounded-full bg-white/95 px-3 py-2 text-xs font-bold text-stone-900 shadow">
-                  <Play className="h-4 w-4 fill-stone-900" />
-                  Ver video
-                </span>
-              </a>
-            ) : null}
-          </>
+        {canVideo && !playing ? (
+          <button
+            type="button"
+            onClick={() => setPlaying(true)}
+            className="absolute inset-0 flex items-center justify-center bg-black/30"
+          >
+            <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-bold text-black shadow-lg">
+              <Play className="h-5 w-5 fill-black" />
+              Ver video
+            </span>
+          </button>
         ) : null}
       </div>
       {productName ? (
@@ -546,7 +559,7 @@ function StoreChatPage() {
                     />
                   ) : null}
                   {m.text ? (
-                    <p className="whitespace-pre-wrap text-[14.2px] leading-snug text-stone-900">
+                    <p className="whitespace-pre-wrap text-[14.2px] leading-snug text-black">
                       {m.text}
                     </p>
                   ) : null}

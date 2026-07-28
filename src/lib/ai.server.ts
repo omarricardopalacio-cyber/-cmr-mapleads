@@ -170,19 +170,17 @@ export const CATALOG_TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "send_product_video",
+      name: "present_product",
       description:
-        "Envía el video del producto al cliente por WhatsApp. Úsala cuando el cliente pida ver el video o más detalle visual. Devuelve error si el producto no tiene video.",
+        "Presenta un producto completo al cliente (WhatsApp o web): enfoca el producto, envía imagen, video si hay, ficha (precio/stock) y pregunta qué quiere saber. Úsala cuando el cliente pida info de un producto concreto por nombre o SKU.",
       parameters: {
         type: "object",
         properties: {
-          product_id: { type: "string", description: "id UUID del producto (preferido)" },
-          product_reference: {
+          product_id: { type: "string", description: "UUID del producto si lo conoces" },
+          query: {
             type: "string",
-            description:
-              "Referencia del cliente al producto de la lista (ej. '6 niveles', 'JDM-62')",
+            description: "Nombre o SKU a buscar si no tienes product_id (ej. 'ablandador', 'JJF-28')",
           },
-          caption: { type: "string", description: "Texto opcional debajo del video" },
         },
       },
     },
@@ -2119,6 +2117,62 @@ export async function executeToolCall(
         details = result;
       }
     }
+  } else if (name === "present_product") {
+    try {
+      const { presentProductToThread } = await import("@/lib/store-product-chat.server");
+      const productId = String((args as any).product_id || "").trim();
+      const query = String((args as any).query || "").trim();
+      let resolvedId = productId;
+      if (!resolvedId && query) {
+        const { data: hits } = await (supabaseAdmin as any)
+          .from("products")
+          .select("id, name, sku")
+          .eq("org_id", ctx.orgId)
+          .eq("is_active", true)
+          .or(`name.ilike.%${query}%,sku.ilike.%${query}%`)
+          .limit(5);
+        const list = hits || [];
+        if (list.length === 1) resolvedId = list[0].id;
+        else if (list.length > 1) {
+          const exact = list.find(
+            (p: any) =>
+              String(p.sku || "").toLowerCase() === query.toLowerCase() ||
+              String(p.name || "").toLowerCase() === query.toLowerCase(),
+          );
+          resolvedId = exact?.id || list[0].id;
+        }
+      }
+      if (!resolvedId && catalogCfg) {
+        const hits = await searchCatalog(catalogCfg, query || productId, 3);
+        if (hits[0]?.id) resolvedId = hits[0].id;
+      }
+      if (!resolvedId) {
+        result = "No encontré ese producto. Prueba con otro nombre o SKU.";
+        details = result;
+      } else {
+        const presented = await presentProductToThread({
+          orgId: ctx.orgId,
+          threadId: ctx.threadId!,
+          contactId: ctx.contactId,
+          productId: resolvedId,
+          sessionId: sessionId || null,
+          chatId: chatId || null,
+        });
+        if (!presented) {
+          result = "Producto no disponible.";
+          details = result;
+        } else {
+          result = `Producto presentado: "${presented.productName}" (id: ${presented.productId}). Imagen/video/ficha enviados. Continúa hablando SOLO de este producto.`;
+          details = `present_product: ${presented.productId}`;
+          if (presented.product) {
+            ctx.lastProducts = [presented.product as any];
+          }
+        }
+      }
+    } catch (e) {
+      result = `Error presentando producto: ${(e as Error).message}`;
+      details = result;
+    }
   } else if (name === "list_flows") {
     try {
       const { data: flows } = await (supabaseAdmin as any)
@@ -2775,6 +2829,7 @@ MODO B — DESCUBRIENDO PRODUCTOS:
 0. IMPORTANTE: Cuando el cliente expresa intención de descubrimiento (busco, quiero, tienes, hay…), el sistema YA envió un carrusel determinístico de tarjetas antes de llegar aquí. NO vuelvas a llamar search_products en ese mismo turno; solo responde de forma natural al carrusel ya enviado.
 1. Si el sistema NO envió carrusel y el cliente pregunta por catálogo, modelos, fotos, videos, precios, stock o referencias, llama search_products con la palabra clave.
 2. Si hay resultados, responde enviando imágenes de los mejores productos usando send_product_image una vez por producto. NUNCA envíes el mismo producto dos veces ni repitas la búsqueda.
+2b. Si el cliente pide información clara de UN producto (nombre o SKU), usa present_product para enfocarlo y enviar imagen/video/ficha automáticamente.
 3. El caption de cada imagen debe ser corto, EMPEZAR con el número de la lista, y contener nombre y precio: "#<n>\n<nombre>\n$<precio>" (ej. "#1\nZapatero 6 niveles\n$32.200"). El número permite que el cliente elija diciendo "quiero el 2".
 4. Después de enviar las imágenes, escribe un mensaje corto y natural invitando al cliente a elegir o preguntar más. Evita listados de texto.
 5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), usa send_product_image con product_reference exactamente como lo dijo.
@@ -3066,15 +3121,18 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   });
 
   const contextProductForPrompt =
+    focusedProduct ??
     selectedProductForDetails ??
     orderContextProduct ??
-    contextualProduct ??
-    focusedProduct;
+    contextualProduct;
   const observationText = contextProductForPrompt?.ai_observation?.trim()
     ? `\n\n=== OBSERVACIÓN ESPECIAL DEL VENDEDOR (OBLIGATORIO) ===\n${contextProductForPrompt.ai_observation.trim().slice(0, 1500)}`
     : "";
+  const focusLockText = focusedProduct
+    ? `\n\n=== BLOQUEO DE PRODUCTO ===\nHabla ÚNICAMENTE de "${focusedProduct.name}"${focusedProduct.sku ? ` (SKU ${focusedProduct.sku})` : ""}. PROHIBIDO mencionar otros productos del historial. Si el cliente pide otro producto explícitamente por nombre, entonces sí puedes buscarlo.`
+    : "";
   const selectedProductText = contextProductForPrompt
-    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${observationText}${
+    ? `\n\n=== PRODUCTO ELEGIDO / CONTEXTO PRIORITARIO ===\n${formatProductDetailsForCustomer(contextProductForPrompt)}${observationText}${focusLockText}${
         startOrderFlow
           ? "\n\nEl cliente quiere hacer el pedido de ESTE producto. NO busques otros productos ni reinicies la conversación. Continúa el flujo de pedido pidiendo los datos para agendar."
           : ""
