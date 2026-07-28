@@ -1,7 +1,9 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   isFlowFieldEnabled,
+  normalizeFlowFieldDelays,
   normalizeFlowFieldOrder,
+  getFlowFieldDelay,
   type FlowFieldId,
 } from "@/lib/product-chat-flow";
 
@@ -43,47 +45,136 @@ function parseGalleryImages(raw: unknown): string[] {
   return [];
 }
 
-function linesForField(product: any, id: FlowFieldId): string[] {
+type FlowOutMessage = {
+  text: string | null;
+  media: { url: string; type: "image" | "video"; mimeType: string } | null;
+  kind: string;
+  /** Segundos a esperar DESPUÉS de este mensaje antes del siguiente. */
+  delayAfterSec: number;
+};
+
+function textForField(product: any, id: FlowFieldId): string | null {
   switch (id) {
     case "name":
-      return [`📦 *${product.name}*`];
+      return `📦 *${product.name}*`;
     case "badge":
-      return product.badge ? [`Etiqueta: ${product.badge}`] : [];
+      return product.badge ? `Etiqueta: ${product.badge}` : null;
     case "category":
-      return product.category ? [`Categoría: ${product.category}`] : [];
+      return product.category ? `Categoría: ${product.category}` : null;
     case "price":
-      return [`Precio: ${formatCop(product.price)}`];
+      return `Precio: ${formatCop(product.price)}`;
     case "sku":
-      return product.sku ? [`SKU: ${product.sku}`] : [];
+      return product.sku ? `SKU: ${product.sku}` : null;
     case "stock":
-      return product.stock != null ? [`Stock: ${product.stock}`] : [];
-    case "image":
-      return product.image_url ? [`Imagen: ${product.image_url}`] : [];
-    case "video":
-      return product.video_url ? [`Video: ${product.video_url}`] : [];
+      return product.stock != null ? `Stock: ${product.stock}` : null;
     case "description":
-      return product.description
-        ? [`Descripción: ${String(product.description).slice(0, 800)}`]
-        : [];
-    case "gallery": {
-      const gallery = parseGalleryImages(product.gallery_images);
-      if (!gallery.length) return [];
-      return [`Galería (${gallery.length}):`, ...gallery.map((u, i) => `${i + 1}. ${u}`)];
-    }
+      return product.description ? String(product.description).slice(0, 1500) : null;
     default:
-      return [];
+      return null;
   }
 }
 
-function buildSpecs(product: any) {
+/** Mensajes individuales del flujo (textos + media real, sin URLs en texto). */
+function buildFlowMessages(product: any): FlowOutMessage[] {
   const flow = (product.chat_flow as Record<string, unknown>) || {};
   const order = normalizeFlowFieldOrder(flow.field_order);
-  const lines: string[] = [];
+  const delays = normalizeFlowFieldDelays(flow.field_delays);
+  const out: FlowOutMessage[] = [];
+
   for (const id of order) {
     if (!isFlowFieldEnabled(flow, id)) continue;
-    lines.push(...linesForField(product, id));
+    const delayAfterSec = getFlowFieldDelay(delays, id);
+
+    if (id === "image") {
+      const url = product.image_url ? String(product.image_url).trim() : "";
+      if (!url) continue;
+      out.push({
+        text: null,
+        media: { url, type: "image", mimeType: "image/jpeg" },
+        kind: "product_image",
+        delayAfterSec,
+      });
+      continue;
+    }
+
+    if (id === "video") {
+      const url = product.video_url ? String(product.video_url).trim() : "";
+      if (!url) continue;
+      out.push({
+        text: null,
+        media: { url, type: "video", mimeType: "video/mp4" },
+        kind: "product_video",
+        delayAfterSec,
+      });
+      continue;
+    }
+
+    if (id === "gallery") {
+      const gallery = parseGalleryImages(product.gallery_images);
+      gallery.forEach((url, i) => {
+        const isLast = i === gallery.length - 1;
+        out.push({
+          text: null,
+          media: { url, type: "image", mimeType: "image/jpeg" },
+          kind: `product_gallery_${i}`,
+          // Entre fotos de galería y después de la última usa el mismo delay del campo
+          delayAfterSec: isLast || gallery.length === 1 ? delayAfterSec : delayAfterSec,
+        });
+      });
+      continue;
+    }
+
+    const text = textForField(product, id);
+    if (!text) continue;
+    out.push({ text, media: null, kind: `product_${id}`, delayAfterSec });
   }
-  return lines.join("\n");
+
+  return out;
+}
+
+async function insertWebFlowMessages(opts: {
+  orgId: string;
+  threadId: string;
+  productId: string;
+  baseMs: number;
+  messages: FlowOutMessage[];
+  askText?: string | null;
+}) {
+  const rows: any[] = [];
+  let t = opts.baseMs;
+  for (let i = 0; i < opts.messages.length; i++) {
+    const m = opts.messages[i]!;
+    rows.push({
+      org_id: opts.orgId,
+      thread_id: opts.threadId,
+      direction: "out",
+      text: m.text,
+      media: m.media,
+      wa_message_id: `web-flow-${opts.productId}-${m.kind}-${opts.baseMs}-${i}`,
+      sent_at: new Date(t).toISOString(),
+      raw: {
+        channel: "web",
+        kind: m.kind,
+        productId: opts.productId,
+        delayAfterSec: m.delayAfterSec,
+      },
+    });
+    // Espera configurada antes del siguiente mensaje (mín. 30ms)
+    t += Math.max(30, (m.delayAfterSec || 0) * 1000);
+  }
+  if (opts.askText) {
+    rows.push({
+      org_id: opts.orgId,
+      thread_id: opts.threadId,
+      direction: "out",
+      text: opts.askText,
+      media: null,
+      wa_message_id: `web-flow-ask-${opts.productId}-${opts.baseMs}`,
+      sent_at: new Date(t).toISOString(),
+      raw: { channel: "web", kind: "product_ask", productId: opts.productId },
+    });
+  }
+  if (rows.length) await supabaseAdmin.from("messages").insert(rows as any);
 }
 
 async function loadProduct(orgId: string, productId: string) {
@@ -96,7 +187,11 @@ async function loadProduct(orgId: string, productId: string) {
     .eq("id", productId)
     .maybeSingle();
 
-  if (error?.message?.includes("chat_ask_text") || error?.message?.includes("ai_observation") || error?.code === "42703") {
+  if (
+    error?.message?.includes("chat_ask_text") ||
+    error?.message?.includes("ai_observation") ||
+    error?.code === "42703"
+  ) {
     const legacy = await (supabaseAdmin as any)
       .from("products")
       .select(
@@ -106,7 +201,13 @@ async function loadProduct(orgId: string, productId: string) {
       .eq("id", productId)
       .maybeSingle();
     product = legacy.data
-      ? { ...legacy.data, ai_observation: null, chat_ask_text: null, chat_flow: null, gallery_images: [] }
+      ? {
+          ...legacy.data,
+          ai_observation: null,
+          chat_ask_text: null,
+          chat_flow: null,
+          gallery_images: [],
+        }
       : null;
     error = legacy.error;
   }
@@ -137,7 +238,7 @@ function buildSnapshot(product: any) {
 
 /**
  * Enfoca un producto en el hilo web: guarda snapshot para la IA,
- * envía ficha corta + pregunta si cambió de producto.
+ * envía ficha (mensajes individuales) + pregunta si cambió de producto.
  */
 export async function focusStoreProduct(opts: {
   orgId: string;
@@ -175,38 +276,22 @@ export async function focusStoreProduct(opts: {
 
   let introSent = false;
   const flow = (product.chat_flow as any) || {};
-  // Si send_specs === false, no envía ficha. Si no está, envía con campos individuales.
   const sendSpecs = flow.send_specs !== false;
   const sendAsk = flow.send_ask !== false;
 
   if (switched) {
     const now = Date.now();
-    if (sendSpecs) {
-      await supabaseAdmin.from("messages").insert({
-        org_id: orgId,
-        thread_id: threadId,
-        direction: "out",
-        text: buildSpecs(product),
-        wa_message_id: `web-prod-info-${product.id}-${now}`,
-        sent_at: new Date().toISOString(),
-        raw: { channel: "web", kind: "product_info", productId: product.id },
-      } as any);
-    }
-
-    if (sendAsk) {
-      await supabaseAdmin.from("messages").insert({
-        org_id: orgId,
-        thread_id: threadId,
-        direction: "out",
-        text:
-          String(product.chat_ask_text || "").trim() ||
-          "¿Dime qué te gustaría saber del producto?",
-        wa_message_id: `web-prod-ask-${product.id}-${now}`,
-        sent_at: new Date(Date.now() + 15).toISOString(),
-        raw: { channel: "web", kind: "product_ask", productId: product.id },
-      } as any);
-    }
-
+    const ask =
+      String(product.chat_ask_text || "").trim() ||
+      "¿Dime qué te gustaría saber del producto?";
+    await insertWebFlowMessages({
+      orgId,
+      threadId,
+      productId: String(product.id),
+      baseMs: now,
+      messages: sendSpecs ? buildFlowMessages(product) : [],
+      askText: sendAsk ? ask : null,
+    });
     introSent = true;
   }
 
@@ -224,7 +309,7 @@ export async function focusStoreProduct(opts: {
 }
 
 /**
- * Presenta producto en WhatsApp (o web): foco + imagen + video + ficha + pregunta.
+ * Presenta producto en WhatsApp (o web): foco + mensajes del flujo en orden.
  */
 export async function presentProductToThread(opts: {
   orgId: string;
@@ -250,106 +335,77 @@ export async function presentProductToThread(opts: {
     .eq("org_id", opts.orgId);
 
   const now = Date.now();
+  const flow = (product.chat_flow as any) || {};
+  const sendSpecs = flow.send_specs !== false;
+  const sendAsk = flow.send_ask !== false;
   const ask =
     String(product.chat_ask_text || "").trim() ||
     "¿Dime qué te gustaría saber del producto?";
-  const specs = buildSpecs(product);
+  const flowMsgs = sendSpecs ? buildFlowMessages(product) : [];
 
-  // Canal WhatsApp: encolar media + textos
   if (opts.sessionId && opts.chatId) {
     const cmds: any[] = [];
-    if (product.image_url) {
+    let delayMs = 0;
+    for (let i = 0; i < flowMsgs.length; i++) {
+      const m = flowMsgs[i]!;
+      if (m.media) {
+        cmds.push({
+          org_id: opts.orgId,
+          session_id: opts.sessionId,
+          type: "SEND_MEDIA",
+          payload: {
+            chatId: opts.chatId,
+            mediaUrl: m.media.url,
+            url: m.media.url,
+            caption: "",
+            kind: m.media.type,
+            mediaType: m.media.type,
+            dedupe_key: `present-${m.kind}-${product.id}-${now}`,
+          },
+          status: "pending",
+          scheduled_for: delayMs ? new Date(Date.now() + delayMs).toISOString() : undefined,
+        });
+      } else if (m.text) {
+        cmds.push({
+          org_id: opts.orgId,
+          session_id: opts.sessionId,
+          type: "SEND_MESSAGE",
+          payload: {
+            chatId: opts.chatId,
+            text: m.text,
+            dedupeKey: `present-${m.kind}-${product.id}-${now}`,
+          },
+          status: "pending",
+          scheduled_for: delayMs ? new Date(Date.now() + delayMs).toISOString() : undefined,
+        });
+      }
+      delayMs += Math.max(0, (m.delayAfterSec || 0) * 1000);
+      if ((m.delayAfterSec || 0) === 0) delayMs += 400; // pequeño gap si no hay espera
+    }
+    if (sendAsk) {
       cmds.push({
         org_id: opts.orgId,
         session_id: opts.sessionId,
-        type: "SEND_MEDIA",
+        type: "SEND_MESSAGE",
         payload: {
           chatId: opts.chatId,
-          mediaUrl: product.image_url,
-          url: product.image_url,
-          caption: product.name,
-          kind: "image",
-          mediaType: "image",
-          dedupe_key: `present-img-${product.id}-${now}`,
+          text: ask,
+          dedupeKey: `present-ask-${product.id}-${now}`,
         },
         status: "pending",
+        scheduled_for: new Date(Date.now() + delayMs).toISOString(),
       });
     }
-    if (product.video_url) {
-      cmds.push({
-        org_id: opts.orgId,
-        session_id: opts.sessionId,
-        type: "SEND_MEDIA",
-        payload: {
-          chatId: opts.chatId,
-          mediaUrl: product.video_url,
-          url: product.video_url,
-          caption: product.name,
-          kind: "video",
-          mediaType: "video",
-          dedupe_key: `present-vid-${product.id}-${now}`,
-        },
-        status: "pending",
-        scheduled_for: new Date(Date.now() + 1500).toISOString(),
-      });
-    }
-    cmds.push({
-      org_id: opts.orgId,
-      session_id: opts.sessionId,
-      type: "SEND_MESSAGE",
-      payload: {
-        chatId: opts.chatId,
-        text: specs,
-        dedupeKey: `present-specs-${product.id}-${now}`,
-      },
-      status: "pending",
-      scheduled_for: new Date(Date.now() + 2500).toISOString(),
-    });
-    cmds.push({
-      org_id: opts.orgId,
-      session_id: opts.sessionId,
-      type: "SEND_MESSAGE",
-      payload: {
-        chatId: opts.chatId,
-        text: ask,
-        dedupeKey: `present-ask-${product.id}-${now}`,
-      },
-      status: "pending",
-      scheduled_for: new Date(Date.now() + 3500).toISOString(),
-    });
     if (cmds.length) await supabaseAdmin.from("engine_commands").insert(cmds as any);
   } else {
-    // Canal web: mensajes en BD
-    if (product.image_url) {
-      await supabaseAdmin.from("messages").insert({
-        org_id: opts.orgId,
-        thread_id: opts.threadId,
-        direction: "out",
-        text: null,
-        media: { url: product.image_url, type: "image", mimeType: "image/jpeg" },
-        wa_message_id: `web-present-img-${product.id}-${now}`,
-        sent_at: new Date().toISOString(),
-        raw: { channel: "web", kind: "product_image", productId: product.id },
-      } as any);
-    }
-    await supabaseAdmin.from("messages").insert({
-      org_id: opts.orgId,
-      thread_id: opts.threadId,
-      direction: "out",
-      text: specs,
-      wa_message_id: `web-present-info-${product.id}-${now}`,
-      sent_at: new Date(Date.now() + 10).toISOString(),
-      raw: { channel: "web", kind: "product_info", productId: product.id },
-    } as any);
-    await supabaseAdmin.from("messages").insert({
-      org_id: opts.orgId,
-      thread_id: opts.threadId,
-      direction: "out",
-      text: ask,
-      wa_message_id: `web-present-ask-${product.id}-${now}`,
-      sent_at: new Date(Date.now() + 20).toISOString(),
-      raw: { channel: "web", kind: "product_ask", productId: product.id },
-    } as any);
+    await insertWebFlowMessages({
+      orgId: opts.orgId,
+      threadId: opts.threadId,
+      productId: String(product.id),
+      baseMs: now,
+      messages: flowMsgs,
+      askText: sendAsk ? ask : null,
+    });
   }
 
   return {

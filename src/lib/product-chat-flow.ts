@@ -22,8 +22,8 @@ export const FLOW_FIELD_LABELS: Record<FlowFieldId, string> = {
   price: "Precio",
   sku: "SKU",
   stock: "Stock",
-  image: "URL imagen principal",
-  video: "URL video",
+  image: "Imagen principal",
+  video: "Video",
   description: "Descripción",
   gallery: "Imágenes extra (galería)",
 };
@@ -44,6 +44,34 @@ const FLAG_BY_FIELD: Record<Exclude<FlowFieldId, "name">, string> = {
 
 /** Campos que por defecto van apagados (hay que activarlos). */
 const OPT_IN_FIELDS = new Set<FlowFieldId>(["image", "video", "description", "gallery"]);
+
+const MAX_DELAY_SEC = 600;
+
+/** Segundos de espera después de un campo (0–600). */
+export function clampFlowDelaySec(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(MAX_DELAY_SEC, Math.round(n));
+}
+
+export function getFlowFieldDelay(
+  delays: Record<string, unknown> | null | undefined,
+  id: FlowFieldId | "ask",
+): number {
+  if (!delays || typeof delays !== "object") return 0;
+  return clampFlowDelaySec(delays[id]);
+}
+
+export function normalizeFlowFieldDelays(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  const obj = raw as Record<string, unknown>;
+  for (const id of FLOW_FIELD_IDS) {
+    if (obj[id] != null) out[id] = clampFlowDelaySec(obj[id]);
+  }
+  if (obj.ask != null) out.ask = clampFlowDelaySec(obj.ask);
+  return out;
+}
 
 export function normalizeFlowFieldOrder(raw: unknown): FlowFieldId[] {
   const allowed = new Set<string>(FLOW_FIELD_IDS);

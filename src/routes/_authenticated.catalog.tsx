@@ -10,7 +10,9 @@ import {
 import {
   DEFAULT_FLOW_FIELD_ORDER,
   FLOW_FIELD_LABELS,
+  clampFlowDelaySec,
   isFlowFieldEnabled,
+  normalizeFlowFieldDelays,
   normalizeFlowFieldOrder,
   type FlowFieldId,
 } from "@/lib/product-chat-flow";
@@ -39,6 +41,7 @@ type ChatFlowFlags = {
   send_description?: boolean;
   send_gallery?: boolean;
   field_order?: FlowFieldId[];
+  field_delays?: Record<string, number>;
 };
 
 type CatalogRow = {
@@ -124,6 +127,7 @@ function CatalogProductsPage() {
     send_description: false,
     send_gallery: false,
     field_order: [...DEFAULT_FLOW_FIELD_ORDER] as FlowFieldId[],
+    field_delays: {} as Record<string, number>,
     newGalleryUrl: "",
   });
 
@@ -191,6 +195,7 @@ function CatalogProductsPage() {
       send_description: flow.send_description === true,
       send_gallery: flow.send_gallery === true,
       field_order: normalizeFlowFieldOrder(flow.field_order),
+      field_delays: normalizeFlowFieldDelays(flow.field_delays),
       newGalleryUrl: "",
     });
   }
@@ -261,6 +266,7 @@ function CatalogProductsPage() {
             send_description: form.send_description,
             send_gallery: form.send_gallery,
             field_order: form.field_order,
+            field_delays: form.field_delays,
           },
         },
       }),
@@ -324,7 +330,10 @@ function CatalogProductsPage() {
 
   const orderedPreviewLabels = form.field_order
     .filter((id) => isFlowFieldEnabled(flowFlags, id))
-    .map((id) => FLOW_FIELD_LABELS[id]);
+    .map((id) => {
+      const d = form.field_delays[id] ?? 0;
+      return d > 0 ? `${FLOW_FIELD_LABELS[id]} (+${d}s)` : FLOW_FIELD_LABELS[id];
+    });
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4 p-6">
@@ -591,8 +600,10 @@ function CatalogProductsPage() {
                   <div className="rounded-md border p-3 space-y-3">
                     <p className="text-sm font-semibold">Flujo automático del chat</p>
                     <p className="text-[11px] text-muted-foreground">
-                      Activa cada dato y usa ↑↓ para definir el <span className="font-semibold text-foreground">orden de envío</span> en la ficha.
-                      El Nombre siempre va primero.
+                      Activa cada dato y usa ↑↓ para definir el{" "}
+                      <span className="font-semibold text-foreground">orden de envío</span>. Cada
+                      campo se envía como mensaje aparte; imagen/video/galería van como media (no
+                      como URL de texto).
                     </p>
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="send-specs">Enviar ficha</Label>
@@ -604,13 +615,18 @@ function CatalogProductsPage() {
                     </div>
                     {form.send_specs ? (
                       <ul className="space-y-1.5 rounded border bg-muted/20 p-2">
+                        <li className="px-1 pb-1 text-[10px] text-muted-foreground">
+                          Columna “Espera (s)” = segundos a esperar <span className="font-medium">después</span>{" "}
+                          de ese mensaje antes del siguiente (ej. Nombre 30 → Descripción). Máx. 600.
+                        </li>
                         {form.field_order.map((id, i) => {
                           const enabled = isFlowFieldEnabled(flowFlags, id);
                           const locked = id === "name";
+                          const delayVal = form.field_delays[id] ?? 0;
                           return (
                             <li
                               key={id}
-                              className={`flex items-center gap-2 rounded border bg-background/60 px-2 py-1.5 ${
+                              className={`flex flex-wrap items-center gap-2 rounded border bg-background/60 px-2 py-1.5 ${
                                 enabled ? "" : "opacity-55"
                               }`}
                             >
@@ -642,15 +658,29 @@ function CatalogProductsPage() {
                                 className="min-w-0 flex-1 text-sm leading-tight"
                               >
                                 {FLOW_FIELD_LABELS[id]}
-                                {id === "image" ||
-                                id === "video" ||
-                                id === "description" ||
-                                id === "gallery" ? (
-                                  <span className="ml-1 text-[10px] text-muted-foreground">
-                                    (en la ficha)
-                                  </span>
-                                ) : null}
                               </Label>
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={600}
+                                  step={1}
+                                  title="Segundos de espera después de este mensaje"
+                                  className="h-8 w-16 px-1 text-center text-xs"
+                                  value={delayVal}
+                                  disabled={!enabled}
+                                  onChange={(e) =>
+                                    setForm({
+                                      ...form,
+                                      field_delays: {
+                                        ...form.field_delays,
+                                        [id]: clampFlowDelaySec(e.target.value),
+                                      },
+                                    })
+                                  }
+                                />
+                                <span className="text-[10px] text-muted-foreground">s</span>
+                              </div>
                               <Switch
                                 id={`flow-field-${id}`}
                                 checked={enabled}
@@ -710,12 +740,12 @@ function CatalogProductsPage() {
                     </div>
                     {form.send_gallery ? (
                       <p className="rounded bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-700 dark:text-emerald-300">
-                        Las URLs de la galería (en este orden) se incluirán en la ficha automática del chat.
+                        Cada imagen de la galería se enviará como mensaje con la foto (en este orden).
                       </p>
                     ) : (
                       <p className="text-[11px] text-muted-foreground">
-                        Las imágenes sí se ven con las flechas del chat; no se listan en el texto de la ficha
-                        hasta activar “Enviar en el flujo”.
+                        Las imágenes se ven con las flechas del chat; actívalas en el flujo para
+                        enviarlas también como mensajes.
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2">

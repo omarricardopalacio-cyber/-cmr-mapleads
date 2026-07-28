@@ -157,9 +157,12 @@ function StickyProductMedia({
     });
   };
 
+  const isImageSlide = slide.kind === "image" || (slide.kind === "video" && (!playing || videoFailed));
+  const mediaBg = showEmbed || (canVideo && playing) ? "bg-black" : "bg-white";
+
   return (
-    <div className="shrink-0 border-b border-black/10 bg-black shadow-md">
-      <div className="relative h-48 w-full overflow-hidden bg-black sm:h-56">
+    <div className={`shrink-0 border-b border-black/10 shadow-md ${mediaBg}`}>
+      <div className={`relative h-48 w-full overflow-hidden sm:h-56 ${mediaBg}`}>
         {showEmbed ? (
           <iframe
             src={media.embed}
@@ -179,7 +182,7 @@ function StickyProductMedia({
             autoPlay
             preload="auto"
             poster={slide.kind === "video" ? slide.poster || undefined : undefined}
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-contain"
             onError={() => {
               setVideoFailed(true);
               setPlaying(false);
@@ -198,7 +201,7 @@ function StickyProductMedia({
           <img
             src={posterSrc}
             alt={productName || "Producto"}
-            className="absolute inset-0 h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-contain bg-white"
           />
         ) : null}
 
@@ -207,7 +210,7 @@ function StickyProductMedia({
           <button
             type="button"
             onClick={() => setPlaying(true)}
-            className="absolute inset-0 z-[1] flex items-center justify-center bg-black/30"
+            className="absolute inset-0 z-[1] flex items-center justify-center bg-black/20"
           >
             <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-bold text-black shadow-lg">
               <Play className="h-5 w-5 fill-black" />
@@ -242,7 +245,13 @@ function StickyProductMedia({
                   aria-label={`Media ${i + 1}`}
                   onClick={() => setIndex(i)}
                   className={`h-1.5 rounded-full transition-all ${
-                    i === safeIndex ? "w-4 bg-white" : "w-1.5 bg-white/45"
+                    i === safeIndex
+                      ? isImageSlide
+                        ? "w-4 bg-stone-800"
+                        : "w-4 bg-white"
+                      : isImageSlide
+                        ? "w-1.5 bg-stone-400"
+                        : "w-1.5 bg-white/45"
                   }`}
                 />
               ))}
@@ -394,6 +403,7 @@ function StoreChatPage() {
   const stickToBottom = useRef(true);
   const lastCount = useRef(0);
   const bootKey = useRef<string>("");
+  const nextDueAt = useRef<number | null>(null);
 
   useEffect(() => {
     const existing = loadStoreLead(token);
@@ -432,16 +442,23 @@ function StoreChatPage() {
       const data = await fetchChatMessages(token, vis);
       const mapped = (data.messages || []).map((m) => ({
         id: m.id,
-        direction: m.direction,
+        direction: m.direction as "in" | "out",
         text: m.text || "",
         media: (m.media as BubbleMedia) || null,
         sent_at: m.sent_at,
       }));
+      const now = Date.now();
+      let nextDue: number | null = null;
       const visible = mapped.filter((m) => {
+        const at = m.sent_at ? new Date(m.sent_at).getTime() : 0;
+        if (at > now) {
+          if (nextDue == null || at < nextDue) nextDue = at;
+          return false;
+        }
         if (m.text?.trim()) return true;
-        const kind = mediaKind(m.media);
-        return kind == null;
+        return mediaKind(m.media) != null;
       });
+      nextDueAt.current = nextDue;
       const grew = visible.length > lastCount.current;
       lastCount.current = visible.length;
       setMessages(visible);
@@ -531,11 +548,24 @@ function StoreChatPage() {
 
   useEffect(() => {
     if (!visitorToken || !ready) return;
-    const id = setInterval(() => {
+    const tick = () => {
       refresh(visitorToken).catch(() => {});
-    }, 2500);
+    };
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [visitorToken, ready, refresh]);
+
+  // Cuando hay mensajes programados, refrescar exactamente al vencer el siguiente
+  useEffect(() => {
+    if (!visitorToken || !ready) return;
+    const due = nextDueAt.current;
+    if (!due) return;
+    const wait = Math.max(50, due - Date.now() + 30);
+    const t = setTimeout(() => {
+      refresh(visitorToken).catch(() => {});
+    }, wait);
+    return () => clearTimeout(t);
+  }, [visitorToken, ready, refresh, messages.length]);
 
   async function onLeadSubmit(name: string, phone: string) {
     setFormSubmitting(true);
@@ -667,7 +697,7 @@ function StoreChatPage() {
                       <img
                         src={m.media.url}
                         alt=""
-                        className="mb-1 max-h-40 w-full rounded-md object-cover"
+                        className="mb-1 max-h-52 w-full rounded-md bg-white object-contain"
                       />
                     </a>
                   ) : null}
@@ -677,7 +707,7 @@ function StoreChatPage() {
                       controls
                       playsInline
                       preload="metadata"
-                      className="mb-1 max-h-40 w-full rounded-md bg-black"
+                      className="mb-1 max-h-40 w-full rounded-md bg-black object-contain"
                     />
                   ) : null}
                   {m.text ? (

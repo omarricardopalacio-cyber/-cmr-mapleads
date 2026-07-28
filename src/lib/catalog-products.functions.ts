@@ -165,6 +165,9 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
               )
               .max(20)
               .optional(),
+            field_delays: z
+              .record(z.string(), z.number().min(0).max(600))
+              .optional(),
           })
           .optional(),
         is_active: z.boolean().optional(),
