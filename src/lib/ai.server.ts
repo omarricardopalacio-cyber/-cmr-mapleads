@@ -2674,7 +2674,7 @@ async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
 /* ============================================================
    CARRUSEL DETERMINÍSTICO — constantes y helper
    ============================================================ */
-const MAX_CAROUSEL = 30;
+const MAX_CAROUSEL = 6;
 const CAROUSEL_PROMPT_TEXT = "👉 Responde con el número del producto que más te guste.";
 
 function buildCarouselCaption(index: number, product: { name: string; price?: string | number | null }): string {
@@ -2686,6 +2686,110 @@ function buildCarouselCaption(index: number, product: { name: string; price?: st
     else lines.push(`$${rawPrice}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Busca un match fuerte en productos del CRM (nombre / SKU / search_keywords).
+ * Prioriza Observaciones/prompts por producto sobre el carrusel masivo.
+ */
+async function findStrongProductMatch(
+  orgId: string,
+  catalogCfg: CatalogConfig | null,
+  query: string,
+): Promise<(CatalogProduct & { ai_observation?: string | null; search_keywords?: string | null }) | null> {
+  const q = String(query || "").trim();
+  if (q.length < 2) return null;
+  const qSafe = q.replace(/[%(),]/g, " ").trim();
+  if (qSafe.length < 2) return null;
+
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const qn = norm(qSafe);
+
+  try {
+    let hits: any[] = [];
+    const res = await (supabaseAdmin as any)
+      .from("products")
+      .select(
+        "id, name, description, price, stock, image_url, video_url, sku, badge, category, ai_observation, search_keywords",
+      )
+      .eq("org_id", orgId)
+      .eq("is_active", true)
+      .or(`name.ilike.%${qSafe}%,sku.ilike.%${qSafe}%,search_keywords.ilike.%${qSafe}%`)
+      .limit(8);
+    if (res.error && (String(res.error.message || "").includes("search_keywords") || res.error.code === "42703")) {
+      const legacy = await (supabaseAdmin as any)
+        .from("products")
+        .select(
+          "id, name, description, price, stock, image_url, video_url, sku, badge, category, ai_observation",
+        )
+        .eq("org_id", orgId)
+        .eq("is_active", true)
+        .or(`name.ilike.%${qSafe}%,sku.ilike.%${qSafe}%`)
+        .limit(8);
+      hits = legacy.data || [];
+    } else {
+      hits = res.data || [];
+    }
+
+    if (hits.length) {
+      const mapped = hits.map((r: any) => ({
+        id: String(r.id),
+        name: String(r.name || ""),
+        description: r.description ?? undefined,
+        price: r.price ?? undefined,
+        stock: r.stock ?? null,
+        image_url: r.image_url ?? undefined,
+        video_url: r.video_url ?? undefined,
+        sku: r.sku ?? undefined,
+        badge: r.badge ?? undefined,
+        category: r.category ?? undefined,
+        ai_observation: r.ai_observation ?? null,
+        search_keywords: r.search_keywords ?? null,
+      }));
+
+      const exactName = mapped.find((p) => norm(p.name) === qn);
+      if (exactName) return exactName;
+
+      const exactSku = mapped.find((p) => p.sku && norm(String(p.sku)) === qn);
+      if (exactSku) return exactSku;
+
+      const exactKw = mapped.find((p) =>
+        String(p.search_keywords || "")
+          .split(/[,;\n|]+/)
+          .map((x) => norm(x))
+          .filter(Boolean)
+          .some((k) => k === qn || (k.length >= 4 && (qn.includes(k) || k.includes(qn)))),
+      );
+      if (exactKw) return exactKw;
+
+      const fromRef = resolveProductFromReference(qSafe, mapped);
+      if (fromRef) return fromRef as any;
+      if (mapped.length === 1) return mapped[0];
+    }
+  } catch (err) {
+    console.warn(
+      "[findStrongProductMatch] local search failed",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  if (!catalogCfg) return null;
+  try {
+    const products = await searchCatalog(catalogCfg, qSafe, 8);
+    if (!products.length) return null;
+    if (products.length === 1) return products[0] as any;
+    const fromRef = resolveProductFromReference(qSafe, products);
+    if (fromRef) return fromRef as any;
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 /* ============================================================
@@ -3100,24 +3204,19 @@ MODO A — RECOPILANDO DATOS DEL PEDIDO:
 5. Solo sal de este modo si el cliente cambia de tema y vuelve a preguntar por productos.
 
 MODO B — DESCUBRIENDO PRODUCTOS:
-0. IMPORTANTE: Cuando el cliente expresa intención de descubrimiento (busco, quiero, tienes, hay…), el sistema YA envió un carrusel determinístico de tarjetas antes de llegar aquí. NO vuelvas a llamar search_products en ese mismo turno; solo responde de forma natural al carrusel ya enviado.
-1. Si el sistema NO envió carrusel y el cliente pregunta por catálogo, modelos, fotos, videos, precios, stock o referencias, llama search_products con la palabra clave.
-2. Si hay resultados, responde enviando imágenes de los mejores productos usando send_product_image una vez por producto. NUNCA envíes el mismo producto dos veces ni repitas la búsqueda.
-2b. Si el cliente pide información clara de UN producto (nombre o SKU), usa present_product para enfocarlo y enviar imagen/video/ficha automáticamente.
-3. El caption de cada imagen debe ser corto, EMPEZAR con el número de la lista, y contener nombre y precio: "#<n>\n<nombre>\n$<precio>" (ej. "#1\nZapatero 6 niveles\n$32.200"). El número permite que el cliente elija diciendo "quiero el 2".
-4. Después de enviar las imágenes, escribe un mensaje corto y natural invitando al cliente a elegir o preguntar más. Evita listados de texto.
-5. Si el cliente elige un producto por descripción (por ejemplo "el de 6 niveles", "el JDM-128"), usa send_product_image con product_reference exactamente como lo dijo.
+0. Si el cliente nombra un producto concreto (nombre, SKU o palabras clave), PRIORIZA present_product. El sistema enfoca ese producto, envía su ficha/flujo e inyecta la observación.
+1. NO envíes un carrusel masivo de imágenes si ya hay un producto claro. El carrusel solo aplica cuando hay varias opciones ambiguas.
+2. Si el sistema YA presentó un producto, responde con su observación/ficha. No vuelvas a search_products en ese turno.
+2b. Si el cliente pide información clara de UN producto (nombre o SKU), usa present_product.
+3. Si hay varias opciones sin match claro, puedes usar search_products y send_product_image (pocas, numeradas).
+4. Después, invita a elegir o preguntar. Evita listados largos de texto.
+5. Si el cliente elige por descripción (ej. "el de 6 niveles"), usa present_product o send_product_image con product_reference.
 6. SI TIENES INFORMACIÓN DE UN VIDEO DISPONIBLE para el producto actual:
-   a. Menciona que tienes video disponible (por ejemplo: "También tengo un video donde puedes verlo mejor 😊" o "¿Te gustaría verlo?")
+   a. Menciona que tienes video disponible
    b. ESPERA la respuesta del cliente.
-   c. Si el cliente confirma (sí, si, claro, ok, dale, etc.), EJECUTA INMEDIATAMENTE send_product_video con el product_id o product_reference del producto en cuestión.
-   d. NO digas que enviarás video — directamente EJECUTA la herramienta send_product_video DENTRO DEL MISMO TURNO.
-   e. Si el cliente dice que no, continúa normalmente sin enviar video.
-
-- Si ya mostraste hasta 6 imágenes de productos y el cliente elige uno, envía SÓLO una imagen adicional del producto elegido y agrega el valor de envío en ese mensaje. No repitas varias imágenes adicionales.
-- Al confirmar el producto seleccionado, menciona claramente el valor de envío junto al precio final.
-7. Si el cliente pide video DIRECTAMENTE (ej: "¿tienes video de esto?", "muéstrame video"), LLAMA send_product_video INMEDIATAMENTE sin esperar confirmación adicional.
-8. Si no hay video disponible, dilo y ofrece alternativamente send_product_image o detalles en texto.
+   c. Si confirma, EJECUTA send_product_video.
+7. Si pide video DIRECTAMENTE, LLAMA send_product_video INMEDIATAMENTE.
+8. Si no hay video, dilo y ofrece imagen o detalles.
 
 MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES, DETALLES):
 1. Este modo NO aplica a precios, tarifas por ciudad, cantidades ni costos de envío si aparecen en BASE DE CONOCIMIENTO, FUENTES o CONTEXTO DEL PAQUETE. En ese caso responde el precio de una vez.
@@ -3138,7 +3237,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. En el primer mensaje de datos: lista TODOS los campos del Módulo de Pedidos (plantilla exacta). PROHIBIDO pedir solo nombre/dirección.\n3. Interpreta los datos en cualquier formato.\n4. Si falta un requerido, pide solo ese.\n5. Si todos los datos están y el cliente confirma, usa confirm_order.`
         : catalogCfg
           ? PRODUCT_FLOW_GUIDE +
-            `\n\nMODO DESCUBRIMIENTO CATÁLOGO (WhatsApp / sin producto en foco):\n1. Si el cliente menciona un producto por nombre, SKU o características, BÚSCALO con search_products o present_product.\n2. Si lo encuentras en el catálogo, USA present_product para enfocarlo (activa ficha + flujo inicial del producto).\n3. Si NO está en el catálogo, responde con la BASE DE CONOCIMIENTO y el prompt principal. No inventes un producto del catálogo.`
+            `\n\nMODO DESCUBRIMIENTO CATÁLOGO (WhatsApp / sin producto en foco):\n1. Si el cliente menciona un producto por nombre, SKU o palabras clave, PRIORIZA present_product (NO un carrusel de muchas imágenes).\n2. Si lo encuentras, present_product enfoca el producto, envía ficha/flujo e inyecta la observación.\n3. Solo si hay varias opciones ambiguas, muestra pocas imágenes numeradas.\n4. Si NO está en el catálogo, responde con la BASE DE CONOCIMIENTO. No inventes un producto.`
           : `MODO GENERAL:\nResponde breve y natural. Si el cliente muestra intención de compra, guía hacia el pedido.`;
 
   // Load order fields con manejo de error
@@ -3761,9 +3860,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     };
   }
 
-  // ── CARRUSEL DETERMINÍSTICO: intención de descubrimiento ─────────────────
-  // Detecta cuando el cliente expresa intención de buscar productos y envía
-  // el carrusel directamente, sin pasar por el LLM, para no inflar el prompt.
+  // ── DESCUBRIMIENTO: producto concreto → present_product; ambiguo → carrusel corto ─
   {
     const normalizedForDiscovery = lastUserText
       .toLowerCase()
@@ -3771,42 +3868,150 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .replace(/[\u0300-\u036f]/g, "");
     const discoveryIntent =
       !isCollectingOrder &&
-      catalogCfg &&
       !wantsMoreProducts &&
       !mediaRequest &&
       !(selectedProductForDetails && isProductDetailQuestion(detailQuestionText)) &&
-      currentCatalogQuery.length >= 3 &&
-      /\b(busco|buscando|quiero|necesito|tienes|hay|manejan|venden|muestrame|mandame|env[ii]ame|ofrecen|estoy\s+buscando|quisiera\s+ver)\b/i
-        .test(normalizedForDiscovery);
+      (currentCatalogQuery.length >= 3 || lastUserText.trim().length >= 3) &&
+      /\b(busco|buscando|quiero|necesito|tienes|hay|manejan|venden|muestrame|mandame|env[ii]ame|ofrecen|estoy\s+buscando|quisiera\s+ver|info|informaci[oó]n|cu[aá]nto|precio|vale|cuesta)\b/i.test(
+        normalizedForDiscovery,
+      );
 
-    if (discoveryIntent && catalogCfg) {
-      const products = await searchCatalog(catalogCfg, currentCatalogQuery, MAX_CAROUSEL);
-      if (products.length >= 2) {
-        ctx.lastProducts = products;
-        await saveCatalogSearchState(ctx, currentCatalogQuery, products.map((p) => p.id));
-        await saveFocusedProduct(ctx, null);
-        for (let i = 0; i < products.length; i++) {
-          const caption = buildCarouselCaption(i + 1, products[i]);
-          if (products[i].image_url) {
-            const imgExec = await executeToolCall(
-              {
-                id: `disc_img_${products[i].id}`,
-                function: {
-                  name: "send_product_image",
-                  arguments: JSON.stringify({ product_id: products[i].id, caption }),
-                },
-              },
-              ctx,
-            );
-            actions.push(imgExec.name);
-          } else {
-            await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
-            actions.push("send_product_text");
+    if (discoveryIntent) {
+      const searchQ = currentCatalogQuery.length >= 3 ? currentCatalogQuery : lastUserText;
+      const strong = await findStrongProductMatch(orgId, catalogCfg, searchQ);
+
+      if (strong?.id) {
+        try {
+          const { presentProductToThread } = await import("@/lib/store-product-chat.server");
+          const presented = await presentProductToThread({
+            orgId,
+            threadId,
+            contactId: contactId || null,
+            productId: String(strong.id),
+            sessionId: sessionId || null,
+            chatId: chatId || null,
+          });
+          await saveFocusedProduct(ctx, {
+            ...(presented?.product || strong),
+            ai_observation:
+              (presented?.product as any)?.ai_observation ?? strong.ai_observation ?? null,
+          } as any);
+
+          // Flujos del producto para el prompt de respuesta
+          let productFlowsBlock = "";
+          try {
+            const { data: pFlows } = await (supabaseAdmin as any)
+              .from("flows")
+              .select("id, name, description, ai_instructions")
+              .eq("org_id", orgId)
+              .eq("product_id", strong.id)
+              .eq("is_active", true)
+              .limit(20);
+            if (pFlows?.length) {
+              productFlowsBlock =
+                `\n\n=== FLUJOS DE ESTE PRODUCTO ===\n` +
+                pFlows
+                  .map((f: any) => {
+                    const note = String(f.ai_instructions || f.description || "")
+                      .replace(/\s+/g, " ")
+                      .trim()
+                      .slice(0, 180);
+                    return `- ${f.name}${note ? `: ${note}` : ""} (id: ${f.id})`;
+                  })
+                  .join("\n");
+            }
+          } catch {
+            /* migración pendiente */
           }
+
+          const obs = String(
+            (presented?.product as any)?.ai_observation || strong.ai_observation || "",
+          ).trim();
+          const focusSystem = [
+            (cfg.system_prompt as string)?.trim()?.slice(0, 500) ||
+              "Eres un asesor comercial por WhatsApp.",
+            `\n\n=== PRODUCTO EN FOCO ===\n${formatProductObservationBlock(
+              {
+                ...(presented?.product || strong),
+                ai_observation: obs || null,
+              } as any,
+              "PRODUCTO ACTUAL",
+            )}`,
+            productFlowsBlock,
+            `\n\nEl sistema YA envió la ficha/flujo inicial de este producto. Responde breve con la OBSERVACIÓN DEL VENDEDOR. Si pide agendar, usa el módulo de pedidos. No envíes más imágenes de catálogo ni listados.`,
+          ].join("");
+
+          try {
+            const focused = await callAiProvider(cfg, [
+              { role: "system", content: focusSystem },
+              ...visibleChat.slice(-6),
+              { role: "user", content: lastUserText },
+            ]);
+            if (focused.text?.trim()) {
+              console.info("[runAiAgent] discovery → present_product (match fuerte)", {
+                orgId,
+                threadId,
+                productId: strong.id,
+                productName: strong.name,
+              });
+              return {
+                reply: focused.text.trim(),
+                actions: ["present_product", "product_focus_from_discovery"],
+              };
+            }
+          } catch (err) {
+            console.warn(
+              "[runAiAgent] reply tras present_product falló; ficha ya enviada",
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          return {
+            reply: obs
+              ? "¿Qué te gustaría saber de este producto?"
+              : "¿Qué te gustaría saber del producto o te ayudo a agendarlo?",
+            actions: ["present_product", "product_focus_from_discovery"],
+          };
+        } catch (err) {
+          console.warn(
+            "[runAiAgent] present_product en discovery falló; se intenta carrusel corto",
+            err instanceof Error ? err.message : String(err),
+          );
         }
-        return { reply: CAROUSEL_PROMPT_TEXT, actions: [...actions, "carousel_discovery"] };
       }
-      // 0 o 1 resultado → continuar al flujo LLM normal
+
+      // Ambiguo (varios productos, sin match claro): carrusel corto (máx. 6), no 30
+      if (catalogCfg) {
+        const products = await searchCatalog(catalogCfg, searchQ, MAX_CAROUSEL);
+        if (products.length >= 2) {
+          ctx.lastProducts = products;
+          await saveCatalogSearchState(
+            ctx,
+            searchQ,
+            products.map((p) => p.id),
+          );
+          for (let i = 0; i < products.length; i++) {
+            const caption = buildCarouselCaption(i + 1, products[i]);
+            if (products[i].image_url) {
+              const imgExec = await executeToolCall(
+                {
+                  id: `disc_img_${products[i].id}`,
+                  function: {
+                    name: "send_product_image",
+                    arguments: JSON.stringify({ product_id: products[i].id, caption }),
+                  },
+                },
+                ctx,
+              );
+              actions.push(imgExec.name);
+            } else {
+              await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
+              actions.push("send_product_text");
+            }
+          }
+          return { reply: CAROUSEL_PROMPT_TEXT, actions: [...actions, "carousel_discovery"] };
+        }
+      }
+      // 0–1 sin present → continúa al LLM
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -3888,15 +4093,29 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
           }
         }
 
-        const details = formatProductDetailsForCustomer(chosen);
-        // Guardar producto en foco (memoria persistente)
-        await saveFocusedProduct(ctx, chosen);
-        // Enviar las características/beneficios como UN mensaje, y la pregunta de
-        // cierre como un mensaje SEPARADO (mejor lectura en WhatsApp).
-        await queueOutgoingText(ctx, `¡Buena elección! 🙌\n\n${details}`);
+        // Activar ficha + flujo del producto (mismo camino que present_product)
+        try {
+          const { presentProductToThread } = await import("@/lib/store-product-chat.server");
+          const presented = await presentProductToThread({
+            orgId,
+            threadId,
+            contactId: contactId || null,
+            productId: String(chosen.id),
+            sessionId: sessionId || null,
+            chatId: chatId || null,
+          });
+          await saveFocusedProduct(ctx, {
+            ...(presented?.product || chosen),
+            ai_observation: (presented?.product as any)?.ai_observation ?? null,
+          } as any);
+        } catch {
+          await saveFocusedProduct(ctx, chosen);
+          const details = formatProductDetailsForCustomer(chosen);
+          await queueOutgoingText(ctx, `¡Buena elección! 🙌\n\n${details}`);
+        }
         return {
           reply: `¿Tienes alguna consulta de lo que te acabo de enviar o del producto, o te gustaría agendar el pedido? 😊`,
-          actions: ["seleccionar_detalle_del_producto"],
+          actions: ["present_product", "seleccionar_detalle_del_producto"],
         };
       } else {
         console.log(
