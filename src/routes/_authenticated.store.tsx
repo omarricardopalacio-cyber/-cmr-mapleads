@@ -227,7 +227,17 @@ function StoreSettingsPage() {
           <div className="space-y-4 rounded-lg border bg-card p-4">
             <h2 className="text-sm font-semibold">Open Graph (Facebook / WhatsApp)</h2>
             <p className="text-xs text-muted-foreground">
-              Imagen recomendada 1200×630. Título y descripción al compartir el link.
+              Cómo se ve el link al pegarlo en WhatsApp o Facebook. La imagen debe ser URL pública
+              https (recomendado 1200×630). WhatsApp cachea el preview: si no cambia, usa el{" "}
+              <a
+                className="underline"
+                href="https://developers.facebook.com/tools/debug/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                depurador de Facebook
+              </a>{" "}
+              y pulsa “Volver a obtener”.
             </p>
             <div className="space-y-2">
               <Label>Título social</Label>

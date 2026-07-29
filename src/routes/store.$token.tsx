@@ -4,8 +4,64 @@ import { fetchStoreConfig, type StoreConfigPublic } from "@/lib/store-client";
 import { MessageCircle, Store } from "lucide-react";
 import { registerStoreServiceWorker } from "@/components/store/StoreInstallBanner";
 import { ensureGoogleAnalytics, ensureMetaPixel, trackMetaEvent } from "@/lib/meta-pixel-browser";
+import { getStoreOgMeta } from "@/lib/store-og.functions";
+
+function storePublicOrigin(): string {
+  const fromEnv =
+    process.env.URL ||
+    process.env.DEPLOY_PRIME_URL ||
+    process.env.VITE_PUBLIC_APP_URL ||
+    process.env.SITE_URL ||
+    "";
+  if (fromEnv.trim()) return fromEnv.replace(/\/$/, "");
+  return "https://cmrmaleads.netlify.app";
+}
 
 export const Route = createFileRoute("/store/$token")({
+  loader: async ({ params }) => {
+    try {
+      const og = await getStoreOgMeta({ data: { token: params.token } });
+      return { og };
+    } catch {
+      return { og: null };
+    }
+  },
+  head: ({ loaderData, params }) => {
+    const og = loaderData?.og;
+    if (!og) return {};
+
+    const title = og.title;
+    const description = og.description;
+    const image = og.image;
+    const pageUrl = `${storePublicOrigin()}/store/${encodeURIComponent(params.token)}`;
+
+    const meta: Array<Record<string, string>> = [
+      { title },
+      { name: "description", content: description },
+      { property: "og:title", content: title },
+      { property: "og:description", content: description },
+      { property: "og:type", content: "website" },
+      { property: "og:url", content: pageUrl },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: title },
+      { name: "twitter:description", content: description },
+    ];
+    if (image) {
+      meta.push(
+        { property: "og:image", content: image },
+        { property: "og:image:width", content: "1200" },
+        { property: "og:image:height", content: "630" },
+        { name: "twitter:image", content: image },
+      );
+    }
+    return {
+      meta,
+      links: [
+        { rel: "canonical", href: pageUrl },
+        ...(image ? [{ rel: "apple-touch-icon", href: image }] : []),
+      ],
+    };
+  },
   component: StoreLayout,
 });
 
