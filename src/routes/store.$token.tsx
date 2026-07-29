@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { fetchStoreConfig, type StoreConfigPublic } from "@/lib/store-client";
 import { MessageCircle, Store } from "lucide-react";
 import { registerStoreServiceWorker } from "@/components/store/StoreInstallBanner";
-import { ensureGoogleAnalytics, ensureMetaPixel, trackMetaEvent } from "@/lib/meta-pixel.client";
+import { ensureGoogleAnalytics, ensureMetaPixel, trackMetaEvent } from "@/lib/meta-pixel-browser";
 
 export const Route = createFileRoute("/store/$token")({
   component: StoreLayout,

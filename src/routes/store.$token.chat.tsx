@@ -531,7 +531,7 @@ function StoreChatPage() {
           await refresh(session.visitorToken, { forceScroll: true });
           setReady(true);
           try {
-            const { trackMetaEvent } = await import("@/lib/meta-pixel.client");
+            const { trackMetaEvent } = await import("@/lib/meta-pixel-browser");
             trackMetaEvent("Lead", {
               content_name: session.productFocus?.productName || search.productName || "chat",
             });

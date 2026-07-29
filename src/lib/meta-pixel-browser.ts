@@ -1,4 +1,4 @@
-/** Helpers Meta Pixel (navegador) para la tienda pública. */
+/** Helpers Meta Pixel / GA (navegador) para la tienda pública. No-op en SSR. */
 
 declare global {
   interface Window {
@@ -18,7 +18,6 @@ export function ensureMetaPixel(pixelId: string): void {
     return;
   }
 
-  // Standard Meta Pixel base code
   const f = window as Window;
   const n = (function (...args: unknown[]) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +27,12 @@ export function ensureMetaPixel(pixelId: string): void {
       : // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (n as any).queue.push(args);
     return q;
-  }) as Window["fbq"] & { queue: unknown[]; loaded?: boolean; version?: string; callMethod?: (...a: unknown[]) => void };
+  }) as Window["fbq"] & {
+    queue: unknown[];
+    loaded?: boolean;
+    version?: string;
+    callMethod?: (...a: unknown[]) => void;
+  };
 
   if (!f.fbq) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
