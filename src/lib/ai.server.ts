@@ -1820,6 +1820,45 @@ export async function executeToolCall(
   let result = "";
   let details = "";
 
+  const onPurchaseConfirmed = async (orderForm: Record<string, unknown> | null) => {
+    try {
+      const { assignComproTag } = await import("@/lib/purchase-tag.server");
+      await assignComproTag({ orgId, contactId });
+    } catch {
+      /* no bloquear pedido */
+    }
+    try {
+      const { sendMetaCapiEvent, metaEventId } = await import("@/lib/meta-capi.server");
+      let value: number | null = null;
+      const rawVal =
+        orderForm?.Valor ??
+        orderForm?.valor ??
+        orderForm?.Total ??
+        orderForm?.total ??
+        orderForm?.Precio ??
+        orderForm?.precio ??
+        orderForm?.price;
+      if (rawVal != null) {
+        const n = Number(String(rawVal).replace(/[^\d.]/g, ""));
+        if (Number.isFinite(n)) value = n;
+      }
+      const productName = String(
+        orderForm?.Producto ?? orderForm?.producto ?? orderForm?.product ?? "",
+      ).trim();
+      await sendMetaCapiEvent({
+        orgId,
+        eventName: "Purchase",
+        eventId: metaEventId(["purchase", orgId, threadId, contactId]),
+        value,
+        currency: "COP",
+        contentName: productName || null,
+        contentIds: productName ? [productName.slice(0, 100)] : undefined,
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
   if (name === "assign_tag") {
     const tagName = args.tag_name;
     // 1. Find or create tag
@@ -2021,6 +2060,8 @@ export async function executeToolCall(
               .eq("id", threadId)
               .eq("org_id", orgId);
 
+            await onPurchaseConfirmed(mergedFormData);
+
             result =
               "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
             details = `Pedido existente actualizado/fusionado (id ${existingOrder.id}) para hilo ${threadId}.`;
@@ -2087,6 +2128,7 @@ export async function executeToolCall(
                 .update({ purchase_intent: "compro" })
                 .eq("id", threadId)
                 .eq("org_id", orgId);
+              await onPurchaseConfirmed(mergedFormData);
               result =
                 "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
               details = `Pedido fusionado tras choque de índice único para hilo ${threadId}.`;
@@ -2105,6 +2147,7 @@ export async function executeToolCall(
           .update({ purchase_intent: "compro" })
           .eq("id", threadId)
           .eq("org_id", orgId);
+        await onPurchaseConfirmed(formData);
         result =
           "Pedido guardado exitosamente. Agradece al cliente y confirma que su pedido está en proceso.";
         details = `Pedido guardado con datos: ${JSON.stringify(formData)}`;
@@ -3463,6 +3506,20 @@ export async function runAiAgent({
         .update({ purchase_intent: "collecting_data" })
         .eq("id", threadId)
         .eq("org_id", orgId);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const { sendMetaCapiEvent, metaEventId } = await import("@/lib/meta-capi.server");
+      const p = selectedProductForDetails || orderContextProduct;
+      await sendMetaCapiEvent({
+        orgId,
+        eventName: "InitiateCheckout",
+        eventId: metaEventId(["checkout", orgId, threadId, p?.id]),
+        contentIds: p?.id ? [String(p.id)] : undefined,
+        contentName: p?.name || null,
+        value: p?.price != null ? Number(p.price) : null,
+      });
     } catch {
       /* ignore */
     }
@@ -4865,6 +4922,16 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       .update({ purchase_intent: "collecting_data" })
       .eq("id", threadId)
       .eq("org_id", orgId);
+    try {
+      const { sendMetaCapiEvent, metaEventId } = await import("@/lib/meta-capi.server");
+      await sendMetaCapiEvent({
+        orgId,
+        eventName: "InitiateCheckout",
+        eventId: metaEventId(["checkout_reply", orgId, threadId]),
+      });
+    } catch {
+      /* ignore */
+    }
   };
 
   const recoverMissingOrderConfirmation = async (replyText: string) => {

@@ -12,10 +12,28 @@ export type StoreConfig = {
   social_description: string | null;
   social_image_url: string | null;
   enabled: boolean;
+  meta_pixel_id: string | null;
+  meta_capi_access_token: string | null;
+  meta_pixel_enabled: boolean;
+  custom_domain: string | null;
+  google_analytics_id: string | null;
+  google_site_verification: string | null;
+  seo_title: string | null;
+  seo_description: string | null;
+  page_faq: string | null;
+  page_terms: string | null;
+  page_privacy: string | null;
+  page_shipping: string | null;
 };
 
 const STORE_SELECT =
+  "org_id, store_token, brand_name, logo_url, primary_color, accent_color, social_title, social_description, social_image_url, enabled, meta_pixel_id, meta_capi_access_token, meta_pixel_enabled, custom_domain, google_analytics_id, google_site_verification, seo_title, seo_description, page_faq, page_terms, page_privacy, page_shipping";
+
+const STORE_SELECT_SOCIAL =
   "org_id, store_token, brand_name, logo_url, primary_color, accent_color, social_title, social_description, social_image_url, enabled";
+
+const STORE_SELECT_BASIC =
+  "org_id, store_token, brand_name, logo_url, primary_color, enabled";
 
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
@@ -51,47 +69,77 @@ function normalizeStore(row: Record<string, unknown>): StoreConfig {
     social_description: (row.social_description as string) || null,
     social_image_url: (row.social_image_url as string) || null,
     enabled: row.enabled !== false,
+    meta_pixel_id: (row.meta_pixel_id as string) || null,
+    meta_capi_access_token: (row.meta_capi_access_token as string) || null,
+    meta_pixel_enabled: row.meta_pixel_enabled === true,
+    custom_domain: (row.custom_domain as string) || null,
+    google_analytics_id: (row.google_analytics_id as string) || null,
+    google_site_verification: (row.google_site_verification as string) || null,
+    seo_title: (row.seo_title as string) || null,
+    seo_description: (row.seo_description as string) || null,
+    page_faq: (row.page_faq as string) || null,
+    page_terms: (row.page_terms as string) || null,
+    page_privacy: (row.page_privacy as string) || null,
+    page_shipping: (row.page_shipping as string) || null,
   };
+}
+
+function missingCol(error: { message?: string; code?: string } | null | undefined) {
+  if (!error) return false;
+  const msg = String(error.message || "");
+  return (
+    error.code === "42703" ||
+    /meta_pixel|custom_domain|google_|seo_|page_faq|page_terms|page_privacy|page_shipping|social_|accent_color/i.test(
+      msg,
+    )
+  );
+}
+
+async function fetchStoreRow(opts: {
+  orgId?: string;
+  token?: string;
+  domain?: string;
+}): Promise<Record<string, unknown> | null> {
+  const applyFilter = (q: any) => {
+    if (opts.orgId) q = q.eq("org_id", opts.orgId);
+    if (opts.token) q = q.eq("store_token", opts.token.trim());
+    if (opts.domain) q = q.ilike("custom_domain", opts.domain.trim());
+    return q.maybeSingle();
+  };
+
+  let res = await applyFilter((supabaseAdmin as any).from("store_configs").select(STORE_SELECT));
+  if (res.error && missingCol(res.error)) {
+    res = await applyFilter((supabaseAdmin as any).from("store_configs").select(STORE_SELECT_SOCIAL));
+  }
+  if (res.error && missingCol(res.error)) {
+    if (opts.domain) return null;
+    res = await applyFilter((supabaseAdmin as any).from("store_configs").select(STORE_SELECT_BASIC));
+  }
+  if (res.error || !res.data) return null;
+  return res.data as Record<string, unknown>;
 }
 
 export async function resolveStoreByToken(token: string): Promise<StoreConfig | null> {
   if (!token?.trim()) return null;
-  const { data, error } = await (supabaseAdmin as any)
-    .from("store_configs")
-    .select(STORE_SELECT)
-    .eq("store_token", token.trim())
-    .maybeSingle();
-  if (error || !data || data.enabled === false) {
-    // Fallback si la migración OG aún no está aplicada
-    if (error?.message?.includes("social_") || error?.message?.includes("accent_color")) {
-      const { data: legacy } = await (supabaseAdmin as any)
-        .from("store_configs")
-        .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
-        .eq("store_token", token.trim())
-        .maybeSingle();
-      if (!legacy || legacy.enabled === false) return null;
-      return normalizeStore(legacy);
-    }
-    return null;
-  }
+  const data = await fetchStoreRow({ token });
+  if (!data || data.enabled === false) return null;
+  return normalizeStore(data);
+}
+
+export async function resolveStoreByCustomDomain(host: string): Promise<StoreConfig | null> {
+  const domain = String(host || "")
+    .split(":")[0]
+    ?.trim()
+    .toLowerCase();
+  if (!domain || domain === "localhost") return null;
+  const data = await fetchStoreRow({ domain });
+  if (!data || data.enabled === false) return null;
   return normalizeStore(data);
 }
 
 export async function ensureStoreConfig(orgId: string): Promise<StoreConfig> {
-  const { data: existing, error } = await (supabaseAdmin as any)
-    .from("store_configs")
-    .select(STORE_SELECT)
-    .eq("org_id", orgId)
-    .maybeSingle();
+  const existing = await fetchStoreRow({ orgId });
   if (existing) return normalizeStore(existing);
-  if (error?.message?.includes("social_") || error?.message?.includes("accent_color")) {
-    const { data: legacy } = await (supabaseAdmin as any)
-      .from("store_configs")
-      .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
-      .eq("org_id", orgId)
-      .maybeSingle();
-    if (legacy) return normalizeStore(legacy);
-  }
 
   const row = {
     org_id: orgId,
@@ -116,7 +164,7 @@ export async function ensureStoreConfig(orgId: string): Promise<StoreConfig> {
         primary_color: row.primary_color,
         enabled: true,
       })
-      .select("org_id, store_token, brand_name, logo_url, primary_color, enabled")
+      .select(STORE_SELECT_BASIC)
       .single();
     if (e2 || !basic) throw new Error(insErr?.message || e2?.message || "No se pudo crear store_configs");
     return normalizeStore(basic);

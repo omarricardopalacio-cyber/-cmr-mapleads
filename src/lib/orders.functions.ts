@@ -145,6 +145,16 @@ export const repairMissingConfirmedOrders = createServerFn({ method: "POST" })
         .eq("id", candidate.thread_id)
         .eq("org_id", orgId);
 
+      try {
+        const { assignComproTag } = await import("@/lib/purchase-tag.server");
+        await assignComproTag({
+          orgId,
+          contactId: thread.contact_id ?? null,
+        });
+      } catch {
+        /* ignore */
+      }
+
       repaired += 1;
     }
 

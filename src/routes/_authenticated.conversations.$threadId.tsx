@@ -12,6 +12,7 @@ import {
   createTag,
   addContactTag,
   removeContactTag,
+  assignComproTagFn,
 } from "@/lib/tags.functions";
 import { listNotes, createNote, deleteNote } from "@/lib/notes.functions";
 import {
@@ -215,10 +216,18 @@ function ThreadPage() {
 
   const purchaseIntent = (data as any)?.thread?.purchase_intent ?? "pending";
 
+  const assignComproFn = useServerFn(assignComproTagFn);
+
   const setIntentMut = useMutation({
     mutationFn: async (intent: string) => {
       const { error } = await supabase.from('threads').update({ purchase_intent: intent }).eq('id', threadId);
       if (error) throw error;
+      if (intent === 'compro') {
+        const contactId = (data as any)?.thread?.contact_id || (data as any)?.contact?.id;
+        if (contactId) {
+          await assignComproFn({ data: { contactId } }).catch(() => {});
+        }
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["thread", threadId] });

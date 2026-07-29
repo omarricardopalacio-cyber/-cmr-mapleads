@@ -137,3 +137,13 @@ export const removeContactTag = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+export const assignComproTagFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ contactId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await getUserOrg(context.userId);
+    await assertContactInOrg(data.contactId, orgId);
+    const { assignComproTag } = await import("@/lib/purchase-tag.server");
+    return assignComproTag({ orgId, contactId: data.contactId });
+  });
+

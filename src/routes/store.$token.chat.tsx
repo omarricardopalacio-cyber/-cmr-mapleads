@@ -530,6 +530,23 @@ function StoreChatPage() {
           stickToBottom.current = true;
           await refresh(session.visitorToken, { forceScroll: true });
           setReady(true);
+          try {
+            const { trackMetaEvent } = await import("@/lib/meta-pixel.client");
+            trackMetaEvent("Lead", {
+              content_name: session.productFocus?.productName || search.productName || "chat",
+            });
+            if (session.productFocus?.productId || search.productId) {
+              trackMetaEvent("ViewContent", {
+                content_ids: [session.productFocus?.productId || search.productId],
+                content_name: session.productFocus?.productName || search.productName || undefined,
+                content_type: "product",
+                value: session.productFocus?.price ?? undefined,
+                currency: "COP",
+              });
+            }
+          } catch {
+            /* ignore */
+          }
         }
       } catch (e: any) {
         if (!cancelled) {

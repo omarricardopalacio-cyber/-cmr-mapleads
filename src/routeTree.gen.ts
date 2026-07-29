@@ -52,6 +52,7 @@ import { Route as ApiPublicStoreConfigRouteImport } from './routes/api/public/st
 import { Route as ApiPublicStoreProductsRouteImport } from './routes/api/public/store/products'
 import { Route as ApiPublicStorePushRouteImport } from './routes/api/public/store/push'
 import { Route as StoreTokenProductProductIdRouteImport } from './routes/store.$token.product.$productId'
+import { Route as StoreTokenLegalSlugRouteImport } from './routes/store.$token.legal.$slug'
 import { Route as ApiPublicStoreChatMessagesRouteImport } from './routes/api/public/store/chat/messages'
 import { Route as ApiPublicStoreChatSessionRouteImport } from './routes/api/public/store/chat/session'
 
@@ -283,6 +284,11 @@ const StoreTokenProductProductIdRoute =
     path: '/product/$productId',
     getParentRoute: () => StoreTokenRoute,
   } as any)
+const StoreTokenLegalSlugRoute = StoreTokenLegalSlugRouteImport.update({
+  id: '/legal/$slug',
+  path: '/legal/$slug',
+  getParentRoute: () => StoreTokenRoute,
+} as any)
 const ApiPublicStoreChatMessagesRoute =
   ApiPublicStoreChatMessagesRouteImport.update({
     id: '/api/public/store/chat/messages',
@@ -986,12 +992,14 @@ interface StoreTokenRouteChildren {
   StoreTokenChatRoute: typeof StoreTokenChatRoute
   StoreTokenIndexRoute: typeof StoreTokenIndexRoute
   StoreTokenProductProductIdRoute: typeof StoreTokenProductProductIdRoute
+  StoreTokenLegalSlugRoute: typeof StoreTokenLegalSlugRoute
 }
 
 const StoreTokenRouteChildren: StoreTokenRouteChildren = {
   StoreTokenChatRoute: StoreTokenChatRoute,
   StoreTokenIndexRoute: StoreTokenIndexRoute,
   StoreTokenProductProductIdRoute: StoreTokenProductProductIdRoute,
+  StoreTokenLegalSlugRoute: StoreTokenLegalSlugRoute,
 }
 
 const StoreTokenRouteWithChildren = StoreTokenRoute._addFileChildren(

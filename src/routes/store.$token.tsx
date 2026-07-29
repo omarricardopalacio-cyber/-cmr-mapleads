@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { fetchStoreConfig, type StoreConfigPublic } from "@/lib/store-client";
 import { MessageCircle, Store } from "lucide-react";
 import { registerStoreServiceWorker } from "@/components/store/StoreInstallBanner";
+import { ensureGoogleAnalytics, ensureMetaPixel, trackMetaEvent } from "@/lib/meta-pixel.client";
 
 export const Route = createFileRoute("/store/$token")({
   component: StoreLayout,
@@ -59,24 +60,35 @@ function StoreLayout() {
     const accent = cfg.accentColor || "#FF2D95";
     document.documentElement.style.setProperty("--store-primary", primary);
     document.documentElement.style.setProperty("--store-accent", accent);
-    document.title = cfg.socialTitle || cfg.brandName || "Catálogo";
+    const title = cfg.seoTitle || cfg.socialTitle || cfg.brandName || "Catálogo";
+    document.title = title;
 
-    const desc = cfg.socialDescription || `Catálogo de ${cfg.brandName}`;
+    const desc = cfg.seoDescription || cfg.socialDescription || `Catálogo de ${cfg.brandName}`;
     const image = cfg.socialImageUrl || cfg.logoUrl || "";
-    const url = typeof window !== "undefined" ? window.location.href : "";
+    const url = typeof window !== "undefined" ? window.location.href.split("?")[0] : "";
 
     upsertMeta("name", "description", desc);
     upsertMeta("name", "theme-color", accent || "#008069");
     upsertMeta("name", "mobile-web-app-capable", "yes");
     upsertMeta("name", "apple-mobile-web-app-capable", "yes");
     upsertMeta("name", "apple-mobile-web-app-title", cfg.brandName.slice(0, 12));
-    upsertMeta("property", "og:title", cfg.socialTitle || cfg.brandName);
+    if (cfg.googleSiteVerification) {
+      upsertMeta("name", "google-site-verification", cfg.googleSiteVerification);
+    }
+    upsertMeta("property", "og:title", cfg.socialTitle || title);
     upsertMeta("property", "og:description", desc);
     upsertMeta("property", "og:type", "website");
-    if (url) upsertMeta("property", "og:url", url);
-    if (image) upsertMeta("property", "og:image", image);
+    if (url) {
+      upsertMeta("property", "og:url", url);
+      upsertLink("canonical", url);
+    }
+    if (image) {
+      upsertMeta("property", "og:image", image);
+      upsertMeta("property", "og:image:width", "1200");
+      upsertMeta("property", "og:image:height", "630");
+    }
     upsertMeta("name", "twitter:card", "summary_large_image");
-    upsertMeta("name", "twitter:title", cfg.socialTitle || cfg.brandName);
+    upsertMeta("name", "twitter:title", cfg.socialTitle || title);
     upsertMeta("name", "twitter:description", desc);
     if (image) upsertMeta("name", "twitter:image", image);
 
@@ -85,6 +97,14 @@ function StoreLayout() {
     }&start=chat`;
     upsertLink("manifest", manifestHref);
     upsertLink("apple-touch-icon", cfg.logoUrl || "/store-pwa-icon.svg");
+
+    if (cfg.metaPixelEnabled && cfg.metaPixelId) {
+      ensureMetaPixel(cfg.metaPixelId);
+      trackMetaEvent("PageView");
+    }
+    if (cfg.googleAnalyticsId) {
+      ensureGoogleAnalytics(cfg.googleAnalyticsId);
+    }
   }, [cfg, token]);
 
   if (err) {
@@ -109,6 +129,13 @@ function StoreLayout() {
       </div>
     );
   }
+
+  const footerLinks: Array<{ to: string; label: string; show?: boolean }> = [
+    { to: `/store/${token}/legal/faq`, label: "FAQ", show: cfg.hasFaq },
+    { to: `/store/${token}/legal/terms`, label: "Términos", show: cfg.hasTerms },
+    { to: `/store/${token}/legal/privacy`, label: "Privacidad", show: cfg.hasPrivacy },
+    { to: `/store/${token}/legal/shipping`, label: "Envíos y garantías", show: cfg.hasShipping },
+  ];
 
   return (
     <div
@@ -144,6 +171,9 @@ function StoreLayout() {
                 src={cfg.logoUrl}
                 alt={cfg.brandName}
                 className="h-9 w-9 rounded-lg object-cover ring-1 ring-white/20"
+                width={36}
+                height={36}
+                loading="eager"
               />
             ) : (
               <span
@@ -190,6 +220,22 @@ function StoreLayout() {
       <div className="relative z-10 flex-1">
         <Outlet />
       </div>
+
+      {(cfg.hasFaq || cfg.hasTerms || cfg.hasPrivacy || cfg.hasShipping) && (
+        <footer className="relative z-10 border-t border-white/10 bg-[#060a12]/90 px-4 py-6">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-white/60">
+            {footerLinks
+              .filter((l) => l.show)
+              .map((l) => (
+                <a key={l.to} href={l.to} className="hover:text-white">
+                  {l.label}
+                </a>
+              ))}
+            <span className="text-white/30">·</span>
+            <span>{cfg.brandName}</span>
+          </div>
+        </footer>
+      )}
     </div>
   );
 }

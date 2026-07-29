@@ -372,6 +372,9 @@ function ProductCard({ product: p, token }: { product: StoreProduct; token: stri
               playable ? "group-hover:opacity-0" : "group-hover:scale-[1.03]"
             }`}
             loading="lazy"
+            decoding="async"
+            width={400}
+            height={400}
             onError={() => setImgFailed(true)}
           />
         ) : (

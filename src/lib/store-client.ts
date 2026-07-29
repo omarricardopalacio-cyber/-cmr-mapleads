@@ -9,6 +9,18 @@ export type StoreConfigPublic = {
   socialDescription: string | null;
   socialImageUrl: string | null;
   orgId: string;
+  storeToken?: string | null;
+  metaPixelId?: string | null;
+  metaPixelEnabled?: boolean;
+  googleAnalyticsId?: string | null;
+  googleSiteVerification?: string | null;
+  seoTitle?: string | null;
+  seoDescription?: string | null;
+  customDomain?: string | null;
+  hasFaq?: boolean;
+  hasTerms?: boolean;
+  hasPrivacy?: boolean;
+  hasShipping?: boolean;
 };
 
 export type StoreProduct = {
@@ -55,7 +67,37 @@ export async function fetchStoreConfig(storeToken: string): Promise<StoreConfigP
     socialDescription: data.socialDescription ?? null,
     socialImageUrl: data.socialImageUrl ?? null,
     orgId: data.orgId,
+    storeToken: data.storeToken ?? storeToken,
+    metaPixelId: data.metaPixelId ?? null,
+    metaPixelEnabled: !!data.metaPixelEnabled,
+    googleAnalyticsId: data.googleAnalyticsId ?? null,
+    googleSiteVerification: data.googleSiteVerification ?? null,
+    seoTitle: data.seoTitle ?? null,
+    seoDescription: data.seoDescription ?? null,
+    customDomain: data.customDomain ?? null,
+    hasFaq: !!data.hasFaq,
+    hasTerms: !!data.hasTerms,
+    hasPrivacy: !!data.hasPrivacy,
+    hasShipping: !!data.hasShipping,
   };
+}
+
+export async function fetchStorePage(
+  storeToken: string,
+  slug: "faq" | "terms" | "privacy" | "shipping",
+): Promise<{ title: string; content: string | null }> {
+  const res = await fetch(
+    `/api/public/store/config?token=${encodeURIComponent(storeToken)}&page=${encodeURIComponent(slug)}`,
+  );
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Page error");
+  const data = await res.json();
+  const titles: Record<string, string> = {
+    faq: "Preguntas frecuentes",
+    terms: "Términos y Condiciones",
+    privacy: "Política de Privacidad",
+    shipping: "Envíos, Cambios y Garantías",
+  };
+  return { title: titles[slug] || slug, content: data.pageContent ?? null };
 }
 
 export async function fetchStoreCategories(storeToken: string): Promise<StoreCategorySphere[]> {
