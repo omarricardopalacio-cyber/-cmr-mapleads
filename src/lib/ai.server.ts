@@ -1155,6 +1155,7 @@ async function saveFocusedProduct(ctx: ToolExecCtx, p: CatalogProduct | null): P
       _lock: true,
       _previous_product: previousBlock,
       _catalog_search: null,
+      _product_disambiguation: null,
     };
     await (supabaseAdmin as any)
       .from("threads")
@@ -2110,11 +2111,31 @@ export async function executeToolCall(
       }
     }
   } else if (name === "search_products") {
-    // Ya no disparamos carrusel: si hay producto CRM, present_product; si no, lista texto corta.
+    // Sin carrusel: match único → present_product; varios → pregunta ¿de cuál?
     try {
       const q = (args.query || "").toString().trim();
-      const strong = await findStrongProductMatch(orgId, catalogCfg ?? null, q);
-      if (strong?.id && ctx.threadId) {
+      const resolved = await resolveLocalProductQuery(orgId, catalogCfg ?? null, q);
+      if (resolved.kind === "ambiguous") {
+        ctx.lastProducts = resolved.candidates.map((c) => c.product);
+        await saveProductDisambiguation(ctx, {
+          query: resolved.query,
+          candidates: resolved.candidates.map((c) => ({
+            id: c.product.id,
+            name: c.product.name,
+            sku: c.product.sku ?? null,
+            price: c.product.price ?? null,
+          })),
+          asked_at: new Date().toISOString(),
+        });
+        result = [
+          buildDisambiguationReply(resolved.query, resolved.candidates),
+          "",
+          "NO envíes imágenes ni presentes un producto todavía.",
+          "Espera que el cliente elija número, modelo o característica; luego usa present_product.",
+        ].join("\n");
+        details = `search_products ambigüedad: ${resolved.candidates.length}`;
+      } else if (resolved.kind === "single" && resolved.product?.id && ctx.threadId) {
+        const strong = resolved.product;
         const { presentProductToThread } = await import("@/lib/store-product-chat.server");
         const presented = await presentProductToThread({
           orgId,
@@ -2125,6 +2146,7 @@ export async function executeToolCall(
           chatId: ctx.chatId || null,
         });
         if (presented) {
+          await clearProductDisambiguation(ctx);
           await saveFocusedProduct(ctx, {
             ...(presented.product as any),
             ai_observation: (presented.product as any)?.ai_observation ?? strong.ai_observation ?? null,
@@ -2672,35 +2694,156 @@ async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
    Product discovery helpers (sin carrusel)
    ============================================================ */
 
-/**
- * Busca el mejor producto LOCAL (CRM / Observaciones).
- * Si hay CUALQUIER hit local, devuelve el mejor — no exige match “exacto”.
- * Así nunca caemos a listados masivos de imágenes cuando el producto está en el CRM.
- */
-async function findStrongProductMatch(
-  orgId: string,
-  catalogCfg: CatalogConfig | null,
-  query: string,
-): Promise<(CatalogProduct & { ai_observation?: string | null; search_keywords?: string | null }) | null> {
-  const q = String(query || "").trim();
-  if (q.length < 2) return null;
-  const qSafe = q.replace(/[%(),]/g, " ").trim();
-  if (qSafe.length < 2) return null;
+type LocalScoredProduct = {
+  product: CatalogProduct & { ai_observation?: string | null; search_keywords?: string | null };
+  score: number;
+};
 
-  const norm = (s: string) =>
-    s
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-  const qn = norm(qSafe);
+type ProductDisambiguationState = {
+  query: string;
+  candidates: Array<{
+    id: string;
+    name: string;
+    sku?: string | null;
+    price?: string | number | null;
+  }>;
+  asked_at: string;
+};
+
+type LocalProductResolve =
+  | { kind: "none" }
+  | { kind: "single"; product: LocalScoredProduct["product"]; score: number }
+  | { kind: "ambiguous"; query: string; candidates: LocalScoredProduct[] };
+
+function normProductText(s: string): string {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function loadProductDisambiguation(
+  ctx: ToolExecCtx,
+): Promise<ProductDisambiguationState | null> {
+  if (!ctx.threadId) return null;
+  try {
+    const { data: thread } = await (supabaseAdmin as any)
+      .from("threads")
+      .select("focused_product_snapshot")
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle();
+    const snap = thread?.focused_product_snapshot as Record<string, unknown> | null;
+    const raw = snap?._product_disambiguation as Record<string, unknown> | null;
+    if (!raw?.query || !Array.isArray(raw.candidates) || !raw.candidates.length) return null;
+    return {
+      query: String(raw.query).trim(),
+      candidates: raw.candidates
+        .map((c: any) => ({
+          id: String(c.id),
+          name: String(c.name || ""),
+          sku: c.sku ?? null,
+          price: c.price ?? null,
+        }))
+        .filter((c) => c.id && c.name),
+      asked_at: String(raw.asked_at || ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function saveProductDisambiguation(
+  ctx: ToolExecCtx,
+  state: ProductDisambiguationState,
+): Promise<void> {
+  if (!ctx.threadId) return;
+  try {
+    const { data: thread } = await (supabaseAdmin as any)
+      .from("threads")
+      .select("focused_product_snapshot")
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle();
+    const snap = { ...((thread?.focused_product_snapshot as Record<string, unknown>) || {}) };
+    snap._product_disambiguation = {
+      query: state.query,
+      candidates: state.candidates.slice(0, 8),
+      asked_at: state.asked_at || new Date().toISOString(),
+    };
+    await (supabaseAdmin as any)
+      .from("threads")
+      .update({ focused_product_snapshot: snap })
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId);
+  } catch (err) {
+    console.warn(
+      "[saveProductDisambiguation]",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+async function clearProductDisambiguation(ctx: ToolExecCtx): Promise<void> {
+  if (!ctx.threadId) return;
+  try {
+    const { data: thread } = await (supabaseAdmin as any)
+      .from("threads")
+      .select("focused_product_snapshot")
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId)
+      .maybeSingle();
+    const snap = { ...((thread?.focused_product_snapshot as Record<string, unknown>) || {}) };
+    if (!snap._product_disambiguation) return;
+    snap._product_disambiguation = null;
+    await (supabaseAdmin as any)
+      .from("threads")
+      .update({ focused_product_snapshot: snap })
+      .eq("id", ctx.threadId)
+      .eq("org_id", ctx.orgId);
+  } catch {
+    /* ignore */
+  }
+}
+
+function buildDisambiguationReply(query: string, candidates: LocalScoredProduct[]): string {
+  const label = String(query || "ese producto").trim() || "ese producto";
+  const lines = candidates.slice(0, 5).map((c, i) => {
+    const bits = [`${i + 1}. ${c.product.name}`];
+    if (c.product.sku) bits.push(`SKU: ${c.product.sku}`);
+    if (c.product.price != null && String(c.product.price).trim() !== "") {
+      bits.push(`$${c.product.price}`);
+    }
+    return bits.join(" — ");
+  });
+  return [
+    `Tengo varios resultados para "${label}". ¿De cuál te interesa?`,
+    "",
+    ...lines,
+    "",
+    "Responde con el número, el modelo/SKU o una característica (ej. niveles, material, color, tamaño).",
+  ].join("\n");
+}
+
+/** Busca y rankea productos locales CRM por nombre / SKU / keywords. */
+async function findLocalProductCandidates(
+  orgId: string,
+  query: string,
+): Promise<LocalScoredProduct[]> {
+  const q = String(query || "").trim();
+  if (q.length < 2) return [];
+  const qSafe = q.replace(/[%(),]/g, " ").trim();
+  if (qSafe.length < 2) return [];
+
+  const qn = normProductText(qSafe);
   const tokens = qn
     .split(/\s+/)
     .filter((t) => t.length >= 3)
-    .slice(0, 6);
+    .slice(0, 8);
 
-  const mapRow = (r: any) => ({
+  const mapRow = (r: any): LocalScoredProduct["product"] => ({
     id: String(r.id),
     name: String(r.name || ""),
     description: r.description ?? undefined,
@@ -2715,11 +2858,12 @@ async function findStrongProductMatch(
     search_keywords: r.search_keywords ?? null,
   });
 
-  const scoreLocal = (p: ReturnType<typeof mapRow>) => {
+  const scoreLocal = (p: LocalScoredProduct["product"]) => {
     let score = 0;
-    const nameN = norm(p.name);
-    const skuN = norm(String(p.sku || ""));
-    const kwN = norm(String(p.search_keywords || "").replace(/[,;|]+/g, " "));
+    const nameN = normProductText(p.name);
+    const skuN = normProductText(String(p.sku || ""));
+    const kwN = normProductText(String(p.search_keywords || "").replace(/[,;|]+/g, " "));
+    const descN = normProductText(String(p.description || "").slice(0, 400));
     if (nameN === qn) score += 100;
     if (skuN && skuN === qn) score += 95;
     if (nameN.includes(qn) || qn.includes(nameN)) score += 50;
@@ -2728,6 +2872,7 @@ async function findStrongProductMatch(
       if (nameN.includes(t)) score += 18;
       if (kwN.includes(t)) score += 24;
       if (skuN.includes(t)) score += 20;
+      if (descN.includes(t)) score += 8;
     }
     if (p.ai_observation) score += 5;
     return score;
@@ -2744,7 +2889,6 @@ async function findStrongProductMatch(
         `search_keywords.ilike.%${t}%`,
       ]),
     ];
-    // dedupe
     const orFilter = [...new Set(orParts)].join(",");
 
     let hits: any[] = [];
@@ -2758,7 +2902,13 @@ async function findStrongProductMatch(
       .or(orFilter)
       .limit(20);
     if (res.error && (String(res.error.message || "").includes("search_keywords") || res.error.code === "42703")) {
-      const legacyOr = [...new Set([`name.ilike.%${qSafe}%`, `sku.ilike.%${qSafe}%`, ...tokens.flatMap((t) => [`name.ilike.%${t}%`, `sku.ilike.%${t}%`])])].join(",");
+      const legacyOr = [
+        ...new Set([
+          `name.ilike.%${qSafe}%`,
+          `sku.ilike.%${qSafe}%`,
+          ...tokens.flatMap((t) => [`name.ilike.%${t}%`, `sku.ilike.%${t}%`]),
+        ]),
+      ].join(",");
       const legacy = await (supabaseAdmin as any)
         .from("products")
         .select(
@@ -2773,52 +2923,226 @@ async function findStrongProductMatch(
       hits = res.data || [];
     }
 
-    if (hits.length) {
-      const mapped = hits.map(mapRow);
-      const ranked = mapped
-        .map((p) => ({ p, score: scoreLocal(p) }))
-        .sort((a, b) => b.score - a.score);
-      const best = ranked[0];
-      if (best && best.score >= 18) {
-        console.info("[findStrongProductMatch] local hit", {
-          orgId,
-          query: qSafe,
-          productId: best.p.id,
-          productName: best.p.name,
-          score: best.score,
-          candidates: ranked.length,
-        });
-        return best.p;
-      }
-      // Cualquier hit local gana al carrusel externo
-      if (best) {
-        console.info("[findStrongProductMatch] local fallback first hit", {
-          orgId,
-          productId: best.p.id,
-          score: best.score,
-        });
-        return best.p;
-      }
-    }
+    return hits
+      .map(mapRow)
+      .map((p) => ({ product: p, score: scoreLocal(p) }))
+      .filter((r) => r.score > 0)
+      .sort((a, b) => b.score - a.score);
   } catch (err) {
     console.warn(
-      "[findStrongProductMatch] local search failed",
+      "[findLocalProductCandidates] failed",
       err instanceof Error ? err.message : String(err),
     );
+    return [];
+  }
+}
+
+/**
+ * Resuelve una consulta a un producto CRM, o marca ambigüedad
+ * cuando el nombre es abierto (ej. "zapatero") y hay varios similares.
+ */
+function resolveFromLocalCandidates(
+  query: string,
+  ranked: LocalScoredProduct[],
+): LocalProductResolve {
+  const qn = normProductText(query);
+  const tokens = qn.split(/\s+/).filter((t) => t.length >= 3);
+  const viable = ranked.filter((r) => r.score >= 18);
+  if (!viable.length) return { kind: "none" };
+
+  const best = viable[0]!;
+  const second = viable[1];
+  const nameN = normProductText(best.product.name);
+  const skuN = normProductText(String(best.product.sku || ""));
+  const exact = nameN === qn || (skuN && skuN === qn);
+
+  // Match exacto o ventaja clara → un solo producto
+  if (exact || best.score >= 90) {
+    return { kind: "single", product: best.product, score: best.score };
+  }
+  if (!second) {
+    return { kind: "single", product: best.product, score: best.score };
   }
 
-  // Solo catálogo externo si NO hay producto local
-  if (!catalogCfg) return null;
-  try {
-    const products = await searchCatalog(catalogCfg, qSafe, 8);
-    if (!products.length) return null;
-    const fromRef = resolveProductFromReference(qSafe, products);
-    if (fromRef) return fromRef as any;
-    if (products.length === 1) return products[0] as any;
-  } catch {
-    /* ignore */
+  const gap = best.score - second.score;
+  const closePack = viable.filter((r) => r.score >= Math.max(18, best.score - 30)).slice(0, 5);
+  const queryIsBroad = tokens.length <= 2;
+
+  // Nombre abierto + varios candidatos cercanos → preguntar ¿de cuál?
+  if (closePack.length >= 2 && (queryIsBroad || gap <= 30 || second.score >= best.score * 0.55)) {
+    return { kind: "ambiguous", query: String(query).trim(), candidates: closePack };
   }
+
+  return { kind: "single", product: best.product, score: best.score };
+}
+
+async function resolveLocalProductQuery(
+  orgId: string,
+  catalogCfg: CatalogConfig | null,
+  query: string,
+): Promise<LocalProductResolve> {
+  const ranked = await findLocalProductCandidates(orgId, query);
+  const local = resolveFromLocalCandidates(query, ranked);
+  if (local.kind !== "none") return local;
+
+  if (!catalogCfg) return { kind: "none" };
+  try {
+    const products = await searchCatalog(catalogCfg, String(query || "").trim(), 8);
+    if (!products.length) return { kind: "none" };
+    const fromRef = resolveProductFromReference(String(query || "").trim(), products);
+    if (fromRef) return { kind: "single", product: fromRef as any, score: 50 };
+    if (products.length === 1) return { kind: "single", product: products[0] as any, score: 40 };
+    // Catálogo externo con varios: no auto-elegir; el caller puede listar en texto
+    return { kind: "none" };
+  } catch {
+    return { kind: "none" };
+  }
+}
+
+/**
+ * Compat: mejor match único. Si hay ambigüedad, igual devuelve el top
+ * (usar resolveLocalProductQuery cuando haga falta preguntar ¿de cuál?).
+ */
+async function findStrongProductMatch(
+  orgId: string,
+  catalogCfg: CatalogConfig | null,
+  query: string,
+): Promise<(CatalogProduct & { ai_observation?: string | null; search_keywords?: string | null }) | null> {
+  const resolved = await resolveLocalProductQuery(orgId, catalogCfg, query);
+  if (resolved.kind === "single") return resolved.product;
+  if (resolved.kind === "ambiguous") return resolved.candidates[0]?.product ?? null;
   return null;
+}
+
+/**
+ * Presenta un producto CRM (ficha/flujo) y genera respuesta con observación.
+ * Devuelve null si no se pudo presentar.
+ */
+async function presentCrmProductFocusReply(params: {
+  orgId: string;
+  threadId: string;
+  contactId?: string | null;
+  sessionId?: string | null;
+  chatId?: string | null;
+  product: CatalogProduct & { ai_observation?: string | null };
+  cfg: Record<string, unknown>;
+  visibleChat: Msg[];
+  lastUserText: string;
+  actionTag?: string;
+}): Promise<{ reply: string; actions: string[] } | null> {
+  const {
+    orgId,
+    threadId,
+    contactId,
+    sessionId,
+    chatId,
+    product,
+    cfg,
+    visibleChat,
+    lastUserText,
+    actionTag = "product_focus_from_discovery",
+  } = params;
+  if (!product?.id) return null;
+
+  try {
+    const { presentProductToThread } = await import("@/lib/store-product-chat.server");
+    const presented = await presentProductToThread({
+      orgId,
+      threadId,
+      contactId: contactId || null,
+      productId: String(product.id),
+      sessionId: sessionId || null,
+      chatId: chatId || null,
+    });
+    if (!presented) {
+      console.warn("[presentCrmProductFocusReply] presentProductToThread null", {
+        productId: product.id,
+      });
+      return null;
+    }
+
+    const ctxLite: ToolExecCtx = { orgId, threadId, contactId: contactId || undefined };
+    await clearProductDisambiguation(ctxLite);
+    await saveFocusedProduct(ctxLite, {
+      ...(presented.product || product),
+      ai_observation:
+        (presented.product as any)?.ai_observation ?? product.ai_observation ?? null,
+    } as any);
+
+    let productFlowsBlock = "";
+    try {
+      const { data: pFlows } = await (supabaseAdmin as any)
+        .from("flows")
+        .select("id, name, description, ai_instructions, is_product_entry")
+        .eq("org_id", orgId)
+        .eq("product_id", product.id)
+        .eq("is_active", true)
+        .limit(20);
+      if (pFlows?.length) {
+        productFlowsBlock =
+          `\n\n=== FLUJOS DE ESTE PRODUCTO ===\n` +
+          pFlows
+            .map((f: any) => {
+              const note = String(f.ai_instructions || f.description || "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, 180);
+              return `- ${f.name}${f.is_product_entry ? " [inicial]" : ""}${note ? `: ${note}` : ""} (id: ${f.id})`;
+            })
+            .join("\n");
+      }
+    } catch {
+      /* migración pendiente */
+    }
+
+    const obs = String(
+      (presented.product as any)?.ai_observation || product.ai_observation || "",
+    ).trim();
+    const focusSystem = [
+      (cfg.system_prompt as string)?.trim()?.slice(0, 500) ||
+        "Eres un asesor comercial por WhatsApp.",
+      `\n\n=== PRODUCTO EN FOCO ===\n${formatProductObservationBlock(
+        {
+          ...(presented.product || product),
+          ai_observation: obs || null,
+        } as any,
+        "PRODUCTO ACTUAL",
+      )}`,
+      productFlowsBlock,
+      `\n\nEl sistema YA envió la ficha y el flujo del producto. Responde con la OBSERVACIÓN DEL VENDEDOR. PROHIBIDO enviar listados/carruseles/imágenes de otros productos.`,
+    ].join("");
+
+    try {
+      const focused = await callAiProvider(cfg, [
+        { role: "system", content: focusSystem },
+        ...visibleChat.slice(-6),
+        { role: "user", content: lastUserText },
+      ]);
+      if (focused.text?.trim()) {
+        return {
+          reply: focused.text.trim(),
+          actions: ["present_product", actionTag],
+        };
+      }
+    } catch (err) {
+      console.warn(
+        "[presentCrmProductFocusReply] reply falló; ficha ya enviada",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    return {
+      reply: obs
+        ? "¿Qué te gustaría saber de este producto?"
+        : "¿Qué te gustaría saber del producto o te ayudo a agendarlo?",
+      actions: ["present_product", actionTag],
+    };
+  } catch (err) {
+    console.warn(
+      "[presentCrmProductFocusReply] falló",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
 }
 
 /* ============================================================
@@ -3247,6 +3571,7 @@ MODO A — RECOPILANDO DATOS DEL PEDIDO:
 
 MODO B — DESCUBRIENDO PRODUCTOS:
 0. Si el cliente nombra un producto concreto (nombre, SKU o palabras clave), PRIORIZA present_product. El sistema enfoca ese producto, envía su ficha/flujo e inyecta la observación.
+0b. Si el nombre es ABIERTO/genérico (ej. "zapatero", "silla") y hay VARIOS modelos, NO elijas uno solo ni envíes fotos de todos. Pregunta "¿de cuál?" y pide una característica (niveles, material, color, modelo). Espera la respuesta y recién ahí present_product.
 1. PROHIBIDO enviar carruseles o muchas imágenes de catálogo. Nunca uses listados masivos.
 2. Si el sistema YA presentó un producto, responde con su observación/ficha. No vuelvas a search_products en ese turno.
 2b. Si el cliente pide información clara de UN producto (nombre o SKU), usa present_product.
@@ -3850,27 +4175,42 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   }
 
   if (!isCollectingOrder && catalogCfg && wantsMoreProducts && storedCatalogState.query) {
-    // YA NO enviamos más imágenes en carrusel. Pedimos aclaración o presentamos el mejor match.
-    const strongMore = await findStrongProductMatch(orgId, catalogCfg, storedCatalogState.query);
-    if (strongMore?.id) {
-      try {
-        const { presentProductToThread } = await import("@/lib/store-product-chat.server");
-        await presentProductToThread({
-          orgId,
-          threadId,
-          contactId: contactId || null,
-          productId: String(strongMore.id),
-          sessionId: sessionId || null,
-          chatId: chatId || null,
-        });
-        await saveFocusedProduct(ctx, strongMore as any);
-        return {
-          reply: `Te muestro ${strongMore.name}. ¿Qué te gustaría saber o lo agendamos?`,
-          actions: ["present_product", "more_products_as_present"],
-        };
-      } catch {
-        /* fallthrough */
-      }
+    const moreResolved = await resolveLocalProductQuery(
+      orgId,
+      catalogCfg,
+      storedCatalogState.query,
+    );
+    if (moreResolved.kind === "ambiguous") {
+      ctx.lastProducts = moreResolved.candidates.map((c) => c.product);
+      await saveProductDisambiguation(ctx, {
+        query: moreResolved.query,
+        candidates: moreResolved.candidates.map((c) => ({
+          id: c.product.id,
+          name: c.product.name,
+          sku: c.product.sku ?? null,
+          price: c.product.price ?? null,
+        })),
+        asked_at: new Date().toISOString(),
+      });
+      return {
+        reply: buildDisambiguationReply(moreResolved.query, moreResolved.candidates),
+        actions: ["product_disambiguation", "more_products_clarify"],
+      };
+    }
+    if (moreResolved.kind === "single" && moreResolved.product?.id) {
+      const presented = await presentCrmProductFocusReply({
+        orgId,
+        threadId,
+        contactId,
+        sessionId,
+        chatId,
+        product: moreResolved.product,
+        cfg,
+        visibleChat,
+        lastUserText,
+        actionTag: "more_products_as_present",
+      });
+      if (presented) return presented;
     }
     return {
       reply:
@@ -3879,7 +4219,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     };
   }
 
-  // ── DESCUBRIMIENTO: SIEMPRE present_product si hay producto CRM. SIN CARRUSEL. ─
+  // ── DESCUBRIMIENTO: match único → present_product; varios → ¿de cuál? ─
   {
     const normalizedForDiscovery = lastUserText
       .toLowerCase()
@@ -3893,12 +4233,127 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       /\b(busco|buscando|quiero|necesito|tienes|tiene|tienen|hay|manejan|venden|muestrame|muestra|mandame|env[ii]ame|ofrecen|estoy\s+buscando|quisiera\s+ver|info|informaci[oó]n|cu[aá]nto|precio|vale|cuesta|interesa|interesado|dame|pasame|p[aá]same|modelo|modelos|cat[aá]logo|disponible|disponibles|referencia)\b/i.test(
         normalizedForDiscovery,
       );
-    // Nombre/keywords cortos sin verbo (ej. "AB VERTICAL") — no saludos
     const looksLikeProductName =
       !isGreetingOnly &&
       trimmedUser.split(/\s+/).length <= 6 &&
       trimmedUser.length >= 3 &&
       !/^(gracias|ok|okay|dale|listo|si|sí|no)\.?$/i.test(trimmedUser);
+
+    // Continuar desambiguación pendiente (cliente responde característica / número)
+    const pendingDisambiguation = await loadProductDisambiguation(ctx);
+    if (
+      !isCollectingOrder &&
+      !focusedProduct &&
+      !isGreetingOnly &&
+      !isOrderIntent &&
+      pendingDisambiguation &&
+      pendingDisambiguation.candidates.length
+    ) {
+      const sel = parseSelectionNumber(trimmedUser);
+      let chosenId: string | null = null;
+      if (sel != null && pendingDisambiguation.candidates[sel - 1]) {
+        chosenId = pendingDisambiguation.candidates[sel - 1]!.id;
+      }
+
+      let resolved: LocalProductResolve = { kind: "none" };
+      if (chosenId) {
+        const hit = pendingDisambiguation.candidates.find((c) => c.id === chosenId);
+        if (hit) {
+          const full =
+            (await findLocalProductCandidates(orgId, hit.name || hit.sku || hit.id)).find(
+              (c) => c.product.id === chosenId,
+            )?.product ||
+            ({
+              id: hit.id,
+              name: hit.name,
+              sku: hit.sku ?? undefined,
+              price: hit.price ?? undefined,
+            } as LocalScoredProduct["product"]);
+          resolved = { kind: "single", product: full, score: 100 };
+        }
+      } else {
+        const refinedQ = `${pendingDisambiguation.query} ${trimmedUser}`.trim();
+        resolved = await resolveLocalProductQuery(orgId, catalogCfg, refinedQ);
+        // Si sigue ambiguo, intentar solo con la respuesta del cliente
+        if (resolved.kind === "ambiguous" || resolved.kind === "none") {
+          const onlyReply = await resolveLocalProductQuery(orgId, catalogCfg, trimmedUser);
+          if (onlyReply.kind === "single") resolved = onlyReply;
+          else if (onlyReply.kind === "ambiguous") resolved = onlyReply;
+        }
+        // Preferir candidato pendiente si el refine apunta fuera de esa lista
+        if (resolved.kind === "single") {
+          const id = resolved.product.id;
+          const inPending = pendingDisambiguation.candidates.some((c) => c.id === id);
+          if (!inPending && pendingDisambiguation.candidates.length) {
+            // Si el score es débil, re-preguntar con la lista pendiente
+            const amongPending = await findLocalProductCandidates(orgId, refinedQ);
+            const pendingIds = new Set(pendingDisambiguation.candidates.map((c) => c.id));
+            const filtered = amongPending.filter((c) => pendingIds.has(c.product.id));
+            const narrowed = resolveFromLocalCandidates(refinedQ, filtered);
+            if (narrowed.kind === "single") resolved = narrowed;
+            else if (narrowed.kind === "ambiguous") resolved = narrowed;
+          }
+        }
+      }
+
+      if (resolved.kind === "single" && resolved.product?.id) {
+        const presented = await presentCrmProductFocusReply({
+          orgId,
+          threadId,
+          contactId,
+          sessionId,
+          chatId,
+          product: resolved.product,
+          cfg,
+          visibleChat,
+          lastUserText,
+          actionTag: "product_disambiguation_resolved",
+        });
+        if (presented) {
+          console.info("[runAiAgent] desambiguación → present_product", {
+            orgId,
+            productId: resolved.product.id,
+            fromQuery: pendingDisambiguation.query,
+          });
+          return presented;
+        }
+      }
+
+      if (resolved.kind === "ambiguous") {
+        ctx.lastProducts = resolved.candidates.map((c) => c.product);
+        await saveProductDisambiguation(ctx, {
+          query: pendingDisambiguation.query,
+          candidates: resolved.candidates.map((c) => ({
+            id: c.product.id,
+            name: c.product.name,
+            sku: c.product.sku ?? null,
+            price: c.product.price ?? null,
+          })),
+          asked_at: new Date().toISOString(),
+        });
+        return {
+          reply: buildDisambiguationReply(pendingDisambiguation.query, resolved.candidates),
+          actions: ["product_disambiguation"],
+        };
+      }
+
+      // Sigue sin quedar claro: re-mostrar la lista pendiente
+      const pendingAsScored: LocalScoredProduct[] = pendingDisambiguation.candidates.map((c) => ({
+        product: {
+          id: c.id,
+          name: c.name,
+          sku: c.sku ?? undefined,
+          price: c.price ?? undefined,
+        },
+        score: 18,
+      }));
+      ctx.lastProducts = pendingAsScored.map((c) => c.product);
+      return {
+        reply: buildDisambiguationReply(pendingDisambiguation.query, pendingAsScored),
+        actions: ["product_disambiguation_retry"],
+      };
+    }
+
     const discoveryIntent =
       !isCollectingOrder &&
       !focusedProduct &&
@@ -3919,115 +4374,57 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         );
 
       if (looksProductish) {
-        const strong = await findStrongProductMatch(orgId, catalogCfg, searchQ);
+        const resolved = await resolveLocalProductQuery(orgId, catalogCfg, searchQ);
 
-        if (strong?.id) {
-          try {
-            const { presentProductToThread } = await import("@/lib/store-product-chat.server");
-            const presented = await presentProductToThread({
+        if (resolved.kind === "ambiguous") {
+          ctx.lastProducts = resolved.candidates.map((c) => c.product);
+          await saveProductDisambiguation(ctx, {
+            query: resolved.query,
+            candidates: resolved.candidates.map((c) => ({
+              id: c.product.id,
+              name: c.product.name,
+              sku: c.product.sku ?? null,
+              price: c.product.price ?? null,
+            })),
+            asked_at: new Date().toISOString(),
+          });
+          console.info("[runAiAgent] discovery ambigüedad → ¿de cuál?", {
+            orgId,
+            query: resolved.query,
+            count: resolved.candidates.length,
+          });
+          return {
+            reply: buildDisambiguationReply(resolved.query, resolved.candidates),
+            actions: ["product_disambiguation"],
+          };
+        }
+
+        if (resolved.kind === "single" && resolved.product?.id) {
+          const presented = await presentCrmProductFocusReply({
+            orgId,
+            threadId,
+            contactId,
+            sessionId,
+            chatId,
+            product: resolved.product,
+            cfg,
+            visibleChat,
+            lastUserText,
+            actionTag: "product_focus_from_discovery",
+          });
+          if (presented) {
+            console.info("[runAiAgent] discovery → present_product (CRM)", {
               orgId,
               threadId,
-              contactId: contactId || null,
-              productId: String(strong.id),
-              sessionId: sessionId || null,
-              chatId: chatId || null,
+              productId: resolved.product.id,
+              productName: resolved.product.name,
             });
-            if (!presented) {
-              console.warn("[runAiAgent] presentProductToThread devolvió null", {
-                productId: strong.id,
-              });
-            } else {
-              await saveFocusedProduct(ctx, {
-                ...(presented.product || strong),
-                ai_observation:
-                  (presented.product as any)?.ai_observation ?? strong.ai_observation ?? null,
-              } as any);
-
-              let productFlowsBlock = "";
-              try {
-                const { data: pFlows } = await (supabaseAdmin as any)
-                  .from("flows")
-                  .select("id, name, description, ai_instructions, is_product_entry")
-                  .eq("org_id", orgId)
-                  .eq("product_id", strong.id)
-                  .eq("is_active", true)
-                  .limit(20);
-                if (pFlows?.length) {
-                  productFlowsBlock =
-                    `\n\n=== FLUJOS DE ESTE PRODUCTO ===\n` +
-                    pFlows
-                      .map((f: any) => {
-                        const note = String(f.ai_instructions || f.description || "")
-                          .replace(/\s+/g, " ")
-                          .trim()
-                          .slice(0, 180);
-                        return `- ${f.name}${f.is_product_entry ? " [inicial]" : ""}${note ? `: ${note}` : ""} (id: ${f.id})`;
-                      })
-                      .join("\n");
-                }
-              } catch {
-                /* migración pendiente */
-              }
-
-              const obs = String(
-                (presented.product as any)?.ai_observation || strong.ai_observation || "",
-              ).trim();
-              const focusSystem = [
-                (cfg.system_prompt as string)?.trim()?.slice(0, 500) ||
-                  "Eres un asesor comercial por WhatsApp.",
-                `\n\n=== PRODUCTO EN FOCO ===\n${formatProductObservationBlock(
-                  {
-                    ...(presented.product || strong),
-                    ai_observation: obs || null,
-                  } as any,
-                  "PRODUCTO ACTUAL",
-                )}`,
-                productFlowsBlock,
-                `\n\nEl sistema YA envió la ficha y el flujo del producto. Responde con la OBSERVACIÓN DEL VENDEDOR. PROHIBIDO enviar listados/carruseles/imágenes de otros productos.`,
-              ].join("");
-
-              try {
-                const focused = await callAiProvider(cfg, [
-                  { role: "system", content: focusSystem },
-                  ...visibleChat.slice(-6),
-                  { role: "user", content: lastUserText },
-                ]);
-                if (focused.text?.trim()) {
-                  console.info("[runAiAgent] discovery → present_product (CRM)", {
-                    orgId,
-                    threadId,
-                    productId: strong.id,
-                    productName: strong.name,
-                  });
-                  return {
-                    reply: focused.text.trim(),
-                    actions: ["present_product", "product_focus_from_discovery"],
-                  };
-                }
-              } catch (err) {
-                console.warn(
-                  "[runAiAgent] reply tras present_product falló; ficha/flujo ya enviados",
-                  err instanceof Error ? err.message : String(err),
-                );
-              }
-              return {
-                reply: obs
-                  ? "¿Qué te gustaría saber de este producto?"
-                  : "¿Qué te gustaría saber del producto o te ayudo a agendarlo?",
-                actions: ["present_product", "product_focus_from_discovery"],
-              };
-            }
-          } catch (err) {
-            console.warn(
-              "[runAiAgent] present_product en discovery falló",
-              err instanceof Error ? err.message : String(err),
-            );
+            return presented;
           }
         }
       }
 
       // SIN CARRUSEL: si no hubo match, continúa al LLM (KB / prompt principal).
-      // Nunca enviar listados masivos de imágenes.
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
