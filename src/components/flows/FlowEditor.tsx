@@ -39,6 +39,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
 
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [contactQuery, setContactQuery] = useState("");
+  const [productQuery, setProductQuery] = useState("");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
 
   const { data: contactsData } = useQuery({
@@ -48,14 +49,40 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
   });
 
   const { data: productsData } = useQuery({
-    queryKey: ["catalogProductsLite"],
-    queryFn: () => listProductsFn({ data: { limit: 100 } }),
+    queryKey: ["catalogProductsLite", "all"],
+    queryFn: async () => {
+      const pageSize = 200;
+      const all: Array<{ id: string; name: string; is_active?: boolean; sku?: string | null }> = [];
+      let offset = 0;
+      // Cargar todas las páginas (antes el Select solo veía los primeros 100)
+      for (let page = 0; page < 50; page++) {
+        const res = (await listProductsFn({ data: { limit: pageSize, offset } })) as {
+          products?: Array<{ id: string; name: string; is_active?: boolean; sku?: string | null }>;
+          hasMore?: boolean;
+        };
+        const batch = res?.products ?? [];
+        all.push(...batch);
+        if (!res?.hasMore || batch.length === 0) break;
+        offset += pageSize;
+      }
+      return { products: all, total: all.length };
+    },
   });
   const catalogProducts = ((productsData as any)?.products ?? []) as Array<{
     id: string;
     name: string;
     is_active?: boolean;
+    sku?: string | null;
   }>;
+  const filteredCatalogProducts = useMemo(() => {
+    const q = productQuery.trim().toLowerCase();
+    if (!q) return catalogProducts;
+    return catalogProducts.filter((p) => {
+      return [p.name, p.sku]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(q));
+    });
+  }, [catalogProducts, productQuery]);
 
   const contacts = (contactsData as any)?.contacts ?? [];
   const filteredContacts = useMemo(() => {
@@ -338,6 +365,12 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
             <div className="space-y-3 rounded-md border p-3">
               <div className="space-y-2">
                 <Label className="text-sm">Producto del catálogo (opcional)</Label>
+                <Input
+                  value={productQuery}
+                  onChange={(e) => setProductQuery(e.target.value)}
+                  placeholder="Buscar producto por nombre o SKU…"
+                  className="h-9 text-sm"
+                />
                 <Select
                   value={productId || "__none__"}
                   onValueChange={(v) => {
@@ -352,17 +385,26 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
                   <SelectTrigger className="h-9 text-sm">
                     <SelectValue placeholder="General (sin producto)" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-72">
                     <SelectItem value="__none__">General (sin producto)</SelectItem>
-                    {catalogProducts.map((p) => (
+                    {filteredCatalogProducts.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
-                        {p.name}{p.is_active === false ? " (inactivo)" : ""}
+                        {p.name}
+                        {p.sku ? ` · ${p.sku}` : ""}
+                        {p.is_active === false ? " (inactivo)" : ""}
                       </SelectItem>
                     ))}
+                    {filteredCatalogProducts.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        Sin coincidencias{catalogProducts.length ? ` (de ${catalogProducts.length} productos)` : ""}.
+                      </div>
+                    )}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Si eliges un producto, este flujo solo aplica cuando el cliente está en ese producto (catálogo o WhatsApp).
+                  {catalogProducts.length
+                    ? `${catalogProducts.length} productos cargados. Si eliges uno, este flujo solo aplica cuando el cliente está en ese producto.`
+                    : "Si eliges un producto, este flujo solo aplica cuando el cliente está en ese producto (catálogo o WhatsApp)."}
                 </p>
               </div>
               {!!productId && (

@@ -13,7 +13,7 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
     z
       .object({
         q: z.string().max(120).optional(),
-        limit: z.number().min(1).max(100).optional(),
+        limit: z.number().min(1).max(500).optional(),
         offset: z.number().min(0).optional(),
       })
       .optional()
