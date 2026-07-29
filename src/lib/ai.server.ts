@@ -2953,13 +2953,25 @@ export async function runAiAgent({
   // Estas frases NO deben disparar una búsqueda de catálogo (ej. "quiero hacer el
   // pedido" no debe buscar "hacer" y traer máquinas de ejercicio). Debe entrar al
   // flujo de pedido manteniendo el contexto del producto elegido.
+  const lastAssistantForOrder =
+    [...visibleChat].reverse().find((m) => m.role === "assistant")?.content?.trim() ?? "";
+  const isAffirmativeShort =
+    /^(si|sí|ok|okay|dale|listo|claro|de acuerdo|vamos|hagamoslo|hagámoslo|si quiero|sí quiero|si por favor|sí por favor|quiero|acepto|confirmo)\.?$/i.test(
+      lastUserText.trim(),
+    );
+  const assistantAskedToSchedule = /\b(agendar|hacer (el |un )?pedido|datos de (env[ií]o|entrega)|procesar (el )?pedido|deseas agendar|quieres agendar|te gustar[ií]a agendar|confirmamos|procedemos|quieres (el |hacer )?pedido|lo agendamos)\b/i.test(
+    lastAssistantForOrder,
+  );
+
   const isOrderIntent =
-    /\b(hacer (el |un |mi )?pedido|el pedido|mi pedido|agendar(lo| el pedido| mi pedido)?|como lo (pido|compro|adquiero|ordeno)|lo (quiero|deseo) (comprar|pedir|llevar)|quiero (comprar|pedir|ordenar|agendar)|deseo (comprar|pedir|hacer (el |un )?pedido|agendar)|me lo llevo|lo llevo|lo compro|finalizar (la )?compra|proceder con (el |la )?(pedido|compra))\b/i.test(
+    /\b(hacer (el |un |mi )?pedido|el pedido|mi pedido|agendar(lo| el pedido| mi pedido| el env[ií]o| mi env[ií]o)?|como lo (pido|compro|adquiero|ordeno)|lo (quiero|deseo) (comprar|pedir|llevar)|quiero (comprar|pedir|ordenar|agendar)|deseo (comprar|pedir|hacer (el |un )?pedido|agendar)|me lo llevo|lo llevo|lo compro|finalizar (la )?compra|proceder con (el |la )?(pedido|compra))\b/i.test(
       lastUserText,
     ) ||
     /\b(quiero ese|quiero esa|lo quiero|la quiero|los quiero|las quiero|me interesa ese|me interesa esa|lo llevo|la llevo|agr[eé]galo|agr[eé]gamelo|a[nñ][aá]delo|a[nñ][aá]demelo)\b/i.test(
       lastUserText,
-    );
+    ) ||
+    // "Sí" después de "¿Deseas agendar el envío?" → entra a pedido
+    (isAffirmativeShort && assistantAskedToSchedule);
 
   const isContextualFollowUp =
     /^(?:si|sí|ok|okay|dale|listo|correcto|ese|esa|este|esta|eso|quiero ese|quiero esa|lo quiero|la quiero|agr[eé]galo|a[nñ][aá]delo)$/i.test(
@@ -2986,11 +2998,22 @@ export async function runAiAgent({
   const startOrderFlow =
     isOrderIntent && !isCollectingOrder && !!(selectedProductForDetails || orderContextProduct);
 
-  const promptMode = isCollectingOrder
+  // Si el cliente acaba de aceptar agendar, marcar collecting_data ya (no esperar a la respuesta)
+  if (startOrderFlow && threadId) {
+    try {
+      await (supabaseAdmin as any)
+        .from("threads")
+        .update({ purchase_intent: "collecting_data" })
+        .eq("id", threadId)
+        .eq("org_id", orgId);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const promptMode = isCollectingOrder || startOrderFlow
     ? "pedido"
-    : startOrderFlow
-      ? "pedido"
-      : focusedProduct && !wantsCatalogBrowse(lastUserText)
+    : focusedProduct && !wantsCatalogBrowse(lastUserText)
         ? "product_focus"
         : selectedProductForDetails
           ? "product_detail"
@@ -3112,7 +3135,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       : promptMode === "product_detail"
       ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la observación del vendedor.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
       : promptMode === "pedido"
-        ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. Interpreta los datos del pedido en cualquier formato.\n3. Pide solo el dato requerido faltante.\n4. Si todos los datos están y el cliente confirma, usa confirm_order.`
+        ? `MODO PEDIDO:\n1. No busques productos nuevos.\n2. En el primer mensaje de datos: lista TODOS los campos del Módulo de Pedidos (plantilla exacta). PROHIBIDO pedir solo nombre/dirección.\n3. Interpreta los datos en cualquier formato.\n4. Si falta un requerido, pide solo ese.\n5. Si todos los datos están y el cliente confirma, usa confirm_order.`
         : catalogCfg
           ? PRODUCT_FLOW_GUIDE +
             `\n\nMODO DESCUBRIMIENTO CATÁLOGO (WhatsApp / sin producto en foco):\n1. Si el cliente menciona un producto por nombre, SKU o características, BÚSCALO con search_products o present_product.\n2. Si lo encuentras en el catálogo, USA present_product para enfocarlo (activa ficha + flujo inicial del producto).\n3. Si NO está en el catálogo, responde con la BASE DE CONOCIMIENTO y el prompt principal. No inventes un producto del catálogo.`
@@ -3132,8 +3155,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   }
 
   const orderFields = orderFieldsData ?? [];
+  const orderFieldsList = orderFields
+    .map((f: any) => `* ${f.name}${f.is_required ? "" : " (opcional)"}`)
+    .join("\n");
   const orderFieldsText = orderFields.length
-    ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si deseas agendar o hacer el pedido.\n2. Si el cliente dice SÍ, confirma o indica que quiere continuar, envía EXACTAMENTE este mensaje para pedir sus datos:\n"Para agendar su pedido por favor indíqueme:\n${orderFields.map((f: any) => `* ${f.name}${f.is_required ? "" : " (opcional)"}`).join("\n")}"\n3. INTERPRETA LOS DATOS EN CUALQUIER FORMATO: el cliente puede enviarlos con etiquetas ("Nombre: Juan"), separados por "/" o por comas, o cada dato en una línea distinta sin rótulos. Mapea cada valor al campo correcto sin importar el formato y NO le pidas que los reescriba.\n4. Si después de interpretar falta algún dato REQUERIDO, pide ÚNICAMENTE el dato que falta, de forma breve y cortés, una sola pregunta por mensaje, y repite solo hasta que el cliente entregue todos los datos requeridos. No avances ni confirma mientras falten datos requeridos.\n5. SIEMPRE incluye en el form_data el PRODUCTO que el cliente está comprando (nombre/referencia del producto que se venía conversando o que eligió) y su VALOR/precio. Si el cliente no mencionó el producto explícitamente, use el último producto mostrado en la conversación. Usa las claves "Producto" y "Valor".\n6. Cuando tengas TODOS los datos requeridos (incluido Producto y Cantidad), muestra un resumen claro con el producto, valor y datos del cliente, y pregunta: "¿La información es correcta para confirmar su pedido?"\n7. SOLO cuando el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON (incluido Producto y Valor). NO digas "pedido registrado" ni confirma el pedido si no ejecutas confirm_order.\n8. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no se puede considerar el pedido confirmado.\n9. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso".`
+    ? `\n\n=== RECOPILACIÓN DE PEDIDOS (OBLIGATORIO) ===\n1. Detecta intención de compra y pregunta si deseas agendar o hacer el pedido.\n2. Si el cliente dice SÍ / confirma / quiere agendar, envía EXACTAMENTE este mensaje con TODOS los campos (PROHIBIDO inventar un subconjunto como solo nombre y dirección):\n"Para agendar su pedido por favor indíqueme:\n${orderFieldsList}"\n3. INTERPRETA LOS DATOS EN CUALQUIER FORMATO: el cliente puede enviarlos con etiquetas ("Nombre: Juan"), separados por "/" o por comas, o cada dato en una línea distinta sin rótulos. Mapea cada valor al campo correcto sin importar el formato y NO le pidas que los reescriba.\n4. Si después de interpretar falta algún dato REQUERIDO, pide ÚNICAMENTE el dato que falta, de forma breve y cortés, una sola pregunta por mensaje, y repite solo hasta que el cliente entregue todos los datos requeridos. No avances ni confirma mientras falten datos requeridos.\n5. SIEMPRE incluye en el form_data el PRODUCTO que el cliente está comprando (nombre/referencia del producto que se venía conversando o que eligió) y su VALOR/precio. Si el cliente no mencionó el producto explícitamente, use el último producto mostrado en la conversación. Usa las claves "Producto" y "Valor".\n6. Cuando tengas TODOS los datos requeridos (incluido Producto y Cantidad), muestra un resumen claro con el producto, valor y datos del cliente, y pregunta: "¿La información es correcta para confirmar su pedido?"\n7. SOLO cuando el cliente confirma explícitamente, ejecuta la herramienta confirm_order con form_data como JSON (incluido Producto y Valor). NO digas "pedido registrado" ni confirma el pedido si no ejecutas confirm_order.\n8. El único mecanismo válido para guardar el pedido en el sistema es llamar a la herramienta confirm_order. Si no la ejecutas, no se puede considerar el pedido confirmado.\n9. Después de ejecutar confirm_order, responde algo como: "Pedido registrado correctamente. Gracias, su pedido está en proceso".`
     : "";
 
   // En product_focus: NO cargar base de conocimiento / fuentes (evita mezclar forros, tarifas, etc.)

@@ -38,7 +38,8 @@ export function clipIdentityPrompt(raw: string, maxChars = 1200): string {
 const COMPACT_RULES = `=== REGLAS (OBLIGATORIO) ===
 - CONTEXTO CONSOLIDADO tiene prioridad máxima. No contradigas ni repitas preguntas de datos ya listados.
 - Si hay CONOCIMIENTO DEL TURNO con precios/tarifas, responde el precio YA. Prohibido: "no lo tengo a la mano", "lo verifico".
-- Máximo UNA pregunta por mensaje. Respuestas breves (≤3 líneas salvo que pidan detalle).
+- Máximo UNA pregunta por mensaje (EXCEPTO al pedir datos del pedido: ahí lista TODOS los campos del módulo de una vez).
+- Respuestas breves (≤3 líneas salvo que pidan detalle o estés listando campos de pedido).
 - No te presentes si ya hay historial. No inventes datos.
 - Pedido confirmado solo con la herramienta confirm_order.`;
 
@@ -46,8 +47,9 @@ function compactFlowGuide(promptMode: string, needsPrice: boolean): string {
   if (promptMode === "pedido") {
     return `=== GUÍA (pedido) ===
 1. No busques productos nuevos.
-2. Pide solo el dato faltante (una pregunta).
-3. Si el cliente confirma y tienes todo, ejecuta confirm_order.`;
+2. En el PRIMER pedido de datos: copia la plantilla con TODOS los campos del Módulo de Pedidos. PROHIBIDO pedir solo nombre/dirección u omitir campos.
+3. Si ya faltan datos puntuales, pide solo el faltante.
+4. Si el cliente confirma y tienes todo, ejecuta confirm_order.`;
   }
   if (needsPrice) {
     return `=== GUÍA (cotizar) ===
@@ -183,7 +185,7 @@ export function buildCompactSystemPrompt(p: SystemPromptParts): string {
       `\n\n${COMPACT_RULES}`,
       `\n\n${compactFlowGuide(p.promptMode, false)}`,
       includeOrder ? p.orderStateText : "",
-      includeOrder ? clipBlock(p.orderFieldsText, 1200) : "",
+      includeOrder ? clipBlock(p.orderFieldsText, 4500) : "",
     ]
       .filter(Boolean)
       .join("");
@@ -203,7 +205,7 @@ export function buildCompactSystemPrompt(p: SystemPromptParts): string {
     knowledgeTurn,
     `\n\n${compactFlowGuide(p.promptMode, p.needsPriceContext)}`,
     includeOrder ? p.orderStateText : "",
-    includeOrder ? clipBlock(p.orderFieldsText, 1500) : "",
+    includeOrder ? clipBlock(p.orderFieldsText, 4500) : "",
     includeFecha ? `\n\nfecha: ${p.fechaLine}` : "",
     includeRecentProducts ? p.recentProductsBlock : "",
   ]
