@@ -100,37 +100,94 @@ function ContactsPage() {
       toast.info("No hay contactos para exportar");
       return;
     }
-    const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const header = [
-      "Nombre",
-      "WhatsApp ID",
-      "Teléfono",
-      "Estado",
-      "Mensajes",
-      "Productos consultados",
-      "Preguntas",
-      "Actualizado",
-    ];
-    const rows = filtered.map((c) =>
-      [
-        escape(c.display_name || ""),
-        escape(c.wa_id || ""),
-        escape(c.phone || ""),
-        escape(c.purchased ? "Compró" : "No compró"),
-        escape(c.message_count ?? 0),
-        escape(c.asked_products || ""),
-        escape(c.asked_questions || ""),
-        escape(new Date(c.updated_at).toLocaleString()),
-      ].join(","),
-    );
-    const csv = "\ufeff" + [header.map(escape).join(","), ...rows].join("\r\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+
+    const allLines = (raw: string | null | undefined) =>
+      String(raw || "")
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+    // Escape HTML for cell content
+    const h = (v: unknown) =>
+      String(v ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    // Teléfonos/IDs largos: formato texto para que Excel no use 5,73E+11
+    const phoneCell = (v: string | null | undefined) => {
+      const s = String(v || "").trim();
+      if (!s) return "—";
+      return `<td style="mso-number-format:'\\@';">${h(s)}</td>`;
+    };
+
+    const listCell = (raw: string | null | undefined) => {
+      const lines = allLines(raw);
+      if (!lines.length) return "<td>—</td>";
+      // Todas las consultas, una por línea (como en pantalla, sin cortar)
+      return `<td>${lines.map((l) => h(l)).join("<br/>")}</td>`;
+    };
+
+    const body = filtered
+      .map((c) => {
+        const nombre = h(c.display_name || c.wa_id || "—");
+        const estado = c.purchased ? "Compró" : "No compró";
+        const actualizado = h(new Date(c.updated_at).toLocaleString("es-CO"));
+        return `<tr>
+          <td>${nombre}</td>
+          ${phoneCell(c.wa_id)}
+          ${phoneCell(c.phone)}
+          <td>${h(estado)}</td>
+          <td style="mso-number-format:'0';">${c.message_count ?? 0}</td>
+          ${listCell(c.asked_products)}
+          ${listCell(c.asked_questions)}
+          <td>${actualizado}</td>
+        </tr>`;
+      })
+      .join("");
+
+    const html = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head>
+<meta charset="utf-8"/>
+<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
+<x:Name>Contactos</x:Name>
+<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+</head>
+<body>
+<table border="1">
+<thead>
+<tr>
+  <th>Nombre</th>
+  <th>WhatsApp ID</th>
+  <th>Teléfono</th>
+  <th>Estado</th>
+  <th>Mensajes</th>
+  <th>Productos consultados</th>
+  <th>Preguntas</th>
+  <th>Actualizado</th>
+</tr>
+</thead>
+<tbody>
+${body}
+</tbody>
+</table>
+</body>
+</html>`;
+
+    const blob = new Blob(["\ufeff" + html], {
+      type: "application/vnd.ms-excel;charset=utf-8;",
+    });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.setAttribute("download", `Contactos_${new Date().toISOString().split("T")[0]}.csv`);
+    link.setAttribute("download", `Contactos_${new Date().toISOString().split("T")[0]}.xls`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+    toast.success(`Exportados ${filtered.length} contactos`);
   }
 
   return (
