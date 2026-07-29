@@ -315,13 +315,22 @@ export async function focusStoreProduct(opts: {
 
   try {
     const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
-    await startProductEntryFlow({
+    const flowStart = await startProductEntryFlow({
       orgId,
       contactId: opts.contactId,
       productId: String(product.id),
     });
-  } catch {
-    /* no bloquear foco */
+    if (!flowStart.started) {
+      console.info("[focusStoreProduct] flujo producto no arrancó", {
+        productId: product.id,
+        message: flowStart.message,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[focusStoreProduct] startProductEntryFlow",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 
   let introSent = false;
@@ -423,13 +432,23 @@ export async function presentProductToThread(opts: {
 
   try {
     const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
-    await startProductEntryFlow({
+    const flowStart = await startProductEntryFlow({
       orgId: opts.orgId,
       contactId: opts.contactId,
       productId: String(product.id),
     });
-  } catch {
-    /* ignore */
+    if (!flowStart.started) {
+      console.info("[presentProductToThread] flujo producto no arrancó", {
+        productId: product.id,
+        contactId: opts.contactId || null,
+        message: flowStart.message,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[presentProductToThread] startProductEntryFlow",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 
   const now = Date.now();

@@ -2110,62 +2110,59 @@ export async function executeToolCall(
       }
     }
   } else if (name === "search_products") {
-    if (!catalogCfg) {
-      result = "Catálogo no configurado.";
-      details = "Intentó buscar en el catálogo pero no hay integración activa.";
-    } else {
-      try {
-        const q = (args.query || "").toString().trim();
-        const limit = Math.min(Math.max(Number(args.limit) || 6, 1), 6);
-
-        const normalizedQuery = normalizeCatalogQuery(q) || q.toLowerCase().trim();
-        const storedState = await loadCatalogSearchState(ctx);
-        const storedProductsAreComplete =
-          storedState.products.length >= limit &&
-          storedState.products.slice(0, limit).every((product) => product?.id && product?.name);
-
-        const canReuse =
-          normalizedQuery.length > 0 &&
-          normalizeCatalogQuery(storedState.query) === normalizedQuery &&
-          storedProductsAreComplete;
-
-        const products = canReuse
-          ? storedState.products.slice(0, limit)
-          : await searchCatalog(catalogCfg, q, limit);
-
-        ctx.lastProducts = products;
-        ctx.resolvedCatalogQuery = q;
-        await saveFocusedProduct(ctx, null); // Reset focused product on new search
-
-        if (q && products.length) {
-          await saveCatalogSearchState(
-            ctx,
-            q,
-            products.map((product) => product.id),
-          );
-        }
-
-        if (!products.length) {
-          result = JSON.stringify({
-            found: 0,
-            message:
-              "No hay coincidencias para esa búsqueda. Intenta con otros términos o pide recomendaciones.",
-            products: [],
+    // Ya no disparamos carrusel: si hay producto CRM, present_product; si no, lista texto corta.
+    try {
+      const q = (args.query || "").toString().trim();
+      const strong = await findStrongProductMatch(orgId, catalogCfg ?? null, q);
+      if (strong?.id && ctx.threadId) {
+        const { presentProductToThread } = await import("@/lib/store-product-chat.server");
+        const presented = await presentProductToThread({
+          orgId,
+          threadId: ctx.threadId,
+          contactId: ctx.contactId || null,
+          productId: String(strong.id),
+          sessionId: ctx.sessionId || null,
+          chatId: ctx.chatId || null,
+        });
+        if (presented) {
+          await saveFocusedProduct(ctx, {
+            ...(presented.product as any),
+            ai_observation: (presented.product as any)?.ai_observation ?? strong.ai_observation ?? null,
           });
+          const newObs = String((presented.product as any)?.ai_observation || strong.ai_observation || "").trim();
+          result = [
+            `CAMBIO DE PRODUCTO ACTIVO: ahora es "${presented.productName}" (id: ${presented.productId}).`,
+            `Ficha/flujo enviados. Descarta listados de catálogo.`,
+            `Responde SOLO con la ficha + OBSERVACIÓN de ESTE producto.`,
+            newObs
+              ? `\nOBSERVACIÓN DEL VENDEDOR (PRODUCTO ACTUAL — úsala YA):\n${newObs.slice(0, 4000)}`
+              : "",
+          ].join("\n");
+          details = `search_products→present_product: ${presented.productId}`;
         } else {
-          result = JSON.stringify({
-            found: products.length,
-            products: mapProductsForTool(products),
-            hint: "Si el cliente elige por descripción (ej. 'el de 6 niveles'), usa product_reference con esa frase en send_product_image.",
-          });
+          result = `Encontré "${strong.name}" (id: ${strong.id}) pero no pude presentarlo. Usa present_product con ese id.`;
+          details = result;
         }
-        details = canReuse
-          ? `Reutilizó búsqueda: "${q}" (${products.length} resultados)`
-          : `Buscó productos: "${q}" (${products.length} resultados)`;
-      } catch (e) {
-        result = `Error al buscar en catálogo: ${(e as Error).message}`;
-        details = result;
+      } else if (!catalogCfg) {
+        result = "No encontré ese producto en el catálogo CRM. Responde con base de conocimiento.";
+        details = "search_products sin match local ni catálogo";
+      } else {
+        const products = await searchCatalog(catalogCfg, q, 5);
+        ctx.lastProducts = products;
+        if (!products.length) {
+          result = "Sin resultados. Responde con base de conocimiento o pide el nombre exacto.";
+        } else {
+          result =
+            "Resultados (NO envíes imágenes; usa present_product con el id del que coincida):\n" +
+            products
+              .map((p, i) => `${i + 1}. ${p.name} (id: ${p.id})${p.sku ? ` SKU:${p.sku}` : ""}`)
+              .join("\n");
+        }
+        details = `search_products texto: ${products?.length ?? 0}`;
       }
+    } catch (e) {
+      result = `Error buscando productos: ${(e as Error).message}`;
+      details = result;
     }
   } else if (name === "send_product_image" || name === "send_product_video") {
     if (!catalogCfg || !sessionId || !chatId) {
@@ -2672,25 +2669,13 @@ async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
 }
 
 /* ============================================================
-   CARRUSEL DETERMINÍSTICO — constantes y helper
+   Product discovery helpers (sin carrusel)
    ============================================================ */
-const MAX_CAROUSEL = 6;
-const CAROUSEL_PROMPT_TEXT = "👉 Responde con el número del producto que más te guste.";
-
-function buildCarouselCaption(index: number, product: { name: string; price?: string | number | null }): string {
-  const lines: string[] = [`#${index}`, product.name];
-  const rawPrice = product.price;
-  if (rawPrice != null && String(rawPrice).trim() !== "") {
-    const numeric = typeof rawPrice === "number" ? rawPrice : Number(rawPrice);
-    if (Number.isFinite(numeric)) lines.push(`$${numeric.toLocaleString("es-CO")}`);
-    else lines.push(`$${rawPrice}`);
-  }
-  return lines.join("\n");
-}
 
 /**
- * Busca un match fuerte en productos del CRM (nombre / SKU / search_keywords).
- * Prioriza Observaciones/prompts por producto sobre el carrusel masivo.
+ * Busca el mejor producto LOCAL (CRM / Observaciones).
+ * Si hay CUALQUIER hit local, devuelve el mejor — no exige match “exacto”.
+ * Así nunca caemos a listados masivos de imágenes cuando el producto está en el CRM.
  */
 async function findStrongProductMatch(
   orgId: string,
@@ -2710,8 +2695,58 @@ async function findStrongProductMatch(
       .replace(/\s+/g, " ")
       .trim();
   const qn = norm(qSafe);
+  const tokens = qn
+    .split(/\s+/)
+    .filter((t) => t.length >= 3)
+    .slice(0, 6);
+
+  const mapRow = (r: any) => ({
+    id: String(r.id),
+    name: String(r.name || ""),
+    description: r.description ?? undefined,
+    price: r.price ?? undefined,
+    stock: r.stock ?? null,
+    image_url: r.image_url ?? undefined,
+    video_url: r.video_url ?? undefined,
+    sku: r.sku ?? undefined,
+    badge: r.badge ?? undefined,
+    category: r.category ?? undefined,
+    ai_observation: r.ai_observation ?? null,
+    search_keywords: r.search_keywords ?? null,
+  });
+
+  const scoreLocal = (p: ReturnType<typeof mapRow>) => {
+    let score = 0;
+    const nameN = norm(p.name);
+    const skuN = norm(String(p.sku || ""));
+    const kwN = norm(String(p.search_keywords || "").replace(/[,;|]+/g, " "));
+    if (nameN === qn) score += 100;
+    if (skuN && skuN === qn) score += 95;
+    if (nameN.includes(qn) || qn.includes(nameN)) score += 50;
+    if (kwN.includes(qn)) score += 60;
+    for (const t of tokens) {
+      if (nameN.includes(t)) score += 18;
+      if (kwN.includes(t)) score += 24;
+      if (skuN.includes(t)) score += 20;
+    }
+    if (p.ai_observation) score += 5;
+    return score;
+  };
 
   try {
+    const orParts = [
+      `name.ilike.%${qSafe}%`,
+      `sku.ilike.%${qSafe}%`,
+      `search_keywords.ilike.%${qSafe}%`,
+      ...tokens.flatMap((t) => [
+        `name.ilike.%${t}%`,
+        `sku.ilike.%${t}%`,
+        `search_keywords.ilike.%${t}%`,
+      ]),
+    ];
+    // dedupe
+    const orFilter = [...new Set(orParts)].join(",");
+
     let hits: any[] = [];
     const res = await (supabaseAdmin as any)
       .from("products")
@@ -2720,9 +2755,10 @@ async function findStrongProductMatch(
       )
       .eq("org_id", orgId)
       .eq("is_active", true)
-      .or(`name.ilike.%${qSafe}%,sku.ilike.%${qSafe}%,search_keywords.ilike.%${qSafe}%`)
-      .limit(8);
+      .or(orFilter)
+      .limit(20);
     if (res.error && (String(res.error.message || "").includes("search_keywords") || res.error.code === "42703")) {
+      const legacyOr = [...new Set([`name.ilike.%${qSafe}%`, `sku.ilike.%${qSafe}%`, ...tokens.flatMap((t) => [`name.ilike.%${t}%`, `sku.ilike.%${t}%`])])].join(",");
       const legacy = await (supabaseAdmin as any)
         .from("products")
         .select(
@@ -2730,47 +2766,39 @@ async function findStrongProductMatch(
         )
         .eq("org_id", orgId)
         .eq("is_active", true)
-        .or(`name.ilike.%${qSafe}%,sku.ilike.%${qSafe}%`)
-        .limit(8);
+        .or(legacyOr)
+        .limit(20);
       hits = legacy.data || [];
     } else {
       hits = res.data || [];
     }
 
     if (hits.length) {
-      const mapped = hits.map((r: any) => ({
-        id: String(r.id),
-        name: String(r.name || ""),
-        description: r.description ?? undefined,
-        price: r.price ?? undefined,
-        stock: r.stock ?? null,
-        image_url: r.image_url ?? undefined,
-        video_url: r.video_url ?? undefined,
-        sku: r.sku ?? undefined,
-        badge: r.badge ?? undefined,
-        category: r.category ?? undefined,
-        ai_observation: r.ai_observation ?? null,
-        search_keywords: r.search_keywords ?? null,
-      }));
-
-      const exactName = mapped.find((p) => norm(p.name) === qn);
-      if (exactName) return exactName;
-
-      const exactSku = mapped.find((p) => p.sku && norm(String(p.sku)) === qn);
-      if (exactSku) return exactSku;
-
-      const exactKw = mapped.find((p) =>
-        String(p.search_keywords || "")
-          .split(/[,;\n|]+/)
-          .map((x) => norm(x))
-          .filter(Boolean)
-          .some((k) => k === qn || (k.length >= 4 && (qn.includes(k) || k.includes(qn)))),
-      );
-      if (exactKw) return exactKw;
-
-      const fromRef = resolveProductFromReference(qSafe, mapped);
-      if (fromRef) return fromRef as any;
-      if (mapped.length === 1) return mapped[0];
+      const mapped = hits.map(mapRow);
+      const ranked = mapped
+        .map((p) => ({ p, score: scoreLocal(p) }))
+        .sort((a, b) => b.score - a.score);
+      const best = ranked[0];
+      if (best && best.score >= 18) {
+        console.info("[findStrongProductMatch] local hit", {
+          orgId,
+          query: qSafe,
+          productId: best.p.id,
+          productName: best.p.name,
+          score: best.score,
+          candidates: ranked.length,
+        });
+        return best.p;
+      }
+      // Cualquier hit local gana al carrusel externo
+      if (best) {
+        console.info("[findStrongProductMatch] local fallback first hit", {
+          orgId,
+          productId: best.p.id,
+          score: best.score,
+        });
+        return best.p;
+      }
     }
   } catch (err) {
     console.warn(
@@ -2779,13 +2807,14 @@ async function findStrongProductMatch(
     );
   }
 
+  // Solo catálogo externo si NO hay producto local
   if (!catalogCfg) return null;
   try {
     const products = await searchCatalog(catalogCfg, qSafe, 8);
     if (!products.length) return null;
-    if (products.length === 1) return products[0] as any;
     const fromRef = resolveProductFromReference(qSafe, products);
     if (fromRef) return fromRef as any;
+    if (products.length === 1) return products[0] as any;
   } catch {
     /* ignore */
   }
@@ -3182,15 +3211,28 @@ export async function runAiAgent({
     promptMode === "pedido"
       ? CRM_TOOLS
       : promptMode === "product_focus"
-        ? // Sin transfer_to_human; sí list_flows/activate_flow del producto
+        ? // Con producto en foco: CRM + present_product/video. SIN search masivo ni spam de imágenes.
           [
             ...CRM_TOOLS.filter((t) => t.function?.name !== "transfer_to_human"),
-            ...CATALOG_TOOLS,
+            ...CATALOG_TOOLS.filter(
+              (t) =>
+                t.function?.name === "present_product" ||
+                t.function?.name === "send_product_video" ||
+                t.function?.name === "send_product_image",
+            ),
           ]
         : promptMode === "product_detail"
           ? CRM_TOOLS.filter((t) => t.function?.name !== "transfer_to_human")
-          : catalogCfg
-            ? [...CRM_TOOLS, ...CATALOG_TOOLS]
+          : // Modo general: priorizar present_product; search solo para listar texto (no carrusel)
+            catalogCfg
+            ? [
+                ...CRM_TOOLS,
+                ...CATALOG_TOOLS.filter(
+                  (t) =>
+                    t.function?.name === "present_product" ||
+                    t.function?.name === "search_products",
+                ),
+              ]
             : CRM_TOOLS;
 
   const PRODUCT_FLOW_GUIDE = `
@@ -3205,12 +3247,12 @@ MODO A — RECOPILANDO DATOS DEL PEDIDO:
 
 MODO B — DESCUBRIENDO PRODUCTOS:
 0. Si el cliente nombra un producto concreto (nombre, SKU o palabras clave), PRIORIZA present_product. El sistema enfoca ese producto, envía su ficha/flujo e inyecta la observación.
-1. NO envíes un carrusel masivo de imágenes si ya hay un producto claro. El carrusel solo aplica cuando hay varias opciones ambiguas.
+1. PROHIBIDO enviar carruseles o muchas imágenes de catálogo. Nunca uses listados masivos.
 2. Si el sistema YA presentó un producto, responde con su observación/ficha. No vuelvas a search_products en ese turno.
 2b. Si el cliente pide información clara de UN producto (nombre o SKU), usa present_product.
-3. Si hay varias opciones sin match claro, puedes usar search_products y send_product_image (pocas, numeradas).
-4. Después, invita a elegir o preguntar. Evita listados largos de texto.
-5. Si el cliente elige por descripción (ej. "el de 6 niveles"), usa present_product o send_product_image con product_reference.
+3. Si search_products te da una lista en texto, elige el id correcto y llama present_product. NO envíes send_product_image de varios productos.
+4. Después, invita a preguntar o agendar. Evita listados largos de texto.
+5. Si el cliente elige por descripción (ej. "el de 6 niveles"), usa present_product con product_reference o el id.
 6. SI TIENES INFORMACIÓN DE UN VIDEO DISPONIBLE para el producto actual:
    a. Menciona que tienes video disponible
    b. ESPERA la respuesta del cliente.
@@ -3808,210 +3850,184 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   }
 
   if (!isCollectingOrder && catalogCfg && wantsMoreProducts && storedCatalogState.query) {
-    const allMatches = await searchCatalog(catalogCfg, storedCatalogState.query, 60);
-    const shownIds = new Set(storedCatalogState.shownIds);
-    const newProducts = allMatches.filter((p) => !shownIds.has(p.id)).slice(0, 6);
-
-    if (!newProducts.length) {
-      return {
-        reply: "Lo siento, por el momento no tenemos más.",
-        actions: ["catalog_no_more_results"],
-      };
-    }
-
-    ctx.lastProducts = newProducts;
-    await saveCatalogSearchState(ctx, storedCatalogState.query, [
-      ...shownIds,
-      ...newProducts.map((product) => product.id),
-    ]);
-
-    for (let i = 0; i < newProducts.length; i++) {
-      const product = newProducts[i];
-      const caption = buildCarouselCaption(i + 1, product);
-      if (product.image_url) {
-        const imageExec = await executeToolCall(
-          {
-            id: `more_img_${product.id}`,
-            function: {
-              name: "send_product_image",
-              arguments: JSON.stringify({
-                product_id: product.id,
-                caption,
-              }),
-            },
-          },
-          ctx,
-        );
-        actions.push(imageExec.name);
-        if (/enviado al cliente/i.test(imageExec.result)) {
-          deliveredProductMedia = true;
-        }
-      } else {
-        // Sin imagen: enviar como texto numerado para que el cliente vea todos los resultados
-        await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
-        actions.push("send_product_text");
-        deliveredProductMedia = true;
+    // YA NO enviamos más imágenes en carrusel. Pedimos aclaración o presentamos el mejor match.
+    const strongMore = await findStrongProductMatch(orgId, catalogCfg, storedCatalogState.query);
+    if (strongMore?.id) {
+      try {
+        const { presentProductToThread } = await import("@/lib/store-product-chat.server");
+        await presentProductToThread({
+          orgId,
+          threadId,
+          contactId: contactId || null,
+          productId: String(strongMore.id),
+          sessionId: sessionId || null,
+          chatId: chatId || null,
+        });
+        await saveFocusedProduct(ctx, strongMore as any);
+        return {
+          reply: `Te muestro ${strongMore.name}. ¿Qué te gustaría saber o lo agendamos?`,
+          actions: ["present_product", "more_products_as_present"],
+        };
+      } catch {
+        /* fallthrough */
       }
     }
-
     return {
-      reply: CAROUSEL_PROMPT_TEXT,
-      actions,
+      reply:
+        "¿Me das el nombre o modelo exacto del producto que buscas? Así te lo presento con su información completa.",
+      actions: ["catalog_clarify_instead_of_carousel"],
     };
   }
 
-  // ── DESCUBRIMIENTO: producto concreto → present_product; ambiguo → carrusel corto ─
+  // ── DESCUBRIMIENTO: SIEMPRE present_product si hay producto CRM. SIN CARRUSEL. ─
   {
     const normalizedForDiscovery = lastUserText
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
-    const discoveryIntent =
-      !isCollectingOrder &&
-      !wantsMoreProducts &&
-      !mediaRequest &&
-      !(selectedProductForDetails && isProductDetailQuestion(detailQuestionText)) &&
-      (currentCatalogQuery.length >= 3 || lastUserText.trim().length >= 3) &&
-      /\b(busco|buscando|quiero|necesito|tienes|hay|manejan|venden|muestrame|mandame|env[ii]ame|ofrecen|estoy\s+buscando|quisiera\s+ver|info|informaci[oó]n|cu[aá]nto|precio|vale|cuesta)\b/i.test(
+    const trimmedUser = lastUserText.trim();
+    const isGreetingOnly =
+      /^(hola|buenas|buen\s*(dia|tarde|noche)|hey|hi|hello|saludos)[\s!.?]*$/i.test(trimmedUser) ||
+      /^(hola|buenas)[\s,]+(como estas|que tal|buenas)?[\s!.?]*$/i.test(trimmedUser);
+    const hasDiscoveryVerb =
+      /\b(busco|buscando|quiero|necesito|tienes|tiene|tienen|hay|manejan|venden|muestrame|muestra|mandame|env[ii]ame|ofrecen|estoy\s+buscando|quisiera\s+ver|info|informaci[oó]n|cu[aá]nto|precio|vale|cuesta|interesa|interesado|dame|pasame|p[aá]same|modelo|modelos|cat[aá]logo|disponible|disponibles|referencia)\b/i.test(
         normalizedForDiscovery,
       );
+    // Nombre/keywords cortos sin verbo (ej. "AB VERTICAL") — no saludos
+    const looksLikeProductName =
+      !isGreetingOnly &&
+      trimmedUser.split(/\s+/).length <= 6 &&
+      trimmedUser.length >= 3 &&
+      !/^(gracias|ok|okay|dale|listo|si|sí|no)\.?$/i.test(trimmedUser);
+    const discoveryIntent =
+      !isCollectingOrder &&
+      !focusedProduct &&
+      !wantsMoreProducts &&
+      !mediaRequest &&
+      !isGreetingOnly &&
+      !(selectedProductForDetails && isProductDetailQuestion(detailQuestionText)) &&
+      (currentCatalogQuery.length >= 2 || trimmedUser.length >= 2) &&
+      (hasDiscoveryVerb || looksLikeProductName);
 
     if (discoveryIntent) {
-      const searchQ = currentCatalogQuery.length >= 3 ? currentCatalogQuery : lastUserText;
-      const strong = await findStrongProductMatch(orgId, catalogCfg, searchQ);
+      const searchQ = currentCatalogQuery.length >= 2 ? currentCatalogQuery : lastUserText;
+      const looksProductish =
+        hasDiscoveryVerb ||
+        looksLikeProductName ||
+        /\b(ab\s*vertical|jjf|masaje|zapatero|silla|forro|producto|modelo|sku)\b/i.test(
+          normalizedForDiscovery,
+        );
 
-      if (strong?.id) {
-        try {
-          const { presentProductToThread } = await import("@/lib/store-product-chat.server");
-          const presented = await presentProductToThread({
-            orgId,
-            threadId,
-            contactId: contactId || null,
-            productId: String(strong.id),
-            sessionId: sessionId || null,
-            chatId: chatId || null,
-          });
-          await saveFocusedProduct(ctx, {
-            ...(presented?.product || strong),
-            ai_observation:
-              (presented?.product as any)?.ai_observation ?? strong.ai_observation ?? null,
-          } as any);
+      if (looksProductish) {
+        const strong = await findStrongProductMatch(orgId, catalogCfg, searchQ);
 
-          // Flujos del producto para el prompt de respuesta
-          let productFlowsBlock = "";
+        if (strong?.id) {
           try {
-            const { data: pFlows } = await (supabaseAdmin as any)
-              .from("flows")
-              .select("id, name, description, ai_instructions")
-              .eq("org_id", orgId)
-              .eq("product_id", strong.id)
-              .eq("is_active", true)
-              .limit(20);
-            if (pFlows?.length) {
-              productFlowsBlock =
-                `\n\n=== FLUJOS DE ESTE PRODUCTO ===\n` +
-                pFlows
-                  .map((f: any) => {
-                    const note = String(f.ai_instructions || f.description || "")
-                      .replace(/\s+/g, " ")
-                      .trim()
-                      .slice(0, 180);
-                    return `- ${f.name}${note ? `: ${note}` : ""} (id: ${f.id})`;
-                  })
-                  .join("\n");
-            }
-          } catch {
-            /* migración pendiente */
-          }
-
-          const obs = String(
-            (presented?.product as any)?.ai_observation || strong.ai_observation || "",
-          ).trim();
-          const focusSystem = [
-            (cfg.system_prompt as string)?.trim()?.slice(0, 500) ||
-              "Eres un asesor comercial por WhatsApp.",
-            `\n\n=== PRODUCTO EN FOCO ===\n${formatProductObservationBlock(
-              {
-                ...(presented?.product || strong),
-                ai_observation: obs || null,
-              } as any,
-              "PRODUCTO ACTUAL",
-            )}`,
-            productFlowsBlock,
-            `\n\nEl sistema YA envió la ficha/flujo inicial de este producto. Responde breve con la OBSERVACIÓN DEL VENDEDOR. Si pide agendar, usa el módulo de pedidos. No envíes más imágenes de catálogo ni listados.`,
-          ].join("");
-
-          try {
-            const focused = await callAiProvider(cfg, [
-              { role: "system", content: focusSystem },
-              ...visibleChat.slice(-6),
-              { role: "user", content: lastUserText },
-            ]);
-            if (focused.text?.trim()) {
-              console.info("[runAiAgent] discovery → present_product (match fuerte)", {
-                orgId,
-                threadId,
+            const { presentProductToThread } = await import("@/lib/store-product-chat.server");
+            const presented = await presentProductToThread({
+              orgId,
+              threadId,
+              contactId: contactId || null,
+              productId: String(strong.id),
+              sessionId: sessionId || null,
+              chatId: chatId || null,
+            });
+            if (!presented) {
+              console.warn("[runAiAgent] presentProductToThread devolvió null", {
                 productId: strong.id,
-                productName: strong.name,
               });
+            } else {
+              await saveFocusedProduct(ctx, {
+                ...(presented.product || strong),
+                ai_observation:
+                  (presented.product as any)?.ai_observation ?? strong.ai_observation ?? null,
+              } as any);
+
+              let productFlowsBlock = "";
+              try {
+                const { data: pFlows } = await (supabaseAdmin as any)
+                  .from("flows")
+                  .select("id, name, description, ai_instructions, is_product_entry")
+                  .eq("org_id", orgId)
+                  .eq("product_id", strong.id)
+                  .eq("is_active", true)
+                  .limit(20);
+                if (pFlows?.length) {
+                  productFlowsBlock =
+                    `\n\n=== FLUJOS DE ESTE PRODUCTO ===\n` +
+                    pFlows
+                      .map((f: any) => {
+                        const note = String(f.ai_instructions || f.description || "")
+                          .replace(/\s+/g, " ")
+                          .trim()
+                          .slice(0, 180);
+                        return `- ${f.name}${f.is_product_entry ? " [inicial]" : ""}${note ? `: ${note}` : ""} (id: ${f.id})`;
+                      })
+                      .join("\n");
+                }
+              } catch {
+                /* migración pendiente */
+              }
+
+              const obs = String(
+                (presented.product as any)?.ai_observation || strong.ai_observation || "",
+              ).trim();
+              const focusSystem = [
+                (cfg.system_prompt as string)?.trim()?.slice(0, 500) ||
+                  "Eres un asesor comercial por WhatsApp.",
+                `\n\n=== PRODUCTO EN FOCO ===\n${formatProductObservationBlock(
+                  {
+                    ...(presented.product || strong),
+                    ai_observation: obs || null,
+                  } as any,
+                  "PRODUCTO ACTUAL",
+                )}`,
+                productFlowsBlock,
+                `\n\nEl sistema YA envió la ficha y el flujo del producto. Responde con la OBSERVACIÓN DEL VENDEDOR. PROHIBIDO enviar listados/carruseles/imágenes de otros productos.`,
+              ].join("");
+
+              try {
+                const focused = await callAiProvider(cfg, [
+                  { role: "system", content: focusSystem },
+                  ...visibleChat.slice(-6),
+                  { role: "user", content: lastUserText },
+                ]);
+                if (focused.text?.trim()) {
+                  console.info("[runAiAgent] discovery → present_product (CRM)", {
+                    orgId,
+                    threadId,
+                    productId: strong.id,
+                    productName: strong.name,
+                  });
+                  return {
+                    reply: focused.text.trim(),
+                    actions: ["present_product", "product_focus_from_discovery"],
+                  };
+                }
+              } catch (err) {
+                console.warn(
+                  "[runAiAgent] reply tras present_product falló; ficha/flujo ya enviados",
+                  err instanceof Error ? err.message : String(err),
+                );
+              }
               return {
-                reply: focused.text.trim(),
+                reply: obs
+                  ? "¿Qué te gustaría saber de este producto?"
+                  : "¿Qué te gustaría saber del producto o te ayudo a agendarlo?",
                 actions: ["present_product", "product_focus_from_discovery"],
               };
             }
           } catch (err) {
             console.warn(
-              "[runAiAgent] reply tras present_product falló; ficha ya enviada",
+              "[runAiAgent] present_product en discovery falló",
               err instanceof Error ? err.message : String(err),
             );
           }
-          return {
-            reply: obs
-              ? "¿Qué te gustaría saber de este producto?"
-              : "¿Qué te gustaría saber del producto o te ayudo a agendarlo?",
-            actions: ["present_product", "product_focus_from_discovery"],
-          };
-        } catch (err) {
-          console.warn(
-            "[runAiAgent] present_product en discovery falló; se intenta carrusel corto",
-            err instanceof Error ? err.message : String(err),
-          );
         }
       }
 
-      // Ambiguo (varios productos, sin match claro): carrusel corto (máx. 6), no 30
-      if (catalogCfg) {
-        const products = await searchCatalog(catalogCfg, searchQ, MAX_CAROUSEL);
-        if (products.length >= 2) {
-          ctx.lastProducts = products;
-          await saveCatalogSearchState(
-            ctx,
-            searchQ,
-            products.map((p) => p.id),
-          );
-          for (let i = 0; i < products.length; i++) {
-            const caption = buildCarouselCaption(i + 1, products[i]);
-            if (products[i].image_url) {
-              const imgExec = await executeToolCall(
-                {
-                  id: `disc_img_${products[i].id}`,
-                  function: {
-                    name: "send_product_image",
-                    arguments: JSON.stringify({ product_id: products[i].id, caption }),
-                  },
-                },
-                ctx,
-              );
-              actions.push(imgExec.name);
-            } else {
-              await queueOutgoingText(ctx, `${caption}\n_Sin imagen disponible_ 📦`);
-              actions.push("send_product_text");
-            }
-          }
-          return { reply: CAROUSEL_PROMPT_TEXT, actions: [...actions, "carousel_discovery"] };
-        }
-      }
-      // 0–1 sin present → continúa al LLM
+      // SIN CARRUSEL: si no hubo match, continúa al LLM (KB / prompt principal).
+      // Nunca enviar listados masivos de imágenes.
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -4506,8 +4522,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
     }
   }
 
-  // Loop de hasta 6 rondas para encadenar tool-calls: search_catalog → send_product → respuesta final
-  // Aumentamos a 6 rondas para dar margen a encadenar múltiples llamadas a send_product_image.
+  // Loop de tool-calls (present_product / CRM). Sin carrusel multi-imagen.
   const notifyRetryMessage = async (attempt: number) => {
     if (!sessionId || !chatId) return;
 

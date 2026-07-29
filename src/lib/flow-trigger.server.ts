@@ -215,6 +215,7 @@ export async function startFlowForContact(params: {
 
 /**
  * Arranca el flujo marcado como inicial (is_product_entry) para un producto.
+ * Si no hay “flujo inicial”, usa el primer flujo activo ligado a ese product_id.
  * No exige ai_selectable: es automático al enfocar el producto.
  */
 export async function startProductEntryFlow(params: {
@@ -225,26 +226,62 @@ export async function startProductEntryFlow(params: {
   const { orgId, productId } = params;
   const contactId = params.contactId ? String(params.contactId) : "";
   if (!contactId || !productId) {
+    console.warn("[startProductEntryFlow] falta contactId o productId", {
+      orgId,
+      productId,
+      hasContact: Boolean(contactId),
+    });
     return { started: false, message: "Falta contacto o producto." };
   }
 
   try {
-    const { data: flow, error } = await (supabaseAdmin as any)
+    let flow: any = null;
+    const entryRes = await (supabaseAdmin as any)
       .from("flows")
-      .select("id, name, is_active, max_sends_per_contact, ai_instructions, product_id")
+      .select("id, name, is_active, max_sends_per_contact, ai_instructions, product_id, is_product_entry")
       .eq("org_id", orgId)
       .eq("product_id", productId)
       .eq("is_product_entry", true)
       .eq("is_active", true)
       .maybeSingle();
 
-    if (error) {
-      if (String(error.message || "").includes("product_id") || error.code === "42703") {
+    if (entryRes.error) {
+      if (String(entryRes.error.message || "").includes("product_id") || entryRes.error.code === "42703") {
         return { started: false, message: "Migración de flujos por producto pendiente." };
       }
-      return { started: false, message: error.message };
+      return { started: false, message: entryRes.error.message };
     }
-    if (!flow) return { started: false, message: "Sin flujo inicial para este producto." };
+    flow = entryRes.data;
+
+    // Fallback: primer flujo activo del producto (aunque no esté marcado como inicial)
+    if (!flow) {
+      const anyRes = await (supabaseAdmin as any)
+        .from("flows")
+        .select("id, name, is_active, max_sends_per_contact, ai_instructions, product_id, is_product_entry")
+        .eq("org_id", orgId)
+        .eq("product_id", productId)
+        .eq("is_active", true)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (anyRes.error) {
+        return { started: false, message: anyRes.error.message };
+      }
+      flow = anyRes.data;
+      if (flow) {
+        console.info("[startProductEntryFlow] usando flujo activo (no marcado inicial)", {
+          orgId,
+          productId,
+          flowId: flow.id,
+          flowName: flow.name,
+        });
+      }
+    }
+
+    if (!flow) {
+      console.info("[startProductEntryFlow] sin flujos activos para producto", { orgId, productId });
+      return { started: false, message: "Sin flujo activo para este producto." };
+    }
 
     const { data: firstStep } = await supabaseAdmin
       .from("flow_steps")
@@ -256,7 +293,7 @@ export async function startProductEntryFlow(params: {
       .maybeSingle();
 
     if (!firstStep) {
-      return { started: false, message: `El flujo inicial "${flow.name}" está vacío.` };
+      return { started: false, message: `El flujo "${flow.name}" está vacío.` };
     }
 
     const result = await ensureFlowRunForContact({
@@ -267,6 +304,15 @@ export async function startProductEntryFlow(params: {
       maxSends: flow.max_sends_per_contact,
       flowName: flow.name,
       processNow: true,
+    });
+
+    console.info("[startProductEntryFlow] resultado", {
+      orgId,
+      productId,
+      flowId: flow.id,
+      flowName: flow.name,
+      started: result.started,
+      message: result.message,
     });
 
     const instructions = String(flow.ai_instructions || "").trim();
