@@ -12,6 +12,7 @@
  */
 
 import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   supabaseAdmin,
   getAdminContext,
@@ -50,35 +51,21 @@ async function requireSuperAdmin(userId: string): Promise<void> {
 // ============================================================================
 
 export const getSaasAccess = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     try {
       const userId = context.userId;
-      console.log("[getSaasAccess] context:", context);
-      console.log("[getSaasAccess] userId:", userId);
-      
       if (!userId) {
-        // Usuario no logueado, devolver acceso negado sin error
-        console.log("[getSaasAccess] No userId - returning false");
-        return {
-          isSuperAdmin: false,
-          userId: null,
-        };
+        return { isSuperAdmin: false, userId: null };
       }
-
       const adminContext = await getAdminContext(userId);
-      console.log("[getSaasAccess] adminContext:", adminContext);
-
       return {
         isSuperAdmin: adminContext.isSuperAdmin,
         userId,
       };
     } catch (error) {
-      // Si hay error accediendo a tablas SaaS, devolver acceso negado
       console.error("[getSaasAccess] Error:", error);
-      return {
-        isSuperAdmin: false,
-        userId: null,
-      };
+      return { isSuperAdmin: false, userId: null };
     }
   });
 

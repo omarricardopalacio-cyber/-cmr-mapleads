@@ -28,6 +28,7 @@ import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authentica
 import { Route as AuthenticatedMapleadsRouteImport } from './routes/_authenticated.mapleads'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated.orders'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
+import { Route as AuthenticatedPlatformUsersRouteImport } from './routes/_authenticated.platform-users'
 import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authenticated.quick-replies'
 import { Route as AuthenticatedSaasAdminRouteImport } from './routes/_authenticated.saas-admin'
 import { Route as AuthenticatedSessionsRouteImport } from './routes/_authenticated.sessions'
@@ -157,6 +158,12 @@ const AuthenticatedPipelinesRoute = AuthenticatedPipelinesRouteImport.update({
   path: '/pipelines',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedPlatformUsersRoute =
+  AuthenticatedPlatformUsersRouteImport.update({
+    id: '/platform-users',
+    path: '/platform-users',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedQuickRepliesRoute =
   AuthenticatedQuickRepliesRouteImport.update({
     id: '/quick-replies',
@@ -335,6 +342,7 @@ export interface FileRoutesByFullPath {
   '/mapleads': typeof AuthenticatedMapleadsRoute
   '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
+  '/platform-users': typeof AuthenticatedPlatformUsersRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/sessions': typeof AuthenticatedSessionsRoute
@@ -383,6 +391,7 @@ export interface FileRoutesByTo {
   '/mapleads': typeof AuthenticatedMapleadsRoute
   '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
+  '/platform-users': typeof AuthenticatedPlatformUsersRoute
   '/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/sessions': typeof AuthenticatedSessionsRoute
@@ -433,6 +442,7 @@ export interface FileRoutesById {
   '/_authenticated/mapleads': typeof AuthenticatedMapleadsRoute
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
+  '/_authenticated/platform-users': typeof AuthenticatedPlatformUsersRoute
   '/_authenticated/quick-replies': typeof AuthenticatedQuickRepliesRoute
   '/_authenticated/saas-admin': typeof AuthenticatedSaasAdminRoute
   '/_authenticated/sessions': typeof AuthenticatedSessionsRoute
@@ -484,6 +494,7 @@ export interface FileRouteTypes {
     | '/mapleads'
     | '/orders'
     | '/pipelines'
+    | '/platform-users'
     | '/quick-replies'
     | '/saas-admin'
     | '/sessions'
@@ -532,6 +543,7 @@ export interface FileRouteTypes {
     | '/mapleads'
     | '/orders'
     | '/pipelines'
+    | '/platform-users'
     | '/quick-replies'
     | '/saas-admin'
     | '/sessions'
@@ -581,6 +593,7 @@ export interface FileRouteTypes {
     | '/_authenticated/mapleads'
     | '/_authenticated/orders'
     | '/_authenticated/pipelines'
+    | '/_authenticated/platform-users'
     | '/_authenticated/quick-replies'
     | '/_authenticated/saas-admin'
     | '/_authenticated/sessions'
@@ -771,6 +784,13 @@ declare module '@tanstack/react-router' {
       path: '/pipelines'
       fullPath: '/pipelines'
       preLoaderRoute: typeof AuthenticatedPipelinesRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/platform-users': {
+      id: '/_authenticated/platform-users'
+      path: '/platform-users'
+      fullPath: '/platform-users'
+      preLoaderRoute: typeof AuthenticatedPlatformUsersRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/quick-replies': {
@@ -1011,6 +1031,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedMapleadsRoute: typeof AuthenticatedMapleadsRoute
   AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
+  AuthenticatedPlatformUsersRoute: typeof AuthenticatedPlatformUsersRoute
   AuthenticatedQuickRepliesRoute: typeof AuthenticatedQuickRepliesRoute
   AuthenticatedSaasAdminRoute: typeof AuthenticatedSaasAdminRoute
   AuthenticatedSessionsRoute: typeof AuthenticatedSessionsRoute
@@ -1033,6 +1054,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedMapleadsRoute: AuthenticatedMapleadsRoute,
   AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
+  AuthenticatedPlatformUsersRoute: AuthenticatedPlatformUsersRoute,
   AuthenticatedQuickRepliesRoute: AuthenticatedQuickRepliesRoute,
   AuthenticatedSaasAdminRoute: AuthenticatedSaasAdminRoute,
   AuthenticatedSessionsRoute: AuthenticatedSessionsRoute,

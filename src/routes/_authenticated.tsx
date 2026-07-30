@@ -13,7 +13,7 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X, Package, Tags, Eye } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X, Package, Tags, Eye, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -27,6 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import { getSaasAccess, stopImpersonationFn } from "@/lib/saas-admin.functions";
+import { useIsSuperAdmin } from "@/hooks/use-super-admin";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: ({ context, location }) => {
@@ -41,15 +42,13 @@ export const Route = createFileRoute("/_authenticated")({
 function AppSidebar() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const getSaasAccessFn = useServerFn(getSaasAccess);
-  const { data: saasAccess, isLoading, isError, error } = useQuery({
+  const { isSuperAdmin } = useIsSuperAdmin();
+  const { data: saasAccess } = useQuery({
     queryKey: ["saasAccess"],
     queryFn: () => getSaasAccessFn({}),
     retry: false,
   });
-
-  useEffect(() => {
-    console.log("[AppSidebar] saasAccess:", saasAccess, "loading:", isLoading, "error:", error);
-  }, [saasAccess, isLoading, error]);
+  const showAdmin = isSuperAdmin || !!saasAccess?.isSuperAdmin;
 
   const main = [
     { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
@@ -85,6 +84,7 @@ function AppSidebar() {
   ];
 
   const saas = [
+    { title: "Usuarios plataforma", url: "/platform-users", icon: Crown },
     { title: "Admin SaaS", url: "/saas-admin", icon: Shield },
   ];
 
@@ -191,7 +191,7 @@ function AppSidebar() {
             <SidebarMenu>{renderItems(system)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        {saasAccess?.isSuperAdmin && (
+        {showAdmin && (
           <SidebarGroup>
             <SidebarGroupLabel>Administración</SidebarGroupLabel>
             <SidebarGroupContent>

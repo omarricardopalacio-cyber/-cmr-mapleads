@@ -80,6 +80,28 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
       throw new Error('Unauthorized: No user ID found in token');
     }
 
+    // Usuarios desactivados por el master no pueden usar la API
+    try {
+      const { createClient: createAdminClient } = await import('@supabase/supabase-js');
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (serviceKey && SUPABASE_URL) {
+        const admin = createAdminClient(SUPABASE_URL, serviceKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+        const { data: profile } = await admin
+          .from('profiles')
+          .select('is_active')
+          .eq('id', data.claims.sub)
+          .maybeSingle();
+        if (profile && (profile as { is_active?: boolean }).is_active === false) {
+          throw new Error('Cuenta desactivada. Contacta al administrador de la plataforma.');
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('desactivada')) throw err;
+      // Si falta columna/migración, no bloquear el resto de la app
+    }
+
     return next({
       context: {
         supabase,
