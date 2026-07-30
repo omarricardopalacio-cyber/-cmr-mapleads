@@ -665,14 +665,15 @@ async function hasRecentQueuedReply(
   })
 }
 
-/** Si el texto entrante es eco de algo que nosotros acabamos de enviar. */
-async function isEchoOfRecentOutbound(
+/** Eco real: solo si el cliente reenvía EXACTO un bloque largo que acabamos de mandar. */
+async function isExactEchoOfRecentOutbound(
   threadId: string,
   text: string,
-  windowMs = 90_000,
+  windowMs = 45_000,
 ): Promise<boolean> {
   const normalized = normalizeForReplyDedup(text)
-  if (!threadId || !normalized || normalized.length < 2) return false
+  // Textos cortos (hola, 1, ok) nunca: el menú/IA casi siempre los contiene.
+  if (!threadId || !normalized || normalized.length < 40) return false
   const since = new Date(Date.now() - windowMs).toISOString()
   const { data } = await supabaseAdmin
     .from('messages')
@@ -681,90 +682,12 @@ async function isEchoOfRecentOutbound(
     .eq('direction', 'out')
     .gte('sent_at', since)
     .order('sent_at', { ascending: false })
-    .limit(25)
+    .limit(10)
 
-  // Saludos cortos ("hola", "1", "ok") NUNCA son eco: el menú/IA casi siempre
-  // contiene esas palabras y el anti-eco dejaba el chat mudo al volver a escribir.
-  const shortGreeting = normalized.length <= 12
   return (data ?? []).some((m: any) => {
     const out = normalizeForReplyDedup(String(m.text ?? ''))
-    if (!out) return false
-    if (out === normalized) return true
-    if (shortGreeting) return false
-    // Solo eco si el cliente reenvía casi el mismo bloque largo que mandamos
-    const lenRatio = normalized.length / out.length
-    if (lenRatio < 0.7 || lenRatio > 1.3) return false
-    return out.includes(normalized) || normalized.includes(out)
+    return out.length >= 40 && out === normalized
   })
-}
-
-/** Solo cuenta respuestas de la IA (tienen dedupeKey), no flujos ni auto-replies. */
-async function countRecentAiOutboundCommands(
-  orgId: string,
-  sessionId: string,
-  chatId: string,
-  windowMs = 60_000,
-): Promise<number> {
-  if (!orgId || !sessionId || !chatId) return 0
-  const since = new Date(Date.now() - windowMs).toISOString()
-  const { data } = await supabaseAdmin
-    .from('engine_commands')
-    .select('id, payload, created_at')
-    .eq('org_id', orgId)
-    .eq('session_id', sessionId)
-    .in('type', ['SEND_MESSAGE', 'send_message'])
-    .in('status', ['pending', 'delivered', 'acked'])
-    .gte('created_at', since)
-    .order('created_at', { ascending: false })
-    .limit(40)
-
-  const chat = String(chatId).trim()
-  return (data ?? []).filter((cmd: any) => {
-    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-    if (payload.source === 'flow' || payload.fromFlow === true) return false
-    // Sin dedupeKey no es reply de maybeAiReply (flujos viejos / manuales)
-    if (!payload.dedupeKey) return false
-    return String(payload.chatId ?? '').trim() === chat
-  }).length
-}
-
-async function cancelPendingAiSendsForChat(orgId: string, sessionId: string, chatId?: string) {
-  try {
-    // Solo cancela replies de IA pendientes (dedupeKey), nunca flujos.
-    const { data } = await supabaseAdmin
-      .from('engine_commands')
-      .select('id, payload')
-      .eq('org_id', orgId)
-      .eq('session_id', sessionId)
-      .in('type', ['SEND_MESSAGE', 'send_message'])
-      .eq('status', 'pending')
-      .limit(120)
-
-    const chat = chatId ? String(chatId).trim() : ''
-    const ids = (data ?? [])
-      .filter((cmd: any) => {
-        const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-        if (payload.source === 'flow' || payload.fromFlow === true) return false
-        if (!payload.dedupeKey) return false
-        if (chat && String(payload.chatId ?? '').trim() !== chat) return false
-        return true
-      })
-      .map((cmd: any) => cmd.id)
-
-    if (!ids.length) return
-    await supabaseAdmin
-      .from('engine_commands')
-      .update({ status: 'cancelled', error: 'loop_guard' } as any)
-      .in('id', ids)
-    console.warn('[loop-guard] cancelled pending AI SEND_MESSAGE', {
-      orgId,
-      sessionId,
-      chatId: chat || null,
-      count: ids.length,
-    })
-  } catch (err) {
-    console.warn('[loop-guard] cancel pending AI failed', (err as Error)?.message)
-  }
 }
 
 function isSelfChat(chatId: string | undefined, meWaId: string | null | undefined, phoneNumber?: string | null) {
@@ -775,6 +698,11 @@ function isSelfChat(chatId: string | undefined, meWaId: string | null | undefine
   return false
 }
 
+/**
+ * Filtros mínimos SIN rate-limit ni cancelación de colas.
+ * Bucles se evitan con: solo direction=in, banners, self-chat, dedupe de mensaje
+ * y no inventar fillers cuando la IA falla.
+ */
 async function shouldSkipAutomation(opts: {
   orgId: string
   sessionId: string
@@ -792,12 +720,9 @@ async function shouldSkipAutomation(opts: {
   if (isSelfChat(opts.chatId, opts.meWaId, opts.phoneNumber)) {
     return { skip: true, reason: 'self_chat' }
   }
-  if (await isEchoOfRecentOutbound(opts.threadId, text)) {
-    return { skip: true, reason: 'echo_of_outbound' }
+  if (await isExactEchoOfRecentOutbound(opts.threadId, text)) {
+    return { skip: true, reason: 'exact_echo_of_outbound' }
   }
-  // Ya NO saltamos el mensaje del cliente por rate-limit: eso dejaba el chat
-  // mudo al borrar y volver a escribir "hola" tras un menú. El límite solo
-  // aplica al encolar replies de IA (maybeAiReply).
   return { skip: false }
 }
 
@@ -1091,17 +1016,6 @@ async function maybeAiReply(
         }
       }
 
-      const recentCmds = await countRecentAiOutboundCommands(orgId, sessionId, chatId, 60_000)
-      if (recentCmds >= 8) {
-        console.warn('[ai-reply] rate limit: demasiadas respuestas IA recientes; se omite esta (IA sigue activa)', {
-          threadId,
-          chatId,
-          recentCmds,
-        })
-        await cancelPendingAiSendsForChat(orgId, sessionId, chatId)
-        skipQueue = true
-      }
-
       if (!skipQueue) {
         const dupSameText = await hasRecentQueuedReply(orgId, sessionId, chatId, finalReply, 90_000)
         if (dupSameText) {
@@ -1281,26 +1195,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           .eq('session_token', token)
           .maybeSingle()
         if (sErr || !session) return json(401, { error: 'Invalid session token' })
-
-        // Kill-switch de flood: si hay demasiados envíos pendientes, cancelarlos.
-        try {
-          const sinceFlood = new Date(Date.now() - 3 * 60_000).toISOString()
-          const { count: pendingFlood } = await supabaseAdmin
-            .from('engine_commands')
-            .select('id', { count: 'exact', head: true })
-            .eq('org_id', session.org_id)
-            .eq('session_id', session.id)
-            .in('type', ['SEND_MESSAGE', 'send_message'])
-            .eq('status', 'pending')
-            .gte('created_at', sinceFlood)
-          if ((pendingFlood ?? 0) >= 12) {
-            console.error('[loop-guard] flood detectado; cancelando pending SEND_MESSAGE', {
-              sessionId: session.id,
-              pendingFlood,
-            })
-            await cancelPendingAiSendsForChat(session.org_id, session.id)
-          }
-        } catch (_) { /* ignore */ }
 
         // Extract telemetry from the first heartbeat/session_ready event
         const telemetryEvent = events.find(
