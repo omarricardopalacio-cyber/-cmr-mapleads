@@ -313,6 +313,18 @@ export async function runChannelAiReply(
     }
   }
 
+  if (activatedFlow) {
+    try {
+      await supabaseAdmin
+        .from("threads")
+        .update({ ai_enabled: true } as any)
+        .eq("id", threadId)
+        .eq("org_id", orgId);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
   if (process.env.DISABLE_AI_MEMORY !== "true" && contactId) {
     try {
       const currentMemory = await loadCustomerMemory(orgId, contactId);
