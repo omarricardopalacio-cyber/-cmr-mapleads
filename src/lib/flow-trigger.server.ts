@@ -138,7 +138,7 @@ export async function ensureFlowRunForContact(params: {
 
   const { data: existingRun } = await supabaseAdmin
     .from("flow_runs")
-    .select("id, status, send_count")
+    .select("id, status, send_count, finished_at, updated_at")
     .eq("org_id", orgId)
     .eq("flow_id", flowId)
     .eq("contact_id", contactId)
@@ -150,7 +150,24 @@ export async function ensureFlowRunForContact(params: {
       message: flowName
         ? `El paquete "${flowName}" ya se le está enviando al cliente.`
         : "Este contacto ya tiene una ejecución activa para este flujo.",
+      alreadyActive: true,
     };
+  }
+
+  // Evita doble menú: IA + vigilante/keyword reiniciaban el mismo flujo
+  // apenas terminaba (saludo FD se enviaba 2 veces).
+  const RECENT_COMPLETE_MS = 5 * 60_000;
+  if (existingRun && String(existingRun.status) === "completed") {
+    const doneAt = existingRun.finished_at || existingRun.updated_at;
+    if (doneAt && Date.now() - new Date(doneAt).getTime() < RECENT_COMPLETE_MS) {
+      return {
+        started: false,
+        message: flowName
+          ? `El paquete "${flowName}" ya se envió hace un momento. No lo reenvíes; atiende la respuesta del cliente.`
+          : "Este flujo ya se envió hace un momento; no reenviar.",
+        alreadyRecent: true,
+      };
+    }
   }
 
   const currentCount = existingRun?.send_count ?? 0;
@@ -233,7 +250,7 @@ export async function startFlowForContact(params: {
   flowId: string;
   /** Producto en foco del hilo; requerido si el flujo está ligado a un producto */
   focusedProductId?: string | null;
-}): Promise<{ started: boolean; message: string }> {
+}): Promise<{ started: boolean; message: string; alreadyActive?: boolean; alreadyRecent?: boolean }> {
   const { orgId, contactId, flowId, focusedProductId = null } = params;
 
   const { data: flow } = await supabaseAdmin
@@ -297,7 +314,7 @@ export async function startFlowForContact(params: {
   });
 
   // La promesa del sistema es seguir atendiendo tras el paquete (dudas / opción del menú).
-  if (result.started) {
+  if (result.started || (result as any).alreadyActive || (result as any).alreadyRecent) {
     try {
       const { data: thread } = await supabaseAdmin
         .from("threads")

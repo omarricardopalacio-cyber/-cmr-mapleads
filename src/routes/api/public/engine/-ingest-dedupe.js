@@ -30,12 +30,23 @@ export function buildInboundDedupKey({ sessionId, chatId, waMessageId, direction
   const normalizedSentAt = sentAt ? String(sentAt).trim() : ''
   const normalizedWaMessageId = String(waMessageId ?? '').trim().toLowerCase()
 
+  // Con waMessageId real: NO incluir chatId. Tras update WA el mismo mensaje
+  // llega como @lid y como @c.us → sin esto se procesa 2 veces (doble menú).
+  if (normalizedWaMessageId && normalizedWaMessageId !== 'no-wa-id') {
+    return [
+      'inbound',
+      String(sessionId ?? ''),
+      String(direction ?? ''),
+      normalizedWaMessageId,
+    ].join('|')
+  }
+
   return [
     'inbound',
     String(sessionId ?? ''),
     normalizedChatId,
     String(direction ?? ''),
-    normalizedWaMessageId || 'no-wa-id',
+    'no-wa-id',
     normalizedText || 'no-text',
     normalizedSentAt || 'no-time',
   ].join('|')

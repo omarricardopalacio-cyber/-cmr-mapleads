@@ -1912,6 +1912,29 @@ export async function executeToolCall(
       details = "transfer_to_human bloqueado: paquete activado en este turno";
       return { name, result };
     }
+    // También bloquear si hubo actividad de flujo reciente (doble evento @lid/@c.us).
+    if (contactId) {
+      try {
+        const since = new Date(Date.now() - 10 * 60_000).toISOString();
+        const { data: recentFlow } = await (supabaseAdmin as any)
+          .from("flow_runs")
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("contact_id", contactId)
+          .in("status", ["active", "running", "wait_node", "completed"])
+          .gte("updated_at", since)
+          .limit(1)
+          .maybeSingle();
+        if (recentFlow?.id) {
+          result =
+            "NO transfieras. Hay un paquete reciente para este cliente. Mantén la IA activa y atiende su respuesta.";
+          details = "transfer_to_human bloqueado: flujo reciente";
+          return { name, result };
+        }
+      } catch {
+        /* continuar */
+      }
+    }
     // Con producto en foco + observación: no apagar IA por precio/envío (dato está en la observación)
     try {
       const { data: th } = await (supabaseAdmin as any)
@@ -2515,8 +2538,16 @@ export async function executeToolCall(
           result = r.message;
           details = `activate_flow: ${flowId} (${r.started ? "iniciado" : "no iniciado"})`;
           flowStarted = !!r.started;
-          if (r.started) {
+          // Aunque no arranque de nuevo (ya activo / recién enviado), marcar el turno
+          // para no transferir a humano ni apagar la IA.
+          if (
+            r.started ||
+            (r as any).alreadyActive ||
+            (r as any).alreadyRecent ||
+            /ya se (le está enviando|envió)/i.test(String(r.message || ""))
+          ) {
             ctx.activatedFlowThisTurn = true;
+            flowStarted = true;
           }
         } else if (!result) {
           result = "Indica el id o el nombre del paquete a activar.";

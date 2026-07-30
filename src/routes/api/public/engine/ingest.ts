@@ -2085,8 +2085,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
               }
 
-              // Vigilante de intenciones (IA aparte): ficha + flujo (solo el último)
+              // Vigilante: clasifica/etiqueta, pero NO arranca flujos si la IA está
+              // activa (evita doble menú: IA activate_flow + vigilante a la vez).
               try {
+                const { data: aiCfg } = await supabaseAdmin
+                  .from('ai_configs')
+                  .select('enabled')
+                  .eq('org_id', session.org_id)
+                  .maybeSingle()
                 const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
                 void runIntentWatcher({
                   orgId: session.org_id,
@@ -2094,6 +2100,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   threadId: thread.id,
                   text: e.text || textForAiInsert,
                   trigger: 'message',
+                  skipFlowStart: aiCfg?.enabled === true,
                 }).catch((err) => {
                   console.warn('[ingest] watcher:', (err as Error)?.message)
                 })
