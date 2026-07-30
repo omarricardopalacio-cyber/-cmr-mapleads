@@ -129,10 +129,10 @@ export default function HistoryImportPanel() {
           <input
             type="number"
             min={1}
-            max={200}
+            max={100}
             value={maxChats}
             disabled={status.running || busy}
-            onChange={(e) => setMaxChats(Number(e.target.value) || 50)}
+            onChange={(e) => setMaxChats(Math.min(100, Math.max(1, Number(e.target.value) || 50)))}
             className="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-slate-200"
           />
         </label>

@@ -77,6 +77,26 @@ function isGroupChat(chat: any): boolean {
   return id.includes("@g.us") || String(chat?.server || "") === "g.us";
 }
 
+/** Extrae teléfono desde nombre tipo "+57 324 9722320" o desde JID @c.us */
+function phoneFromChat(chat: any): string | undefined {
+  if (chat?.server === "c.us" && chat?.user) {
+    const d = String(chat.user).replace(/\D/g, "");
+    if (d.length >= 8) return d;
+  }
+  const chatId = String(chat?.chatId || "");
+  if (chatId.endsWith("@c.us")) {
+    const d = chatId.split("@")[0].replace(/\D/g, "");
+    if (d.length >= 8) return d;
+  }
+  const name = String(chat?.name || "");
+  const m = name.match(/\+?\s*(\d{1,3}(?:[\s-]?\d{2,4}){2,5})\b/) || name.match(/\b(\d{10,15})\b/);
+  if (m?.[1]) {
+    const d = m[1].replace(/\D/g, "");
+    if (d.length >= 8 && d.length <= 15) return d;
+  }
+  return undefined;
+}
+
 async function postImportHistory(
   backendUrl: string,
   sessionToken: string,
@@ -108,7 +128,7 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
     return getHistoryImportStatus();
   }
 
-  const maxChats = Math.max(1, Math.min(opts.maxChats ?? 50, 200));
+  const maxChats = Math.max(1, Math.min(opts.maxChats ?? 50, 100));
   const messagesPerChat = Math.max(1, Math.min(opts.messagesPerChat ?? 50, 50));
   const pauseMs = Math.max(400, Math.min(opts.pauseMs ?? 900, 5000));
 
@@ -127,7 +147,10 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
         throw new Error("Configura backend URL y session token");
       }
 
-      const list = await opts.sendWaCommand("GET_CHAT_LIST", {});
+      const list = await opts.sendWaCommand("GET_CHAT_LIST", {
+        limit: maxChats,
+        slim: true,
+      });
       if (list?.error) throw new Error(String(list.error));
       if (!Array.isArray(list)) throw new Error("GET_CHAT_LIST no devolvió lista");
 
@@ -158,12 +181,7 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
           if (msgsRaw?.error) throw new Error(String(msgsRaw.error));
           const msgs = Array.isArray(msgsRaw) ? msgsRaw : [];
 
-          const phone =
-            chat.server === "c.us" && chat.user
-              ? String(chat.user).replace(/\D/g, "")
-              : chatId.endsWith("@c.us")
-                ? chatId.split("@")[0].replace(/\D/g, "")
-                : undefined;
+          const phone = phoneFromChat(chat);
 
           const payload = {
             chatId,
@@ -202,7 +220,7 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
         await sleep(pauseMs + Math.floor(Math.random() * 300));
       }
 
-      status.phase = stopRequested ? "done" : "done";
+      status.phase = "done";
       status.running = false;
       status.finishedAt = Date.now();
       status.currentChat = null;

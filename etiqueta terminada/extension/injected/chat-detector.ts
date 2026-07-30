@@ -14,12 +14,21 @@ export async function getActiveChat(): Promise<any> {
   return chat ? normalizeChat(chat) : null;
 }
 
-export async function getChatList(): Promise<any[]> {
+export async function getChatList(options: { limit?: number; slim?: boolean } = {}): Promise<any[]> {
   const WPP = getWPP();
   if (!WPP) throw new Error("WPP no disponible");
 
   const chats = await WPP.chat.list();
-  return chats.map(normalizeChat);
+  const slim = options.slim !== false;
+  let mapped = chats.map((c: any) => (slim ? normalizeChatSlim(c) : normalizeChat(c)));
+
+  // Solo 1:1 (sin grupos)
+  mapped = mapped.filter((c: any) => !c.isGroup && !String(c.chatId || "").includes("@g.us"));
+
+  const limit = options.limit && options.limit > 0 ? Math.min(options.limit, 300) : undefined;
+  if (limit) mapped = mapped.slice(0, limit);
+
+  return mapped;
 }
 
 export async function findChat(chatId: string): Promise<any> {
@@ -65,6 +74,29 @@ function normalizeChat(chat: any): any {
     lastMessage: chat.lastMessage ? normalizeMessage(chat.lastMessage) : undefined,
     pin: chat.pin,
     mute: chat.mute,
+  };
+}
+
+/** Payload liviano para importación de historial (evita timeout por postMessage gigante). */
+function normalizeChatSlim(chat: any): any {
+  let id = chat.id;
+  if (typeof id === "string") {
+    id = { _serialized: id, server: id.split("@")[1], user: id.split("@")[0] };
+  }
+  const name = chat.name || chat.formattedTitle || chat.contact?.displayName || "";
+  const labels = (chat.labels || [])
+    .map((l: any) => (typeof l === "string" ? l : l?.id ?? l?.name))
+    .filter(Boolean)
+    .slice(0, 10);
+
+  return {
+    chatId: id?._serialized,
+    user: id?.user,
+    server: id?.server,
+    name,
+    isGroup: id?.server === "g.us",
+    labels,
+    timestamp: chat.t || chat.lastMessage?.t,
   };
 }
 

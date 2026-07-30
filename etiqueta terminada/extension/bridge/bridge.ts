@@ -139,7 +139,7 @@ export class ContentBridge {
       const cmd = String(msg.event || "").toUpperCase();
       const waitMs =
         cmd === "GET_CHAT_LIST" || cmd === "GET_CHAT_MESSAGES" || cmd === "GET_CONTACT_LIST"
-          ? 45000
+          ? 120000
           : 15000;
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(msg.id!);

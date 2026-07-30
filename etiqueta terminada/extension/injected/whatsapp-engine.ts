@@ -80,16 +80,6 @@ async function init(): Promise<void> {
 }
 
 async function handleCommands(event: MessageEvent): Promise<void> {
-  // DEBUG: Log every message event to diagnose filtering issues
-  console.log("[WhatsAppEngine] Message received:", {
-    source: event.source,
-    sourceIsWindow: event.source === window,
-    sourceIsParent: event.source === window.parent,
-    dataSource: event.data?.source,
-    channel: event.data?.channel,
-    id: event.data?.id,
-  });
-
   const msg = event.data;
   if (msg?.source !== "MAPLE_WA_CONTENT") return;
 
@@ -222,7 +212,10 @@ async function handleCommands(event: MessageEvent): Promise<void> {
         break;
 
       case "GET_CHAT_LIST":
-        response = await chatDetector.getChatList();
+        response = await chatDetector.getChatList({
+          limit: typeof payload?.limit === "number" ? payload.limit : undefined,
+          slim: payload?.slim !== false,
+        });
         break;
 
       case "GET_CHAT_MESSAGES":
@@ -268,11 +261,18 @@ async function handleCommands(event: MessageEvent): Promise<void> {
     console.error(`[WhatsAppEngine] Error ejecutando ${cmdEvent}:`, err);
   }
 
-  // Responder al Content Script
+  // Responder PRIMERO (nunca stringify payloads grandes: bloquea y causa timeout)
   const responsePayload = error ? { error } : response;
-  console.log(`[WhatsAppEngine] Sending response for ${cmdEvent}:`, JSON.stringify(responsePayload));
   postFromInjected("WA_RESPONSE", {
     id,
     payload: responsePayload,
   });
+
+  if (error) {
+    console.log(`[WhatsAppEngine] Response ${cmdEvent}: error=`, error);
+  } else if (Array.isArray(responsePayload)) {
+    console.log(`[WhatsAppEngine] Response ${cmdEvent}: ${responsePayload.length} items`);
+  } else {
+    console.log(`[WhatsAppEngine] Response ${cmdEvent}: ok`);
+  }
 }
