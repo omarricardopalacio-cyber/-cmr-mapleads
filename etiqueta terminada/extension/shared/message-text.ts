@@ -8,6 +8,23 @@ export function isBase64Thumbnail(text: string | null | undefined): boolean {
   return false;
 }
 
+export function isWhatsAppSystemText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!t) return false;
+  return (
+    /cifrados?\s+(de\s+extremo\s+a\s+extremo|extremo\s+a\s+extremo)/i.test(t) ||
+    /end-to-end\s+encrypted/i.test(t) ||
+    /mensajes?\s+y\s+llamadas?\s+(est[aá]n\s+)?cifrados/i.test(t) ||
+    /solo\s+(t[uú]|las\s+personas)\s+(en\s+)?(este\s+)?chat\s+pueden\s+(leerlo|leerlos)/i.test(t) ||
+    /waiting\s+for\s+this\s+message/i.test(t) ||
+    /este\s+mensaje\s+se\s+elimin[oó]/i.test(t) ||
+    /eliminaste\s+este\s+mensaje/i.test(t) ||
+    /haz\s+clic\s+(para\s+)?obtener\s+m[aá]s\s+info/i.test(t) ||
+    /tap\s+to\s+learn\s+more/i.test(t)
+  );
+}
+
 export function sanitizeMessageBody(options: {
   body?: string | null;
   caption?: string | null;
@@ -28,6 +45,10 @@ export function sanitizeMessageBody(options: {
   }
 
   if (isBase64Thumbnail(cleanBody)) {
+    return "";
+  }
+
+  if (isWhatsAppSystemText(cleanBody)) {
     return "";
   }
 

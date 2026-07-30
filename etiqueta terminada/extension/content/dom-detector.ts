@@ -5,7 +5,7 @@
 // ============================================================
 
 import { sendToBackground } from "../bridge/postmessage";
-import { isBase64Thumbnail } from "../shared/message-text";
+import { isBase64Thumbnail, isWhatsAppSystemText } from "../shared/message-text";
 
 const SEEN = new Map<string, number>();
 const TTL_MS = 120_000;
@@ -39,7 +39,7 @@ function gc() {
   }
 }
 
-function direction(node: HTMLElement): "in" | "out" {
+function direction(node: HTMLElement): "in" | "out" | null {
   const dataId = node.getAttribute?.("data-id") || "";
   if (dataId.startsWith("true_")) return "out";
   if (dataId.startsWith("false_")) return "in";
@@ -67,19 +67,54 @@ function direction(node: HTMLElement): "in" | "out" {
     if (style && (style.alignSelf === "flex-end" || style.justifyContent === "flex-end")) return "out";
   } catch {}
 
-  return "in";
+  // NUNCA asumir "in": banners del sistema / nodos raros disparaban la IA.
+  return null;
 }
 
 function parseListItemChatId(dataTestId: string): string | null {
   const chatIdMatch = dataTestId.replace(/^list-item-/, "").trim();
-  if (chatIdMatch.endsWith("@c.us") || chatIdMatch.endsWith("@g.us")) {
+  if (
+    chatIdMatch.endsWith("@c.us") ||
+    chatIdMatch.endsWith("@g.us") ||
+    chatIdMatch.endsWith("@lid")
+  ) {
     return chatIdMatch;
+  }
+  // A veces viene solo el número
+  const digits = chatIdMatch.replace(/\D/g, "");
+  if (digits.length >= 8 && digits.length <= 15 && !chatIdMatch.includes("@")) {
+    return `${digits}@c.us`;
   }
   return null;
 }
 
+/** Extrae teléfono visible del header del chat (+57 322 …). */
+function phoneFromHeaderText(): string | null {
+  try {
+    const header = document.querySelector("#main header");
+    if (!header) return null;
+    const text = (header as HTMLElement).innerText || header.textContent || "";
+    // +57 322 9070464  /  322 9070464  / 573229070464
+    const m =
+      text.match(/\+?\s*(\d{1,3}(?:[\s-]?\d{2,4}){2,5})\b/) ||
+      text.match(/\b(\d{10,15})\b/);
+    if (!m?.[1]) return null;
+    const digits = m[1].replace(/\D/g, "");
+    if (digits.length < 8 || digits.length > 15) return null;
+    // Evitar timestamps tipo 0814
+    if (digits.length < 10) return null;
+    return digits;
+  } catch {
+    return null;
+  }
+}
+
 function getChatId(): string {
   try {
+    // === MÉTODO 0: Teléfono del header (robusto con LID) ===
+    const headerPhone = phoneFromHeaderText();
+    if (headerPhone) return `${headerPhone}@c.us`;
+
     // === MÉTODO 1: Scraping por Sidebar Row Seleccionado (Altamente Robusto) ===
     const activeSidebarRow = document.querySelector(
       'div[role="row"] div[data-testid^="list-item-"][class*="selected"], ' +
@@ -92,7 +127,12 @@ function getChatId(): string {
       const dataTestId = activeSidebarRow.getAttribute("data-testid");
       if (dataTestId) {
         const fromListItem = parseListItemChatId(dataTestId);
-        if (fromListItem) return fromListItem;
+        if (fromListItem) {
+          if (fromListItem.endsWith("@lid") && headerPhone) {
+            return `${headerPhone}@c.us`;
+          }
+          return fromListItem;
+        }
       }
     }
 
@@ -107,7 +147,12 @@ function getChatId(): string {
         ariaSelected.querySelector('[data-testid^="list-item-"]')?.getAttribute("data-testid");
       if (testId) {
         const fromAria = parseListItemChatId(testId);
-        if (fromAria) return fromAria;
+        if (fromAria) {
+          if (fromAria.endsWith("@lid") && headerPhone) {
+            return `${headerPhone}@c.us`;
+          }
+          return fromAria;
+        }
       }
     }
 
@@ -125,9 +170,11 @@ function getChatId(): string {
 
     // === MÉTODO 3: Regex Estricto sobre location.hash (URL Fallback) ===
     const hash = location.hash || "";
-    const hashMatch = hash.match(/(?:#|\/|main\/)([^/?#]+@(?:c\.us|g\.us))/);
+    const hashMatch = hash.match(/(?:#|\/|main\/)([^/?#]+@(?:c\.us|g\.us|lid))/);
     if (hashMatch?.[1]) {
-      return decodeURIComponent(hashMatch[1]);
+      const decoded = decodeURIComponent(hashMatch[1]);
+      if (decoded.endsWith("@lid") && headerPhone) return `${headerPhone}@c.us`;
+      return decoded;
     }
 
     // === MÉTODO 4: Selector de Cabecera de Main Conversación como Último Recurso ===
@@ -136,18 +183,28 @@ function getChatId(): string {
       const attributes = mainHeader.attributes;
       for (let i = 0; i < attributes.length; i++) {
         const attrVal = attributes[i]?.value;
-        if (attrVal && (attrVal.endsWith("@c.us") || attrVal.endsWith("@g.us"))) {
+        if (
+          attrVal &&
+          (attrVal.endsWith("@c.us") || attrVal.endsWith("@g.us") || attrVal.endsWith("@lid"))
+        ) {
+          if (attrVal.endsWith("@lid") && headerPhone) return `${headerPhone}@c.us`;
           return attrVal;
         }
       }
 
-      // data-id legacy en header o descendientes (versiones antiguas de WA Web)
       const legacyHeader = document.querySelector(
         '#main header [data-id], header [data-id]'
       );
       const legacyId = legacyHeader?.getAttribute?.("data-id");
-      if (legacyId && (legacyId.includes("@c.us") || legacyId.includes("@g.us"))) {
-        return legacyId;
+      if (
+        legacyId &&
+        (legacyId.includes("@c.us") || legacyId.includes("@g.us") || legacyId.includes("@lid"))
+      ) {
+        const fromLegacy = extractChatIdFromDataId(legacyId) || legacyId;
+        if (String(fromLegacy).endsWith("@lid") && headerPhone) {
+          return `${headerPhone}@c.us`;
+        }
+        return fromLegacy;
       }
     }
 
@@ -185,10 +242,10 @@ function extractTimestamp(node: HTMLElement): string | null {
 }
 
 function extractChatIdFromDataId(dataId: string): string | null {
-  // data-id format: true_573003918780@c.us_3EB0... or false_573...@g.us_3EB0...
-  const match = dataId.match(/^(true|false)_([^@]+@(c\.us|g\.us))_/);
+  // true_573...@c.us_3EB0... | false_...@lid_3EB0... | true_...@g.us_...
+  const match = dataId.match(/^(true|false)_([^@]+@(?:c\.us|g\.us|lid))_/);
   if (match) {
-    return match[2]; // Returns: 573003918780@c.us or 573...@g.us
+    return match[2];
   }
   return null;
 }
@@ -196,9 +253,15 @@ function extractChatIdFromDataId(dataId: string): string | null {
 function parseMessageNode(node: HTMLElement): any {
   const dataId = node.getAttribute?.("data-id") || "";
   const dir = direction(node);
+  if (!dir) return null;
+
   let text = extractText(node);
-  if (isBase64Thumbnail(text)) {
+  if (isBase64Thumbnail(text) || isWhatsAppSystemText(text)) {
     text = "";
+  }
+  // Filtrar filas de sistema sin data-id de mensaje real
+  if (!dataId && isWhatsAppSystemText(extractText(node))) {
+    return null;
   }
   const tsLabel = extractTimestamp(node);
 
@@ -211,7 +274,7 @@ function parseMessageNode(node: HTMLElement): any {
   const hasDocument = !!node.querySelector('[data-icon="document"]') ||
                       !!node.querySelector('[data-testid*="document"]');
 
-  // Try to get chatId from sidebar first, fallback to data-id extraction
+  // Preferir teléfono del header (evita unknown/@lid sin teléfono)
   let chatId = getChatId();
   if (chatId === "unknown" && dataId) {
     const fromDataId = extractChatIdFromDataId(dataId);
@@ -221,9 +284,37 @@ function parseMessageNode(node: HTMLElement): any {
     }
   }
 
+  // Si data-id trae @lid pero el header tiene teléfono, usar el teléfono
+  const headerPhone = phoneFromHeaderText();
+  if (headerPhone && (chatId === "unknown" || String(chatId).endsWith("@lid"))) {
+    chatId = `${headerPhone}@c.us`;
+  }
+
+  // No emitir chat consigo mismo (bucle "Tú")
+  try {
+    const myPhone = (window as any).__MAPLE_ME_PHONE__ || "";
+    const chatDigits = String(chatId).replace(/\D/g, "");
+    const meDigits = String(myPhone).replace(/\D/g, "");
+    if (meDigits && chatDigits && meDigits === chatDigits) {
+      console.warn("[DOMDetector] skip self-chat", chatId);
+      return null;
+    }
+  } catch {}
+
+  const phone =
+    headerPhone ||
+    (chatId.endsWith("@c.us") ? chatId.split("@")[0].replace(/\D/g, "") : undefined);
+
   return {
     id: dataId,
     chatId,
+    phone,
+    contact: phone
+      ? {
+          waId: `${phone}@c.us`,
+          phone,
+        }
+      : undefined,
     direction: dir,
     text,
     timestamp_label: tsLabel,
@@ -313,13 +404,23 @@ async function emitFromNode(node: HTMLElement) {
       direction: parsed.direction,
       text: parsed.text,
       sentAt: new Date().toISOString(),
+      fromMe: parsed.direction === "out",
+      contact: parsed.contact,
+      phoneNumber: parsed.phone,
     };
 
     if (mediaPayload) {
       payload.media = mediaPayload;
     }
 
-    console.log("[DOMDetector] Mensaje detectado:", evtType, hasMedia ? "(con media)" : "(texto)", parsed.text?.slice(0, 40));
+    console.log(
+      "[DOMDetector] Mensaje detectado:",
+      evtType,
+      hasMedia ? "(con media)" : "(texto)",
+      "chatId=",
+      parsed.chatId,
+      parsed.text?.slice(0, 40),
+    );
 
     sendToBackground("WA_EVENT", {
       event: evtType,

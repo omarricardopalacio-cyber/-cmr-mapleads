@@ -7,7 +7,7 @@ import { waitForWPP, getWPP } from "./wpp-bootstrap";
 import { getMessageById } from "./message-detector";
 import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
-import { sanitizeMessageBody } from "../shared/message-text";
+import { sanitizeMessageBody, isWhatsAppSystemText } from "../shared/message-text";
 
 declare global {
   interface Window {
@@ -179,9 +179,15 @@ function getMyPhoneNumber(): string | undefined {
     if (!WPP) return undefined;
     // Intentar múltiples APIs de WPP para obtener el número
     const me = WPP.whatsapp?.UserPrefs?.getMaybeMeUser?.() || WPP.whatsapp?.UserPrefs?.getMe?.();
-    if (me?.user) return me.user;
+    if (me?.user) {
+      try { (window as any).__MAPLE_ME_PHONE__ = me.user; } catch {}
+      return me.user;
+    }
     const conn = WPP.whatsapp?.Stream?.get?.();
-    if (conn?.wid?.user) return conn.wid.user;
+    if (conn?.wid?.user) {
+      try { (window as any).__MAPLE_ME_PHONE__ = conn.wid.user; } catch {}
+      return conn.wid.user;
+    }
     return undefined;
   } catch {
     return undefined;
@@ -313,7 +319,40 @@ function buildMessageFast(msg: any): any {
 }
 
 async function processNewMessage(msg: any): Promise<void> {
+  // Tipos de protocolo / notificación: no son chat de cliente
+  const t = String(msg?.type || "").toLowerCase();
+  if (
+    [
+      "notification",
+      "notification_template",
+      "e2e_notification",
+      "gp2",
+      "ciphertext",
+      "protocol",
+      "call_log",
+      "revoked",
+    ].includes(t)
+  ) {
+    return;
+  }
+
   const normalized = buildMessageFast(msg);
+  if (isWhatsAppSystemText(normalized.text || normalized.body)) {
+    console.warn("[EventEngine] skip system banner text");
+    return;
+  }
+
+  // Nunca automatizar chat consigo mismo
+  const me = getMyPhoneNumber();
+  const chatDigits = String(normalized.chatId || "").replace(/\D/g, "");
+  if (me && chatDigits && me === chatDigits) {
+    // Solo registrar saliente si quieres historial; no emitir NEW_MESSAGE
+    if (!normalized.fromMe) {
+      console.warn("[EventEngine] skip self-chat inbound", normalized.chatId);
+      return;
+    }
+  }
+
   const eventType = normalized.fromMe ? "MESSAGE_SENT" : "NEW_MESSAGE";
   emit(eventType, normalized);
   const recovered = await enrichMessageInBackground(msg, normalized, eventType);

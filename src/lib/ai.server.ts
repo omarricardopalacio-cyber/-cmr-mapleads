@@ -4772,13 +4772,19 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
       console.warn("[runAiAgent] updateConversationStateAfterReply failed", err),
     );
 
-    if (isOrderClaimWithoutConfirmation(replyText) && !orderConfirmed) {
+    const cleaned = String(replyText || "")
+      .replace(/<\/?(?:function|tool_call|tool_response|invoke|parameter)[^>]*>/gi, "")
+      .replace(/<(?:activate_flow|present_product|send_catalog)[^>]*>[\s\S]*?(?:<\/(?:activate_flow|present_product|send_catalog|function)>|$)/gi, "")
+      .replace(/<\/?function>/gi, "")
+      .trim();
+
+    if (isOrderClaimWithoutConfirmation(cleaned) && !orderConfirmed) {
       return {
         reply: "Permítame un momento, estoy confirmando su pedido. Ya casi terminamos... 😊",
         actions,
       };
     }
-    return { reply: replyText, actions };
+    return { reply: cleaned, actions };
   };
 
   const buildRecoveredOrderData = (replyText: string) => {

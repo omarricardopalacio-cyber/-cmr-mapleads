@@ -1,7 +1,11 @@
 // @ts-nocheck
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
-import { sanitizeMessageText } from '@/lib/message-text'
+import {
+  sanitizeMessageText,
+  isWhatsAppSystemText,
+  stripLeakedToolMarkup,
+} from '@/lib/message-text'
 import {
   enrichMediaForMessage,
   stripHeavyFieldsForDb,
@@ -651,6 +655,119 @@ async function hasRecentQueuedReply(
   })
 }
 
+/** Si el texto entrante es eco de algo que nosotros acabamos de enviar. */
+async function isEchoOfRecentOutbound(
+  threadId: string,
+  text: string,
+  windowMs = 90_000,
+): Promise<boolean> {
+  const normalized = normalizeForReplyDedup(text)
+  if (!threadId || !normalized || normalized.length < 2) return false
+  const since = new Date(Date.now() - windowMs).toISOString()
+  const { data } = await supabaseAdmin
+    .from('messages')
+    .select('text')
+    .eq('thread_id', threadId)
+    .eq('direction', 'out')
+    .gte('sent_at', since)
+    .order('sent_at', { ascending: false })
+    .limit(25)
+
+  return (data ?? []).some((m: any) => {
+    const out = normalizeForReplyDedup(String(m.text ?? ''))
+    return out && (out === normalized || out.includes(normalized) || normalized.includes(out))
+  })
+}
+
+async function countRecentOutboundCommands(
+  orgId: string,
+  sessionId: string,
+  chatId: string,
+  windowMs = 60_000,
+): Promise<number> {
+  if (!orgId || !sessionId || !chatId) return 0
+  const since = new Date(Date.now() - windowMs).toISOString()
+  const { data } = await supabaseAdmin
+    .from('engine_commands')
+    .select('id, payload, created_at')
+    .eq('org_id', orgId)
+    .eq('session_id', sessionId)
+    .in('type', ['SEND_MESSAGE', 'send_message'])
+    .in('status', ['pending', 'delivered', 'acked'])
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(40)
+
+  const chat = String(chatId).trim()
+  return (data ?? []).filter((cmd: any) => {
+    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+    return String(payload.chatId ?? '').trim() === chat
+  }).length
+}
+
+async function cancelPendingSendsForChat(orgId: string, sessionId: string, chatId?: string) {
+  try {
+    let q = supabaseAdmin
+      .from('engine_commands')
+      .update({ status: 'cancelled', error: 'loop_guard' } as any)
+      .eq('org_id', orgId)
+      .eq('session_id', sessionId)
+      .in('type', ['SEND_MESSAGE', 'send_message'])
+      .eq('status', 'pending')
+    if (chatId) {
+      // PostgREST no filtra JSON fácil; cancelamos todos pending de la sesión si hay flood
+      // y el caller ya decide por chat vía rate-limit.
+    }
+    await q
+    console.warn('[loop-guard] cancelled pending SEND_MESSAGE', { orgId, sessionId, chatId })
+  } catch (err) {
+    console.warn('[loop-guard] cancel pending failed', (err as Error)?.message)
+  }
+}
+
+function isSelfChat(chatId: string | undefined, meWaId: string | null | undefined, phoneNumber?: string | null) {
+  const chatDigits = digits(chatId)
+  if (!chatDigits) return false
+  const me = digits(meWaId) || digits(phoneNumber)
+  if (me && chatDigits === me) return true
+  return false
+}
+
+async function shouldSkipAutomation(opts: {
+  orgId: string
+  sessionId: string
+  threadId: string
+  chatId: string
+  text: string
+  meWaId?: string | null
+  phoneNumber?: string | null
+  direction?: string
+}): Promise<{ skip: boolean; reason?: string }> {
+  const text = String(opts.text ?? '').trim()
+  if (!text) return { skip: true, reason: 'empty' }
+  if (opts.direction && opts.direction !== 'in') return { skip: true, reason: 'not_inbound' }
+  if (isWhatsAppSystemText(text)) return { skip: true, reason: 'system_banner' }
+  if (isSelfChat(opts.chatId, opts.meWaId, opts.phoneNumber)) {
+    return { skip: true, reason: 'self_chat' }
+  }
+  if (await isEchoOfRecentOutbound(opts.threadId, text)) {
+    return { skip: true, reason: 'echo_of_outbound' }
+  }
+  const recent = await countRecentOutboundCommands(opts.orgId, opts.sessionId, opts.chatId, 60_000)
+  if (recent >= 4) {
+    try {
+      await supabaseAdmin
+        .from('threads')
+        .update({ ai_enabled: false } as any)
+        .eq('id', opts.threadId)
+        .eq('org_id', opts.orgId)
+    } catch (_) { /* ignore */ }
+    await cancelPendingSendsForChat(opts.orgId, opts.sessionId, opts.chatId)
+    return { skip: true, reason: `rate_limit_${recent}` }
+  }
+  return { skip: false }
+}
+
 async function hasExistingAiReplyCommand(
   orgId: string,
   sessionId: string,
@@ -850,7 +967,7 @@ async function maybeAiReply(
     })
 
     let actions = firstAttempt.actions ?? []
-    let finalReply = firstAttempt.reply?.trim() || ''
+    let finalReply = stripLeakedToolMarkup(firstAttempt.reply?.trim() || '')
 
     // Si la IA activó un PAQUETE (flujo), el propio flujo envía el contenido en
     // orden. No mandamos una respuesta de texto de la IA para no duplicar ni
@@ -863,8 +980,25 @@ async function maybeAiReply(
         if (sentImage) {
           finalReply = '¿Cuál te gusta más? Cuéntame y avanzamos con tu pedido.'
         } else {
-          finalReply = 'Un momento por favor… ¿me confirmas qué producto te interesa?'
+          // No inventar texto vacío: evita spam "[mensaje vacío]" / fillers en bucle.
+          console.info('[ai-reply] sin texto útil; no se encola SEND_MESSAGE', {
+            orgId,
+            threadId,
+            chatId,
+            actions,
+          })
+          return
         }
+      }
+
+      // Si quedó basura de tools o activadores sin sentido, no enviar
+      if (/activate_flow|present_product|<\/?function/i.test(finalReply)) {
+        console.warn('[ai-reply] reply todavía contiene markup de tools; se omite envío', {
+          orgId,
+          threadId,
+          preview: finalReply.slice(0, 120),
+        })
+        return
       }
 
       console.info('[ai-reply] finalReply', {
@@ -882,6 +1016,32 @@ async function maybeAiReply(
         const duplicateReply = await hasExistingAiReplyCommand(orgId, sessionId, aiReplyDedupeKey)
         if (duplicateReply) {
           console.log('[ai-reply] skip duplicate queued reply by dedupeKey', { threadId, chatId, aiReplyDedupeKey })
+          skipQueue = true
+        }
+      }
+
+      const recentCmds = await countRecentOutboundCommands(orgId, sessionId, chatId, 60_000)
+      if (recentCmds >= 4) {
+        console.warn('[ai-reply] rate limit: demasiados envíos recientes; se apaga IA del hilo', {
+          threadId,
+          chatId,
+          recentCmds,
+        })
+        try {
+          await supabaseAdmin
+            .from('threads')
+            .update({ ai_enabled: false } as any)
+            .eq('id', threadId)
+            .eq('org_id', orgId)
+        } catch (_) { /* ignore */ }
+        await cancelPendingSendsForChat(orgId, sessionId, chatId)
+        skipQueue = true
+      }
+
+      if (!skipQueue) {
+        const dupSameText = await hasRecentQueuedReply(orgId, sessionId, chatId, finalReply, 90_000)
+        if (dupSameText) {
+          console.log('[ai-reply] skip duplicate same text queued recently', { threadId, chatId })
           skipQueue = true
         }
       }
@@ -977,10 +1137,8 @@ async function maybeAiReply(
       await sendSupportMessage(orgId, sessionId, chatId, requestId, threadId);
     }
 
-    // La IA no supo responder -> PASAR A UN AGENTE HUMANO: apagamos la IA en
-    // este hilo. Así el chat queda para atención humana y el widget de apoyo
-    // funciona como notificación para el agente. (Se puede desactivar con
-    // DISABLE_AI_HANDOFF_ON_ERROR=true para volver al comportamiento anterior.)
+    // La IA no pudo responder -> PASAR A HUMANO. NO enviar filler al cliente
+    // ("dame un ratito…"): en bucles de error eso spamea WhatsApp.
     if (process.env.DISABLE_AI_HANDOFF_ON_ERROR !== 'true') {
       try {
         await supabaseAdmin
@@ -995,23 +1153,6 @@ async function maybeAiReply(
         })
       } catch (handoffErr) {
         console.warn('[ai-reply] no se pudo transferir a humano (ai_enabled puede no existir):', (handoffErr as Error)?.message)
-      }
-    }
-
-    // Mostrar mensaje amigable al cliente mientras un agente toma el chat
-    const errorMessage = 'dame un ratito ya te envio 😉';
-
-    if (sessionId && chatId) {
-      const duplicateReply = await hasRecentQueuedReply(orgId, sessionId, chatId, errorMessage)
-      if (!duplicateReply) {
-        await supabaseAdmin.from('engine_commands').insert({
-          org_id: orgId,
-          session_id: sessionId,
-          type: 'SEND_MESSAGE',
-          payload: { chatId, text: errorMessage },
-          status: 'pending',
-          scheduled_for: scheduleAt,
-        })
       }
     }
   }
@@ -1066,10 +1207,30 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         const { data: session, error: sErr } = await supabaseAdmin
           .from('wa_sessions')
-          .select('id, org_id, me_wa_id, default_agent_id, default_flow_id')
+          .select('id, org_id, me_wa_id, phone_number, default_agent_id, default_flow_id')
           .eq('session_token', token)
           .maybeSingle()
         if (sErr || !session) return json(401, { error: 'Invalid session token' })
+
+        // Kill-switch de flood: si hay demasiados envíos pendientes, cancelarlos.
+        try {
+          const sinceFlood = new Date(Date.now() - 3 * 60_000).toISOString()
+          const { count: pendingFlood } = await supabaseAdmin
+            .from('engine_commands')
+            .select('id', { count: 'exact', head: true })
+            .eq('org_id', session.org_id)
+            .eq('session_id', session.id)
+            .in('type', ['SEND_MESSAGE', 'send_message'])
+            .eq('status', 'pending')
+            .gte('created_at', sinceFlood)
+          if ((pendingFlood ?? 0) >= 12) {
+            console.error('[loop-guard] flood detectado; cancelando pending SEND_MESSAGE', {
+              sessionId: session.id,
+              pendingFlood,
+            })
+            await cancelPendingSendsForChat(session.org_id, session.id)
+          }
+        } catch (_) { /* ignore */ }
 
         // Extract telemetry from the first heartbeat/session_ready event
         const telemetryEvent = events.find(
@@ -1604,6 +1765,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     : /^\d+$/.test(waId)
                       ? `${waId}@c.us`
                       : e.chatId
+                  const audioGuard = await shouldSkipAutomation({
+                    orgId: session.org_id,
+                    sessionId: session.id,
+                    threadId: thread.id,
+                    chatId: sendChatId || e.chatId || '',
+                    text: textForAi,
+                    meWaId: session.me_wa_id,
+                    phoneNumber: (session as any).phone_number,
+                    direction: 'in',
+                  })
+                  if (audioGuard.skip) {
+                    console.warn('[ingest] skip audio automation', { reason: audioGuard.reason, threadId: thread.id })
+                  } else {
                   try {
                     await supabaseAdmin
                       .from('no_response_pending')
@@ -1671,6 +1845,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       }
                     }
                   }
+                  }
                 }
               } else if (gotNewTranscript || (shouldFireAudioAi && !!audioAiFallbackText)) {
                 if (gotNewTranscript) {
@@ -1690,6 +1865,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     : /^\d+$/.test(waId)
                       ? `${waId}@c.us`
                       : e.chatId
+                  const audioGuard2 = await shouldSkipAutomation({
+                    orgId: session.org_id,
+                    sessionId: session.id,
+                    threadId: thread.id,
+                    chatId: sendChatId || e.chatId || '',
+                    text: textForAi,
+                    meWaId: session.me_wa_id,
+                    phoneNumber: (session as any).phone_number,
+                    direction: 'in',
+                  })
+                  if (audioGuard2.skip) {
+                    console.warn('[ingest] skip audio automation', { reason: audioGuard2.reason, threadId: thread.id })
+                  } else {
                   const { aiDisabled, totalDelaySec } = await maybeAutoReply(
                     session.org_id,
                     session.id,
@@ -1726,6 +1914,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       if (process.env.ASYNC_AI_REPLY === 'true') run().catch(console.error)
                       else await run()
                     }
+                  }
                   }
                 }
               } else {
@@ -1767,7 +1956,35 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             })
 
             const textForAiInsert = (e.text?.trim() || audioAiFallbackText || '').trim()
-            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && textForAiInsert) {
+            const inboundDir = (e.direction ?? (e.type === 'message-in' ? 'in' : 'out'))
+            if (inboundDir === 'in' && textForAiInsert) {
+              // Use phone@c.us when we have a real phone (avoids @lid issues)
+              const sendChatId = e.contact?.phone
+                ? `${e.contact.phone}@c.us`
+                : /^\d+$/.test(waId)
+                  ? `${waId}@c.us`
+                  : e.chatId
+
+              const guard = await shouldSkipAutomation({
+                orgId: session.org_id,
+                sessionId: session.id,
+                threadId: thread.id,
+                chatId: sendChatId || e.chatId || '',
+                text: textForAiInsert,
+                meWaId: session.me_wa_id,
+                phoneNumber: (session as any).phone_number,
+                direction: inboundDir,
+              })
+              if (guard.skip) {
+                console.warn('[ingest] skip automation', {
+                  reason: guard.reason,
+                  threadId: thread.id,
+                  chatId: sendChatId,
+                  preview: textForAiInsert.slice(0, 80),
+                })
+                continue
+              }
+
               if (e.text?.trim()) {
                 try {
                   const { appendContactAskedQuestion } = await import('@/lib/contact-inquiry.server')
@@ -1778,13 +1995,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   })
                 } catch (_) { /* ignore */ }
               }
-
-              // Use phone@c.us when we have a real phone (avoids @lid issues)
-              const sendChatId = e.contact?.phone
-                ? `${e.contact.phone}@c.us`
-                : /^\d+$/.test(waId)
-                  ? `${waId}@c.us`
-                  : e.chatId
 
               // Cancel any pending no-response timers for this thread (client responded)
               try {
