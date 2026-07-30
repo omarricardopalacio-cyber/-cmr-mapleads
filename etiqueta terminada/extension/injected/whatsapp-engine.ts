@@ -3,7 +3,7 @@
 // Se inyecta en WhatsApp Web como script <script src="...">
 // ============================================================
 
-import { waitForWPP, isWPPReady } from "./wpp-bootstrap";
+import { waitForWPP, isWPPReady, patchWhatsAppCompat, getWPP } from "./wpp-bootstrap";
 import { initEventEngine } from "./event-engine";
 import { senderEngine } from "./sender-engine";
 import { resolveCommandMedia } from "./command-media";
@@ -43,13 +43,17 @@ async function init(): Promise<void> {
 
   try {
     await waitForWPP();
+    patchWhatsAppCompat();
+    // Re-aplicar tras hidratar módulos (WA cambia prototipos al vuelo)
+    setTimeout(() => patchWhatsAppCompat(), 2000);
+    setTimeout(() => patchWhatsAppCompat(), 8000);
     console.log("[WhatsAppEngine] WPP listo");
 
     await initEventEngine();
     console.log("[WhatsAppEngine] EventEngine listo");
 
     // Notificar que la sesión está lista
-    const WPP = (window as any).WPP;
+    const WPP = getWPP() || (window as any).WPP;
     const myDevice = await WPP.whatsapp.Browser?.id?.();
     const phone = myDevice?.user || "";
 
@@ -232,6 +236,12 @@ async function handleCommands(event: MessageEvent): Promise<void> {
 
       case "GET_CONTACT":
         response = await contactDetector.getContact(payload.contactId);
+        break;
+
+      case "RESOLVE_CONTACT":
+        response = await contactDetector.resolveContactForImport(
+          payload.chatId || payload.contactId || payload.waId
+        );
         break;
 
       case "GET_PROFILE_PICTURE":

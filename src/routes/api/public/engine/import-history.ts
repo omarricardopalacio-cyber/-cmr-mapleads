@@ -42,6 +42,7 @@ const BodySchema = z.object({
       waId: z.string().min(1).max(128).optional(),
       displayName: z.string().max(255).optional().nullable(),
       phone: z.string().max(32).optional().nullable(),
+      profilePictureUrl: z.string().max(2000).optional().nullable(),
     })
     .optional(),
   messages: z.array(MsgSchema).max(80),
@@ -54,6 +55,18 @@ function digits(v: unknown): string | undefined {
   if (v == null) return undefined;
   const s = String(v).split("@")[0].replace(/\D/g, "");
   return s || undefined;
+}
+
+/** Nunca persistir el LID como teléfono (14–15 dígitos del @lid). */
+function sanitizePhone(phone: string | undefined, waId: string): string | undefined {
+  if (!phone) return undefined;
+  const d = digits(phone);
+  if (!d || d.length < 8 || d.length > 15) return undefined;
+  if (String(waId).includes("@lid")) {
+    const lidDigits = digits(waId);
+    if (lidDigits && d === lidDigits) return undefined;
+  }
+  return d;
 }
 
 function toIso(ts: unknown): string {
@@ -116,14 +129,25 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
           return json(400, { error: "groups_not_allowed", skipped: true });
         }
 
-        let phone = body.contact?.phone ? digits(body.contact.phone) : undefined;
+        let phone = sanitizePhone(
+          body.contact?.phone ? digits(body.contact.phone) : undefined,
+          waId,
+        );
         if (!phone && !String(waId).includes("@lid")) {
-          phone = digits(waId);
+          phone = sanitizePhone(digits(waId), waId);
         }
 
+        const rawName =
+          (body.contact?.displayName && String(body.contact.displayName).trim()) || "";
         const displayName =
-          (body.contact?.displayName && String(body.contact.displayName).trim()) ||
-          (phone ? `Cliente ${phone.slice(-4)}` : "Cliente");
+          rawName ||
+          (phone ? `+${phone}` : String(waId).includes("@lid") ? "Sin número" : "Cliente");
+
+        const pic =
+          typeof body.contact?.profilePictureUrl === "string" &&
+          body.contact.profilePictureUrl.startsWith("http")
+            ? body.contact.profilePictureUrl
+            : undefined;
 
         // Upsert contacto
         let contactId: string | null = null;
@@ -153,6 +177,7 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
               wa_id: waId,
               phone: phone || null,
               display_name: displayName,
+              ...(pic ? { profile_picture_url: pic } : {}),
             } as any)
             .select("id")
             .single();
@@ -166,6 +191,7 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
             .update({
               display_name: displayName,
               ...(phone ? { phone } : {}),
+              ...(pic ? { profile_picture_url: pic } : {}),
               updated_at: new Date().toISOString(),
             } as any)
             .eq("id", contactId);

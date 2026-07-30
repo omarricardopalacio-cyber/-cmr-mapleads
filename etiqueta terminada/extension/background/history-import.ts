@@ -77,22 +77,29 @@ function isGroupChat(chat: any): boolean {
   return id.includes("@g.us") || String(chat?.server || "") === "g.us";
 }
 
-/** Extrae teléfono desde nombre tipo "+57 324 9722320" o desde JID @c.us */
+/** Extrae teléfono desde nombre tipo "+57 324 9722320" o desde JID @c.us (nunca el LID). */
 function phoneFromChat(chat: any): string | undefined {
+  const chatId = String(chat?.chatId || "");
+  const lidDigits = chatId.endsWith("@lid")
+    ? chatId.split("@")[0].replace(/\D/g, "")
+    : "";
+
   if (chat?.server === "c.us" && chat?.user) {
     const d = String(chat.user).replace(/\D/g, "");
-    if (d.length >= 8) return d;
+    if (d.length >= 8 && d.length <= 15 && d !== lidDigits) return d;
   }
-  const chatId = String(chat?.chatId || "");
   if (chatId.endsWith("@c.us")) {
     const d = chatId.split("@")[0].replace(/\D/g, "");
-    if (d.length >= 8) return d;
+    if (d.length >= 8 && d.length <= 15) return d;
   }
+  // @lid: el "user" NO es teléfono
+  if (chatId.endsWith("@lid")) return undefined;
+
   const name = String(chat?.name || "");
   const m = name.match(/\+?\s*(\d{1,3}(?:[\s-]?\d{2,4}){2,5})\b/) || name.match(/\b(\d{10,15})\b/);
   if (m?.[1]) {
     const d = m[1].replace(/\D/g, "");
-    if (d.length >= 8 && d.length <= 15) return d;
+    if (d.length >= 8 && d.length <= 15 && d !== lidDigits) return d;
   }
   return undefined;
 }
@@ -221,9 +228,10 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
     return getHistoryImportStatus();
   }
 
-  const maxChats = Math.max(1, Math.min(opts.maxChats ?? 50, 100));
-  const messagesPerChat = Math.max(1, Math.min(opts.messagesPerChat ?? 50, 50));
-  const pauseMs = Math.max(400, Math.min(opts.pauseMs ?? 900, 5000));
+  // Cuentas grandes (~1000 chats): tope alto pero con pausa para no tumbar WA Web
+  const maxChats = Math.max(1, Math.min(opts.maxChats ?? 200, 1000));
+  const messagesPerChat = Math.max(1, Math.min(opts.messagesPerChat ?? 50, 80));
+  const pauseMs = Math.max(250, Math.min(opts.pauseMs ?? 600, 5000));
 
   stopRequested = false;
   status = {
@@ -296,14 +304,31 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
           if (msgsRaw?.error) throw new Error(String(msgsRaw.error));
           const msgs = Array.isArray(msgsRaw) ? msgsRaw : [];
 
-          const phone = phoneFromChat(chat);
+          let phone = phoneFromChat(chat);
+          let displayName = chat.name || undefined;
+          let profilePictureUrl: string | undefined;
+
+          // Resolver LID → celular + nombre + foto (enricher inyectado)
+          try {
+            const resolved = await opts.sendWaCommand("RESOLVE_CONTACT", { chatId });
+            if (resolved && !resolved.error) {
+              if (resolved.phone) phone = String(resolved.phone).replace(/\D/g, "") || phone;
+              if (resolved.displayName) displayName = String(resolved.displayName);
+              if (resolved.profilePictureUrl) {
+                profilePictureUrl = String(resolved.profilePictureUrl);
+              }
+            }
+          } catch {
+            /* seguir con datos slim del chat */
+          }
 
           const payload = {
             chatId,
             contact: {
               waId: chatId,
-              displayName: chat.name || undefined,
+              displayName: displayName || undefined,
               phone: phone || undefined,
+              profilePictureUrl: profilePictureUrl || undefined,
             },
             labels: Array.isArray(chat.labels)
               ? chat.labels.map((l: any) => String(l)).filter(Boolean).slice(0, 10)

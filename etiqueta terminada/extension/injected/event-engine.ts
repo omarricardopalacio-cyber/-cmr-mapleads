@@ -818,6 +818,14 @@ export function destroyEventEngine(): void {
     return true;
   }
 
+  function pickPhoneCandidate(x: any, lid?: string): string | null {
+    if (x == null) return null;
+    const ser = typeof x === 'string' ? x : String(x?._serialized || x?.user || '');
+    if (!ser || ser.includes('@lid') || ser.includes('@g.us')) return null;
+    const d = digitsOnly(ser.includes('@') ? ser : x?.user || ser);
+    return looksLikeRealPhone(d, lid) ? d : null;
+  }
+
   async function resolveLidToPhone(lid: string): Promise<string | null> {
     if (!lid || typeof lid !== 'string') return null;
     if (!lid.endsWith('@lid')) {
@@ -830,61 +838,90 @@ export function destroyEventEngine(): void {
     if (!WPP) return null;
     let phone: string | null = null;
 
-    // Estrategia 1: contact.get(lid) y revisar todos los campos posibles
+    // Estrategia 1: contact.get(lid) y campos PN / peer
     try {
       const c = await WPP.contact.get(lid);
       const candidates = [
-        c?.phoneNumber?._serialized, c?.phoneNumber?.user, c?.phoneNumber,
-        c?.phone?._serialized, c?.phone?.user, c?.phone,
+        c?.phoneNumber, c?.phoneNumber?._serialized, c?.phoneNumber?.user,
+        c?.pnJid, c?.pnUser, c?.peerPhoneNumber, c?.phone,
+        c?.userid, c?.formattedPhone, c?.searchName,
         c?.id?._serialized, c?.wid?._serialized, c?.wid?.user,
       ];
       for (const x of candidates) {
-        if (typeof x === 'string' && x.includes('@lid')) continue;
-        const d = digitsOnly(x);
-        if (looksLikeRealPhone(d, lid)) { phone = d; break; }
+        phone = pickPhoneCandidate(x, lid);
+        if (phone) break;
       }
     } catch(e){}
 
-    // Estrategia 2: WidFactory + ApiContact.getPhoneNumber
+    // Estrategia 2: chat.contact del modelo Chat
+    if (!phone) {
+      try {
+        const chat = await WPP.chat?.get?.(lid) || await WPP.chat?.find?.(lid);
+        const c = chat?.contact;
+        const candidates = [
+          c?.phoneNumber, c?.pnJid, c?.pnUser, c?.peerPhoneNumber,
+          chat?.peerPhoneNumber, chat?.id?._serialized,
+        ];
+        for (const x of candidates) {
+          phone = pickPhoneCandidate(x, lid);
+          if (phone) break;
+        }
+      } catch(e){}
+    }
+
+    // Estrategia 3: WidFactory + ApiContact.getPhoneNumber
     if (!phone) {
       try {
         const wf = WPP.whatsapp?.WidFactory?.createWid || WPP.whatsapp?.createWid;
         const Wid = wf ? wf(lid) : null;
         if (Wid && WPP.whatsapp?.ApiContact?.getPhoneNumber) {
           const pn = await WPP.whatsapp.ApiContact.getPhoneNumber(Wid);
-          const d = digitsOnly(pn?._serialized || pn?.user || pn);
-          if (looksLikeRealPhone(d, lid)) phone = d;
+          phone = pickPhoneCandidate(pn, lid);
         }
       } catch(e){}
     }
 
-    // Estrategia 3: LidToPnMap / LidUtils (WA-JS modernos)
+    // Estrategia 4: mapas LID→PN (nombres varían por build de WA)
     if (!phone) {
       try {
-        const map = WPP.whatsapp?.LidToPnMap || WPP.whatsapp?.LidUtils
-          || WPP.whatsapp?.LidPnMap || WPP.whatsapp?.SignalDeviceLidPnMap;
-        const fnName = ['findPnForLid','getPhoneNumber','getPn','getPhoneForLid','lidToPn']
-          .find(n => map && typeof map[n] === 'function');
-        if (fnName) {
-          const pn = await (map as any)[fnName](lid);
-          const ser = String(pn?._serialized || pn?.user || pn || '');
-          if (!ser.includes('@lid')) {
-            const d = digitsOnly(pn?._serialized || pn?.user || pn);
-            if (looksLikeRealPhone(d, lid)) phone = d;
+        const maps = [
+          WPP.whatsapp?.LidToPnMap,
+          WPP.whatsapp?.LidUtils,
+          WPP.whatsapp?.LidPnMap,
+          WPP.whatsapp?.SignalDeviceLidPnMap,
+          WPP.whatsapp?.Lid1X1MigrationUtils,
+          WPP.contact,
+        ].filter(Boolean);
+        const fnNames = [
+          'findPnForLid', 'getPnForLid', 'getPhoneNumber', 'getPn',
+          'getPhoneForLid', 'lidToPn', 'getDisplayNameOrPnForLid',
+          'getFormattedPhone', 'queryPhone',
+        ];
+        for (const map of maps) {
+          for (const n of fnNames) {
+            if (typeof (map as any)[n] !== 'function') continue;
+            try {
+              const pn = await (map as any)[n](lid);
+              phone = pickPhoneCandidate(pn, lid);
+              if (phone) break;
+            } catch { /* next */ }
           }
+          if (phone) break;
         }
       } catch(e){}
     }
 
-    // Estrategia 4: queryExists
+    // Estrategia 5: queryExists / getPnLidEntry
     if (!phone) {
       try {
         const r = await WPP.contact?.queryExists?.(lid);
-        const ser = String(r?.wid?._serialized || r?.wid?.user || r?.wid || r || '');
-        if (!ser.includes('@lid')) {
-          const d = digitsOnly(r?.wid?._serialized || r?.wid?.user || r?.wid || r);
-          if (looksLikeRealPhone(d, lid)) phone = d;
-        }
+        phone = pickPhoneCandidate(r?.wid || r, lid);
+      } catch(e){}
+    }
+    if (!phone) {
+      try {
+        const entry = await WPP.contact?.getPnLidEntry?.(lid);
+        phone = pickPhoneCandidate(entry?.phoneNumber || entry?.pn || entry, lid);
       } catch(e){}
     }
 
@@ -892,12 +929,67 @@ export function destroyEventEngine(): void {
     return phone;
   }
 
-  async function getProfilePicUrl(waId: string): Promise<string | null> {
+  async function getProfilePicUrl(waId: string, contact?: any): Promise<string | null> {
+    const WPP = (window as any).WPP;
+    const tryUrl = (u: any): string | null =>
+      typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null;
+
     try {
-      const url = await (window as any).WPP?.contact?.getProfilePictureUrl?.(waId);
-      if (typeof url === 'string' && url.startsWith('http')) return url;
+      const url = await WPP?.contact?.getProfilePictureUrl?.(waId);
+      const ok = tryUrl(url);
+      if (ok) return ok;
+    } catch(e){}
+
+    try {
+      const thumb =
+        contact?.profilePicThumb?.eurl ||
+        contact?.profilePicThumb?.imgFull ||
+        contact?.profilePicThumb?.img ||
+        contact?.profilePicThumbObj?.eurl ||
+        contact?.profilePicThumbObj?.imgFull;
+      const ok = tryUrl(thumb);
+      if (ok) return ok;
+    } catch(e){}
+
+    try {
+      const c = contact || (await WPP?.contact?.get?.(waId).catch(() => null));
+      const thumb =
+        c?.profilePicThumb?.eurl ||
+        c?.profilePicThumb?.imgFull ||
+        c?.profilePicThumb?.img;
+      return tryUrl(thumb);
     } catch(e){}
     return null;
+  }
+
+  function pickDisplayName(contact: any, chat: any, phone: string | null, cid: string): string | null {
+    const candidates = [
+      contact?.name,
+      contact?.verifiedName,
+      contact?.displayName,
+      contact?.pushname,
+      contact?.formattedName,
+      contact?.notifyName,
+      chat?.name,
+      chat?.formattedTitle,
+      chat?.contact?.name,
+      chat?.contact?.pushname,
+    ];
+    for (const raw of candidates) {
+      if (typeof raw !== 'string') continue;
+      const n = raw.trim();
+      if (!n) continue;
+      if (/^cliente\s*\d+/i.test(n)) continue;
+      if (n.toLowerCase() === 'unknown') continue;
+      const digits = n.replace(/\D/g, '');
+      if (cid.endsWith('@lid') && digits && digits === digitsOnly(cid)) continue;
+      if (phone && digits === phone && n.replace(/\D/g, '') === phone && !/[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(n)) {
+        // Solo dígitos: preferir nombre real si aparece después; aún así sirve como fallback
+        continue;
+      }
+      return n;
+    }
+    return phone ? `+${phone}` : null;
   }
 
   function emit(event: string, payload: any): void {
@@ -913,15 +1005,16 @@ export function destroyEventEngine(): void {
     } catch(e){}
   }
 
-  async function enrichChat(chat: any): Promise<void> {
+  async function enrichChat(chat: any, force = false): Promise<void> {
     try {
       const cid = chat?.id?._serialized || (typeof chat?.id === 'string' ? chat.id : null);
       if (!cid || typeof cid !== 'string') return;
       if (cid.endsWith('@g.us')) return;       // skip grupos
 
       // Throttling: no reemitir el mismo waId en menos de 60 minutos
+      // (salvo force, o si aún no teníamos teléfono y ahora sí)
       const last = SENT_CACHE.get(cid) || 0;
-      if (Date.now() - last < 60 * 60 * 1000) return;
+      if (!force && Date.now() - last < 60 * 60 * 1000) return;
 
       let phone: string | null = null;
       if (cid.endsWith('@lid')) {
@@ -931,11 +1024,12 @@ export function destroyEventEngine(): void {
       }
 
       const contact = (chat.contact) || (await (window as any).WPP.contact.get(cid).catch(()=>null));
-      const displayName = contact?.name || contact?.displayName
-        || contact?.pushname || contact?.formattedName
-        || chat.name || chat.formattedTitle || null;
-      const pushname = contact?.pushname || null;
-      const pic = await getProfilePicUrl(cid);
+      const displayName = pickDisplayName(contact, chat, phone, cid);
+      const pushname = contact?.pushname || contact?.notifyName || null;
+      const pic = await getProfilePicUrl(cid, contact);
+
+      // Sin nombre ni teléfono ni foto: no ensuciar el CRM
+      if (!phone && !displayName && !pic) return;
 
       SENT_CACHE.set(cid, Date.now());
 

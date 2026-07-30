@@ -927,11 +927,13 @@ async function handleRequest(message: any): Promise<any> {
       if (!backendUrl || !sessionToken) {
         throw new Error("Configura Backend URL y Session Token en la pestaña config");
       }
-      const maxChats = Number(message.payload?.maxChats ?? 50);
+      const maxChats = Number(message.payload?.maxChats ?? 200);
       const messagesPerChat = Number(message.payload?.messagesPerChat ?? 50);
+      const pauseMs = Number(message.payload?.pauseMs ?? 600);
       return await startHistoryImport({
         maxChats,
         messagesPerChat,
+        pauseMs,
         backendUrl,
         sessionToken,
         sendWaCommand: sendWaCommandToTab,

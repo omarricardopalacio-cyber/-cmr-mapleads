@@ -6,7 +6,8 @@ import fs from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const WPP_CDN = "https://cdn.jsdelivr.net/npm/@wppconnect/wa-js@4.4.3/dist/wppconnect-wa.js";
+// latest en npm (= 4.4.3 hoy). El parche isBot + fallback getMessages cubre WA Web nuevo.
+const WPP_CDN = "https://cdn.jsdelivr.net/npm/@wppconnect/wa-js@latest/dist/wppconnect-wa.js";
 const WPP_LOCAL = resolve(__dirname, "public", "vendor", "wppconnect-wa.min.js");
 const WPP_DIST = resolve(__dirname, "dist", "vendor", "wppconnect-wa.min.js");
 

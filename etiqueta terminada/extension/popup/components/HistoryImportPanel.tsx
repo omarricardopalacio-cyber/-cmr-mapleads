@@ -53,7 +53,7 @@ function sendPopupRequest(event: string, payload: Record<string, unknown> = {}) 
 
 export default function HistoryImportPanel() {
   const [status, setStatus] = useState<HistoryStatus>(empty);
-  const [maxChats, setMaxChats] = useState(50);
+  const [maxChats, setMaxChats] = useState(200);
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
 
@@ -101,6 +101,7 @@ export default function HistoryImportPanel() {
     const response = await sendPopupRequest("START_HISTORY_IMPORT", {
       maxChats,
       messagesPerChat: 50,
+      pauseMs: maxChats > 300 ? 400 : 600,
     });
 
     setBusy(false);
@@ -139,21 +140,23 @@ export default function HistoryImportPanel() {
       <div className="bg-slate-800 rounded p-3 space-y-2">
         <p className="text-slate-300 leading-relaxed">
           Importa los últimos <b className="text-emerald-400">50 mensajes</b> de cada chat{" "}
-          <b className="text-emerald-400">1:1</b> (sin grupos). El vigilante clasifica con
+          <b className="text-emerald-400">1:1</b> (sin grupos). Hasta{" "}
+          <b className="text-emerald-400">1000 chats</b>. El vigilante clasifica con
           intención, etiquetas y segmentos. <b>No envía mensajes</b> ni inicia flujos.
         </p>
         <p className="text-[10px] text-slate-500">
-          Requiere WhatsApp Web abierto y Backend/Token en Config.
+          Requiere WhatsApp Web abierto y Backend/Token en Config. Con ~1000 chats puede
+          tardar varios minutos: no cierres la pestaña.
         </p>
         <label className="flex items-center justify-between gap-2 text-slate-400">
           <span>Máx. chats</span>
           <input
             type="number"
             min={1}
-            max={100}
+            max={1000}
             value={maxChats}
             disabled={status.running || busy}
-            onChange={(e) => setMaxChats(Math.min(100, Math.max(1, Number(e.target.value) || 50)))}
+            onChange={(e) => setMaxChats(Math.min(1000, Math.max(1, Number(e.target.value) || 200)))}
             className="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-slate-200"
           />
         </label>

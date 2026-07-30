@@ -4,6 +4,7 @@
 // ============================================================
 
 import { getWPP } from "./wpp-bootstrap";
+import { getChatMessages } from "./chat-detector";
 
 export async function getMessageById(msgId: string): Promise<any> {
   const WPP = getWPP();
@@ -15,9 +16,8 @@ export async function getMessagesByChatId(
   chatId: string,
   count = 50
 ): Promise<any[]> {
-  const WPP = getWPP();
-  if (!WPP) throw new Error("WPP no disponible");
-  return WPP.chat.getMessages(chatId, { count });
+  // Usa el detector con fallback (isBot / MsgStore) — no llamar getMessages crudo
+  return getChatMessages(chatId, { count });
 }
 
 export async function deleteMessage(msgId: string, everyone = false): Promise<void> {
