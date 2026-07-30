@@ -153,6 +153,34 @@ function isLidKey(v?: string | null): boolean {
   return Boolean(v && v.endsWith('@lid'))
 }
 
+/** Dígitos del user-part de un wa_id (detecta LID guardado como phone). */
+function waIdUserDigits(waId?: string | null): string {
+  if (!waId) return ''
+  return String(waId).split('@')[0].replace(/\D/g, '')
+}
+
+/**
+ * Nunca guardar un LID de WhatsApp como teléfono.
+ * Tras el update de etiquetas WA, el resolver a veces devolvía el propio LID
+ * (14–15 dígitos) y el CRM creaba un contacto “falso” + otro con el número real.
+ */
+function sanitizeContactPhone(
+  phone: string | null | undefined,
+  waId?: string | null,
+): string | null {
+  if (phone == null || phone === '') return null
+  if (String(phone).includes('@lid')) return null
+  const d = digits(phone)
+  if (!d || d.length < 8 || d.length > 15) return null
+
+  if (waId && isLidKey(waId)) {
+    const lidDigits = waIdUserDigits(waId)
+    if (lidDigits && d === lidDigits) return null
+  }
+
+  return d
+}
+
 function pickDisplayName(name: unknown, waId?: string, phone?: string): string | undefined {
   const clean = typeof name === 'string' ? name.trim() : ''
   if (clean && clean.toLowerCase() !== 'unknown') return clean
@@ -180,8 +208,11 @@ function canCreateContactRecord({
   phone?: string | null
   displayName?: string | null
 }) {
-  if (phone) return true
+  const cleanPhone = sanitizeContactPhone(phone, waId)
+  if (cleanPhone) return true
   if (!waId) return false
+  // Contacto solo-LID: crear sin phone para no perder el chat (luego CONTACT_INFO fusiona)
+  if (isLidKey(waId)) return true
   if (!isLidKey(waId) && Boolean(digits(waId))) return true
   return isUsefulDisplayName(displayName, phone ?? undefined, waId)
 }
@@ -259,12 +290,16 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
      }
    } else if (contact) {
      const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
-     const normalizedPhone = contact.phone ? digits(contact.phone) : counterpartPhone
+     const rawPhone = contact.phone ? digits(contact.phone) : counterpartPhone
+     const normalizedPhone = sanitizeContactPhone(
+       rawPhone ?? (!isLidKey(normalizedWaId) ? digits(normalizedWaId) : null),
+       normalizedWaId,
+     )
      if (normalizedWaId) {
        contact = {
          waId: normalizedWaId,
-         displayName: pickDisplayName(contact.displayName, normalizedWaId, normalizedPhone),
-         phone: !isLidKey(normalizedWaId) ? normalizedPhone ?? digits(normalizedWaId) : normalizedPhone,
+         displayName: pickDisplayName(contact.displayName, normalizedWaId, normalizedPhone ?? undefined),
+         phone: normalizedPhone ?? undefined,
          profilePictureUrl: contact.profilePictureUrl ?? p.profilePictureUrl ?? p.profilePicture,
        }
      }
@@ -1286,15 +1321,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (!waId) continue
 
             let contactId: string | null = null
-            let phone = e.contact?.phone ?? null
+            let phone = sanitizeContactPhone(e.contact?.phone ?? null, waId)
 
-            // Extraer número de teléfono del waId (tanto LID como JID normal)
+            // Extraer número de teléfono del waId (solo JID normal, NUNCA LID)
             const userPart = waId.split('@')[0];
             const cleanPhone = userPart.replace(/\D/g, '');
 
-            // Si no tenemos phone pero el waId contiene dígitos (solo JID normal, NUNCA LID), usarlo como phone
             if (!phone && cleanPhone && !waId.endsWith('@g.us') && !isLidKey(waId)) {
-              phone = cleanPhone;
+              phone = sanitizeContactPhone(cleanPhone, waId);
             }
 
             if (!phone && isLidKey(waId)) {
@@ -1306,7 +1340,24 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 sentAt: e.sentAt,
               })
               contactId = resolved.contactId
-              phone = resolved.phone
+              phone = sanitizeContactPhone(resolved.phone, waId)
+            }
+
+            // Si el contacto LID ya existe con phone=LID (dato basura), limpiarlo
+            if (isLidKey(waId)) {
+              const { data: dirtyLid } = await supabaseAdmin
+                .from('contacts')
+                .select('id, phone')
+                .eq('org_id', session.org_id)
+                .eq('wa_id', waId)
+                .maybeSingle()
+              if (dirtyLid?.phone && sanitizeContactPhone(dirtyLid.phone, waId) == null) {
+                await supabaseAdmin
+                  .from('contacts')
+                  .update({ phone: null } as any)
+                  .eq('id', dirtyLid.id)
+                console.info('[ingest] phone=LID limpiado del contacto', { contactId: dirtyLid.id, waId })
+              }
             }
 
             if (phone) {
@@ -2323,7 +2374,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             const rawWaId = ev.chatId ?? p.waId ?? p.chatId
             const waId = normalizeWaKey(rawWaId)
             if (!waId) continue
-            const phone = p.phone ? digits(p.phone) : (!isLidKey(waId) ? digits(waId) : null)
+            const phone = sanitizeContactPhone(
+              p.phone ? digits(p.phone) : (!isLidKey(waId) ? digits(waId) : null),
+              waId,
+            )
             const displayName =
               typeof p.displayName === 'string' && p.displayName.trim()
                 ? p.displayName.trim()
@@ -2403,9 +2457,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
               continue
             }
-            // CASO C: existe sólo por waId => añadir phone + foto + nombre real
+            // CASO C: existe sólo por waId => añadir phone real (nunca LID) + foto + nombre
             if (byWa && !byPhone) {
               const update: Record<string, any> = {}
+              const existingPhoneOk = sanitizeContactPhone(byWa.phone, byWa.wa_id)
+              if (!existingPhoneOk && byWa.phone) update.phone = null
               if (phone && byWa.phone !== phone) update.phone = phone
               if (picUrl && picUrl !== byWa.profile_picture_url) update.profile_picture_url = picUrl
               if (displayName && isAnonName(byWa.display_name)) update.display_name = displayName

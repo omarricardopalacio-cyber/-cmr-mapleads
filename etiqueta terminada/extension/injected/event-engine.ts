@@ -537,8 +537,12 @@ async function resolveLidJid(WPP: any, jid: string): Promise<string | undefined>
     const s = String(v).split("@")[0].replace(/\D/g, "");
     return s || null;
   };
-  const looksLikePhone = (d: string | null) =>
-    !!d && d.length >= 8 && d.length <= 15;
+  const looksLikePhone = (d: string | null) => {
+    if (!d || d.length < 8 || d.length > 15) return false;
+    const lidDigits = digitsOnly(jid);
+    if (lidDigits && d === lidDigits) return false;
+    return true;
+  };
 
   let phone: string | null = null;
 
@@ -804,11 +808,21 @@ export function destroyEventEngine(): void {
     return !!d && d.length >= MIN_PHONE_LEN && d.length <= MAX_PHONE_LEN;
   }
 
+  /** Rechaza el propio LID cuando se intenta usar como teléfono. */
+  function looksLikeRealPhone(d: string | null, lidJid?: string): boolean {
+    if (!looksLikePhone(d)) return false;
+    if (lidJid && lidJid.endsWith("@lid")) {
+      const lidDigits = digitsOnly(lidJid);
+      if (lidDigits && d === lidDigits) return false;
+    }
+    return true;
+  }
+
   async function resolveLidToPhone(lid: string): Promise<string | null> {
     if (!lid || typeof lid !== 'string') return null;
     if (!lid.endsWith('@lid')) {
       const d = digitsOnly(lid);
-      return looksLikePhone(d) ? d : null;
+      return looksLikeRealPhone(d) ? d : null;
     }
     if (LID_CACHE.has(lid)) return LID_CACHE.get(lid) || null;
 
@@ -825,8 +839,9 @@ export function destroyEventEngine(): void {
         c?.id?._serialized, c?.wid?._serialized, c?.wid?.user,
       ];
       for (const x of candidates) {
+        if (typeof x === 'string' && x.includes('@lid')) continue;
         const d = digitsOnly(x);
-        if (looksLikePhone(d)) { phone = d; break; }
+        if (looksLikeRealPhone(d, lid)) { phone = d; break; }
       }
     } catch(e){}
 
@@ -838,7 +853,7 @@ export function destroyEventEngine(): void {
         if (Wid && WPP.whatsapp?.ApiContact?.getPhoneNumber) {
           const pn = await WPP.whatsapp.ApiContact.getPhoneNumber(Wid);
           const d = digitsOnly(pn?._serialized || pn?.user || pn);
-          if (looksLikePhone(d)) phone = d;
+          if (looksLikeRealPhone(d, lid)) phone = d;
         }
       } catch(e){}
     }
@@ -852,8 +867,11 @@ export function destroyEventEngine(): void {
           .find(n => map && typeof map[n] === 'function');
         if (fnName) {
           const pn = await (map as any)[fnName](lid);
-          const d = digitsOnly(pn?._serialized || pn?.user || pn);
-          if (looksLikePhone(d)) phone = d;
+          const ser = String(pn?._serialized || pn?.user || pn || '');
+          if (!ser.includes('@lid')) {
+            const d = digitsOnly(pn?._serialized || pn?.user || pn);
+            if (looksLikeRealPhone(d, lid)) phone = d;
+          }
         }
       } catch(e){}
     }
@@ -862,8 +880,11 @@ export function destroyEventEngine(): void {
     if (!phone) {
       try {
         const r = await WPP.contact?.queryExists?.(lid);
-        const d = digitsOnly(r?.wid?._serialized || r?.wid?.user || r?.wid || r);
-        if (looksLikePhone(d)) phone = d;
+        const ser = String(r?.wid?._serialized || r?.wid?.user || r?.wid || r || '');
+        if (!ser.includes('@lid')) {
+          const d = digitsOnly(r?.wid?._serialized || r?.wid?.user || r?.wid || r);
+          if (looksLikeRealPhone(d, lid)) phone = d;
+        }
       } catch(e){}
     }
 

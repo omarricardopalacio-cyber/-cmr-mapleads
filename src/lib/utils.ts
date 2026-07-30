@@ -48,11 +48,14 @@ export function getContactDisplayName(contact: ContactLike | null | undefined, i
 
 export function formatPhoneOrWaId(contact: ContactLike | null | undefined): string {
   if (!contact) return "Sin Número";
-  if (contact.phone && contact.phone.trim() !== "") {
-    const cleanPhone = contact.phone.replace(/\D/g, "");
-    return `+${cleanPhone}`;
-  }
   const waId = contact.wa_id || contact.waId;
+  const phoneDigits = contact.phone ? contact.phone.replace(/\D/g, "") : "";
+  const lidDigits = waId && isLidWaId(waId) ? waId.split("@")[0].replace(/\D/g, "") : "";
+
+  // No mostrar el LID como si fuera un teléfono (+11875…)
+  if (phoneDigits && !(lidDigits && phoneDigits === lidDigits)) {
+    return `+${phoneDigits}`;
+  }
   if (waId && isLidWaId(waId)) {
     return `LID: ${waId.split("@")[0]}`;
   }
