@@ -193,6 +193,8 @@ function isUsefulDisplayName(name: unknown, phone?: string, waId?: string): bool
   if (!clean) return false
   const lower = clean.toLowerCase()
   if (lower === 'unknown') return false
+  if (/^[.\-…·_*]+$/.test(clean)) return false
+  if (/^(n\/a|na|null|undefined|sin nombre)$/i.test(clean)) return false
   if (phone && clean === phone) return false
   if (waId && clean === waId.replace(/@lid$/, '')) return false
   if (clean.startsWith('Cliente')) return false

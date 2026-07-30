@@ -10,6 +10,8 @@ const COMPRO_TAG_COLOR = "#16a34a";
 export async function assignComproTag(params: {
   orgId: string;
   contactId?: string | null;
+  /** Evita reentrada cuando el vigilante ya marcó compro */
+  skipWatcher?: boolean;
 }): Promise<{ assigned: boolean; tagId?: string }> {
   const contactId = params.contactId ? String(params.contactId) : "";
   if (!contactId) return { assigned: false };
@@ -59,16 +61,18 @@ export async function assignComproTag(params: {
     }).catch((err) => console.warn("[assignComproTag] triggerFlows", err));
 
     // Vigilante: intención "compro" → solo el último flujo asignado
-    import("@/lib/intent-watcher.server")
-      .then(({ runIntentWatcher }) =>
-        runIntentWatcher({
-          orgId: params.orgId,
-          contactId,
-          trigger: "purchase",
-          forcedIntentKey: "compro",
-        }),
-      )
-      .catch((err) => console.warn("[assignComproTag] watcher", err));
+    if (!params.skipWatcher) {
+      import("@/lib/intent-watcher.server")
+        .then(({ runIntentWatcher }) =>
+          runIntentWatcher({
+            orgId: params.orgId,
+            contactId,
+            trigger: "purchase",
+            forcedIntentKey: "compro",
+          }),
+        )
+        .catch((err) => console.warn("[assignComproTag] watcher", err));
+    }
 
     return { assigned: true, tagId: tagId! };
   } catch (err) {

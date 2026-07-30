@@ -114,7 +114,7 @@ function formatNum(n: number | null | undefined): string {
 const SUGGESTED = [
   { key: "precio_caro", label: "Precio caro / no me alcanza" },
   { key: "no_responde", label: "No responde (silencio)" },
-  { key: "compro", label: "Compró" },
+  { key: "compro", label: "Compró / agendó pedido (estado Compró)" },
   { key: "pide_envio", label: "Pregunta por envío" },
   { key: "pide_info", label: "Pide información general" },
   { key: "objecion_confianza", label: "Desconfianza / estafa" },

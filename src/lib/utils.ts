@@ -17,6 +17,9 @@ function isAnonymousName(name?: string | null, waId?: string | null): boolean {
   if (!name) return true;
   const trimmed = name.trim();
   if (!trimmed || trimmed.toLowerCase() === "unknown") return true;
+  // Placeholder de WA / CRM: "...", "…", ".", "-", "n/a"
+  if (/^[.\-…·_*]+$/.test(trimmed)) return true;
+  if (/^(n\/a|na|null|undefined|sin nombre)$/i.test(trimmed)) return true;
   // display_name puramente numérico = es el JID, no un nombre real
   if (/^\+?\d{6,}$/.test(trimmed)) return true;
   if (waId && trimmed === waId) return true;
