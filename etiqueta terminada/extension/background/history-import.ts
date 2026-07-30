@@ -102,14 +102,22 @@ async function postImportHistory(
   sessionToken: string,
   body: Record<string, unknown>,
 ): Promise<any> {
-  const res = await fetch(`${backendUrl}${API_ENDPOINTS.POST_IMPORT_HISTORY}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Session-Token": sessionToken,
-    },
-    body: JSON.stringify(body),
-  });
+  const url = `${backendUrl.replace(/\/$/, "")}${API_ENDPOINTS.POST_IMPORT_HISTORY}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Session-Token": sessionToken,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err: any) {
+    throw new Error(
+      `Failed to fetch (${url}). Revisa Config → Backend URL y que la extensión tenga permiso para Netlify.`,
+    );
+  }
   const text = await res.text();
   let data: any = null;
   try {
@@ -118,7 +126,7 @@ async function postImportHistory(
     data = { error: text?.slice(0, 200) };
   }
   if (!res.ok) {
-    throw new Error(data?.error || `HTTP ${res.status}`);
+    throw new Error(data?.error || `HTTP ${res.status} en import-history`);
   }
   return data;
 }
