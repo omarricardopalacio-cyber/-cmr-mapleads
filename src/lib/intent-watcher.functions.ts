@@ -355,3 +355,230 @@ export const deleteAdSegment = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+// ── Barridos del vigilante (uno a uno, salta si ya está hecho) ──
+
+async function loadInboundTextForContact(
+  orgId: string,
+  contactId: string,
+  maxMsgs = 12,
+): Promise<{ text: string; threadId: string | null }> {
+  const { data: threads } = await db()
+    .from("threads")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("contact_id", contactId)
+    .order("last_message_at", { ascending: false })
+    .limit(3);
+
+  const threadIds = (threads ?? []).map((t: any) => t.id as string);
+  if (!threadIds.length) return { text: "", threadId: null };
+
+  const { data: msgs } = await db()
+    .from("messages")
+    .select("thread_id, text, created_at")
+    .eq("direction", "in")
+    .in("thread_id", threadIds)
+    .order("created_at", { ascending: true })
+    .limit(maxMsgs);
+
+  const parts: string[] = [];
+  for (const m of msgs ?? []) {
+    const t = String((m as any).text || "").trim();
+    if (t) parts.push(t);
+  }
+  return {
+    text: parts.join("\n").slice(0, 4000),
+    threadId: threadIds[0] ?? null,
+  };
+}
+
+const ScanBatchSchema = z.object({
+  limit: z.number().int().min(1).max(80).default(40),
+  offset: z.number().int().min(0).max(100000).default(0),
+});
+
+/**
+ * Recorre chats sin segmento y aplica Segmentos de publicidad si hay match.
+ * Si ya tiene entry_segment_id → salta (no cuenta como aplicado).
+ */
+export const scanAdSegmentsBatch = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => ScanBatchSchema.parse(d ?? {}))
+  .handler(async ({ context, data }) => {
+    const { applyEntrySegmentToContact } = await import("@/lib/ad-segments.server");
+    const { ensureContactTag } = await import("@/lib/contact-tag.server");
+
+    const orgId = await getUserOrg(context.userId);
+    const limit = data.limit;
+    const offset = data.offset;
+
+    const { data: contacts, error } = await db()
+      .from("contacts")
+      .select("id, display_name, entry_segment_id")
+      .eq("org_id", orgId)
+      .is("entry_segment_id", null)
+      .order("updated_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw new Error(error.message);
+
+    const batch = contacts ?? [];
+    let scanned = 0;
+    let applied = 0;
+    let skipped = 0;
+    const samples: string[] = [];
+
+    for (const c of batch) {
+      scanned += 1;
+      if ((c as any).entry_segment_id) {
+        skipped += 1;
+        continue;
+      }
+      const { text } = await loadInboundTextForContact(orgId, c.id as string);
+      if (!text.trim()) {
+        skipped += 1;
+        continue;
+      }
+      const result = await applyEntrySegmentToContact({
+        orgId,
+        contactId: c.id as string,
+        text,
+        force: false,
+      });
+      if (result.applied && result.segment) {
+        applied += 1;
+        await ensureContactTag({
+          orgId,
+          contactId: c.id as string,
+          tagName: result.segment.name,
+          color: "#a855f7",
+        });
+        if (samples.length < 5) {
+          samples.push(`${(c as any).display_name || c.id} → ${result.segment.name}`);
+        }
+      } else {
+        skipped += 1;
+      }
+    }
+
+    const done = batch.length < limit;
+    return {
+      ok: true,
+      scanned,
+      applied,
+      skipped,
+      done,
+      nextOffset: done ? offset + batch.length : offset + limit,
+      samples,
+    };
+  });
+
+/**
+ * Recorre chats sin flujo activo / sin intención y clasifica + asigna flujo.
+ * Si ya tiene flujo activo o ya se registró la misma intención → salta.
+ */
+export const scanIntentFlowsBatch = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => ScanBatchSchema.parse(d ?? {}))
+  .handler(async ({ context, data }) => {
+    const { runIntentWatcher } = await import("@/lib/intent-watcher.server");
+
+    const orgId = await getUserOrg(context.userId);
+    const limit = data.limit;
+    const offset = data.offset;
+
+    // Candidatos: sin last_intent_key o sin last_watcher_flow_id
+    const { data: contacts, error } = await db()
+      .from("contacts")
+      .select("id, display_name, last_intent_key, last_watcher_flow_id")
+      .eq("org_id", orgId)
+      .order("updated_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw new Error(error.message);
+
+    const batch = contacts ?? [];
+    const contactIds = batch.map((c: any) => c.id as string);
+
+    const activeByContact = new Set<string>();
+    if (contactIds.length) {
+      const { data: runs } = await db()
+        .from("flow_runs")
+        .select("contact_id")
+        .eq("org_id", orgId)
+        .in("contact_id", contactIds)
+        .in("status", ["active", "running", "wait_node", "paused"]);
+      for (const r of runs ?? []) {
+        if (r.contact_id) activeByContact.add(r.contact_id as string);
+      }
+    }
+
+    let scanned = 0;
+    let applied = 0;
+    let skipped = 0;
+    const samples: string[] = [];
+
+    for (const c of batch) {
+      scanned += 1;
+      const cid = c.id as string;
+
+      // Ya tiene flujo activo → no tocar
+      if (activeByContact.has(cid)) {
+        skipped += 1;
+        continue;
+      }
+
+      // Ya clasificado e intentó asignar flujo → saltar (dejar por sentado)
+      if ((c as any).last_intent_key && (c as any).last_watcher_flow_id) {
+        skipped += 1;
+        continue;
+      }
+
+      const { text, threadId } = await loadInboundTextForContact(orgId, cid, 20);
+      if (!text.trim()) {
+        skipped += 1;
+        continue;
+      }
+
+      const result = await runIntentWatcher({
+        orgId,
+        contactId: cid,
+        threadId,
+        text,
+        trigger: "message",
+        skipFlowStart: false,
+      });
+
+      // Contar solo si hubo clasificación o arranque de flujo (no si no hizo nada)
+      const noopSkips = new Set([
+        "cooldown",
+        "mismo_flujo_activo",
+        "vigilante_apagado",
+        "sin_reglas",
+        "sin_match",
+        "contacto_no_encontrado",
+      ]);
+      if (result.started || (result.intent_key && !noopSkips.has(String(result.skipped || "")))) {
+        applied += 1;
+        if (samples.length < 5) {
+          samples.push(
+            `${(c as any).display_name || cid} → ${result.intent_key}${result.started ? " (flujo)" : ""}`,
+          );
+        }
+      } else {
+        skipped += 1;
+      }
+    }
+
+    const done = batch.length < limit;
+    return {
+      ok: true,
+      scanned,
+      applied,
+      skipped,
+      done,
+      nextOffset: done ? offset + batch.length : offset + limit,
+      samples,
+    };
+  });

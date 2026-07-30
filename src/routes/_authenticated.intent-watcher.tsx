@@ -12,6 +12,8 @@ import {
   listAdSegments,
   upsertAdSegment,
   deleteAdSegment,
+  scanAdSegmentsBatch,
+  scanIntentFlowsBatch,
 } from "@/lib/intent-watcher.functions";
 import { listFlows } from "@/lib/flows.functions";
 import { Card } from "@/components/ui/card";
@@ -29,7 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Save, Trash2, Eye, Settings2, Target } from "lucide-react";
+import { Plus, Save, Trash2, Eye, Settings2, Target, Play, Loader2, Workflow } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/intent-watcher")({
   component: IntentWatcherPage,
@@ -125,6 +127,8 @@ function IntentWatcherPage() {
   const listFn = useServerFn(listIntentRules);
   const listFlowsFn = useServerFn(listFlows);
   const listSegFn = useServerFn(listAdSegments);
+  const scanSegFn = useServerFn(scanAdSegmentsBatch);
+  const scanIntentFn = useServerFn(scanIntentFlowsBatch);
 
   const { data: cfgData } = useQuery({
     queryKey: ["watcherConfig"],
@@ -152,6 +156,65 @@ function IntentWatcherPage() {
   const [editing, setEditing] = useState<ReturnType<typeof emptyRule> | null>(null);
   const [editingSeg, setEditingSeg] = useState<ReturnType<typeof emptySegment> | null>(null);
   const [savingCfg, setSavingCfg] = useState(false);
+  const [scanningSeg, setScanningSeg] = useState(false);
+  const [scanningIntent, setScanningIntent] = useState(false);
+  const [scanProgress, setScanProgress] = useState<string | null>(null);
+
+  async function runBatchScan(
+    kind: "segments" | "intents",
+  ) {
+    const busy = kind === "segments" ? scanningSeg : scanningIntent;
+    if (busy) return;
+    if (kind === "segments") setScanningSeg(true);
+    else setScanningIntent(true);
+
+    let offset = 0;
+    let totalScanned = 0;
+    let totalApplied = 0;
+    let totalSkipped = 0;
+    const samples: string[] = [];
+
+    try {
+      for (let i = 0; i < 50; i++) {
+        setScanProgress(
+          kind === "segments"
+            ? `Evaluando segmentos… revisados ${totalScanned}, asignados ${totalApplied}`
+            : `Evaluando intenciones/flujos… revisados ${totalScanned}, asignados ${totalApplied}`,
+        );
+        const fn = kind === "segments" ? scanSegFn : scanIntentFn;
+        const res = (await fn({ data: { limit: 40, offset } })) as {
+          scanned: number;
+          applied: number;
+          skipped: number;
+          done: boolean;
+          nextOffset: number;
+          samples?: string[];
+        };
+        totalScanned += res.scanned || 0;
+        totalApplied += res.applied || 0;
+        totalSkipped += res.skipped || 0;
+        if (res.samples?.length) samples.push(...res.samples.slice(0, 3));
+        offset = res.nextOffset;
+        if (res.done || (res.scanned || 0) === 0) break;
+      }
+
+      const label = kind === "segments" ? "Segmentos" : "Intenciones/flujos";
+      toast.success(
+        `${label}: ${totalApplied} asignados · ${totalSkipped} omitidos (ya tenían o sin match) · ${totalScanned} revisados`,
+      );
+      if (samples.length) {
+        toast.message(samples.slice(0, 5).join(" · "));
+      }
+      qc.invalidateQueries({ queryKey: ["adSegments"] });
+      qc.invalidateQueries({ queryKey: ["intentRules"] });
+    } catch (e: any) {
+      toast.error(e?.message || "Error en el barrido del vigilante");
+    } finally {
+      setScanningSeg(false);
+      setScanningIntent(false);
+      setScanProgress(null);
+    }
+  }
 
   useEffect(() => {
     const c = cfgData?.config as any;
@@ -202,7 +265,7 @@ function IntentWatcherPage() {
         </TabsList>
 
         <TabsContent value="segments" className="space-y-4 mt-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-medium flex items-center gap-2">
                 <Target className="h-5 w-5" /> Segmentos de publicidad
@@ -212,10 +275,51 @@ function IntentWatcherPage() {
                 guarda el segmento en la ficha y en el Excel (solo la primera vez).
               </p>
             </div>
-            <Button onClick={() => setEditingSeg(emptySegment())}>
-              <Plus className="h-4 w-4 mr-1" /> Nuevo segmento
-            </Button>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <Button
+                variant="secondary"
+                disabled={scanningSeg || scanningIntent}
+                onClick={() => void runBatchScan("segments")}
+              >
+                {scanningSeg ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4 mr-1" />
+                )}
+                Evaluar segmentos
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={scanningSeg || scanningIntent}
+                onClick={() => void runBatchScan("intents")}
+              >
+                {scanningIntent ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Workflow className="h-4 w-4 mr-1" />
+                )}
+                Intenciones y flujos
+              </Button>
+              <Button onClick={() => setEditingSeg(emptySegment())}>
+                <Plus className="h-4 w-4 mr-1" /> Nuevo segmento
+              </Button>
+            </div>
           </div>
+
+          {scanProgress ? (
+            <Card className="p-3 text-xs text-muted-foreground border-dashed">
+              {scanProgress}
+              <span className="block mt-1 text-[10px]">
+                Si ya tiene segmento o flujo asignado, se omite y no se cuenta.
+              </span>
+            </Card>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              <b>Evaluar segmentos</b> recorre chats sin segmento y marca publicidad.{" "}
+              <b>Intenciones y flujos</b> clasifica y asigna flujo solo si aún no lo tiene.
+              Activa el vigilante en “Configuración IA” para el segundo botón.
+            </p>
+          )}
 
           {editingSeg && (
             <SegmentEditor
@@ -239,6 +343,13 @@ function IntentWatcherPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium truncate">{s.name}</p>
+                        <Badge
+                          variant="default"
+                          className="text-[10px] bg-violet-600 hover:bg-violet-600"
+                          title="Contactos marcados con este segmento"
+                        >
+                          {st?.contacts ?? 0} registros
+                        </Badge>
                         <Badge variant={s.is_active ? "default" : "secondary"} className="text-[10px]">
                           {s.is_active ? "Activo" : "Inactivo"}
                         </Badge>
@@ -268,7 +379,18 @@ function IntentWatcherPage() {
                     </div>
                   </div>
 
-                  <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="grid gap-2 sm:grid-cols-4">
+                    <div className="rounded-md border bg-violet-500/10 border-violet-500/30 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Registros
+                      </p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {st?.contacts ?? 0}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        contactos con este segmento
+                      </p>
+                    </div>
                     <div className="rounded-md border bg-muted/30 px-3 py-2">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                         Costo por mensaje
