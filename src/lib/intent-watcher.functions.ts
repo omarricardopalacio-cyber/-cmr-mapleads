@@ -582,3 +582,83 @@ export const scanIntentFlowsBatch = createServerFn({ method: "POST" })
       samples,
     };
   });
+
+/**
+ * Rellena Productos consultados + Preguntas desde el historial del chat.
+ * Omite contactos que ya tienen ambos campos.
+ */
+export const scanInquiryBatch = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => ScanBatchSchema.parse(d ?? {}))
+  .handler(async ({ context, data }) => {
+    const {
+      backfillContactInquiryFromChat,
+      loadInquiryProductCatalog,
+    } = await import("@/lib/contact-inquiry.server");
+
+    const orgId = await getUserOrg(context.userId);
+    const limit = data.limit;
+    const offset = data.offset;
+    const catalog = await loadInquiryProductCatalog(orgId);
+
+    const { data: contacts, error } = await db()
+      .from("contacts")
+      .select("id, display_name, phone, asked_products, asked_questions")
+      .eq("org_id", orgId)
+      .order("updated_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw new Error(error.message);
+
+    const batch = contacts ?? [];
+    let scanned = 0;
+    let applied = 0;
+    let skipped = 0;
+    let productsAdded = 0;
+    let questionsAdded = 0;
+    const samples: string[] = [];
+
+    for (const c of batch) {
+      scanned += 1;
+      const hasProducts = String((c as any).asked_products || "").trim().length > 0;
+      const hasQuestions = String((c as any).asked_questions || "").trim().length > 0;
+      if (hasProducts && hasQuestions) {
+        skipped += 1;
+        continue;
+      }
+
+      const result = await backfillContactInquiryFromChat({
+        orgId,
+        contactId: c.id as string,
+        catalog,
+        maxMsgs: 40,
+      });
+
+      if (result.skipped || (result.productsAdded === 0 && result.questionsAdded === 0)) {
+        skipped += 1;
+      } else {
+        applied += 1;
+        productsAdded += result.productsAdded;
+        questionsAdded += result.questionsAdded;
+        if (samples.length < 5) {
+          const label = (c as any).display_name || (c as any).phone || c.id;
+          samples.push(
+            `${label}: +${result.productsAdded} prod, +${result.questionsAdded} preg`,
+          );
+        }
+      }
+    }
+
+    const done = batch.length < limit;
+    return {
+      ok: true,
+      scanned,
+      applied,
+      skipped,
+      productsAdded,
+      questionsAdded,
+      done,
+      nextOffset: done ? offset + batch.length : offset + limit,
+      samples,
+    };
+  });

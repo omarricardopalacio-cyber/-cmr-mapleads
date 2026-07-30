@@ -469,6 +469,30 @@ export async function runIntentWatcher(params: {
       if (Object.keys(profile).length) await applyProfilePatch(contactId, profile);
     }
 
+    // Acumular pregunta / productos mencionados en el mensaje entrante
+    if (text && trigger === "message") {
+      try {
+        const { appendContactAskedQuestion, appendContactAskedProduct, loadInquiryProductCatalog } =
+          await import("@/lib/contact-inquiry.server");
+        await appendContactAskedQuestion({ orgId, contactId, text });
+        const catalog = await loadInquiryProductCatalog(orgId);
+        const hay = text.toLowerCase();
+        for (const p of catalog.slice(0, 200)) {
+          const n = p.name.toLowerCase();
+          if (n.length >= 4 && hay.includes(n)) {
+            await appendContactAskedProduct({
+              orgId,
+              contactId,
+              productName: p.name,
+              productId: p.id,
+            });
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
     const scheduled = text ? detectsScheduledOrBought(text) : false;
     if (scheduled || params.forcedIntentKey === "compro") {
       await markThreadPurchaseCompro({

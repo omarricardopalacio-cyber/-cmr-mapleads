@@ -14,6 +14,7 @@ import {
   deleteAdSegment,
   scanAdSegmentsBatch,
   scanIntentFlowsBatch,
+  scanInquiryBatch,
 } from "@/lib/intent-watcher.functions";
 import { listFlows } from "@/lib/flows.functions";
 import { Card } from "@/components/ui/card";
@@ -31,7 +32,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Save, Trash2, Eye, Settings2, Target, Play, Loader2, Workflow } from "lucide-react";
+import { Plus, Save, Trash2, Eye, Settings2, Target, Play, Loader2, Workflow, MessageSquareText } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/intent-watcher")({
   component: IntentWatcherPage,
@@ -129,6 +130,7 @@ function IntentWatcherPage() {
   const listSegFn = useServerFn(listAdSegments);
   const scanSegFn = useServerFn(scanAdSegmentsBatch);
   const scanIntentFn = useServerFn(scanIntentFlowsBatch);
+  const scanInquiryFn = useServerFn(scanInquiryBatch);
 
   const { data: cfgData } = useQuery({
     queryKey: ["watcherConfig"],
@@ -158,30 +160,38 @@ function IntentWatcherPage() {
   const [savingCfg, setSavingCfg] = useState(false);
   const [scanningSeg, setScanningSeg] = useState(false);
   const [scanningIntent, setScanningIntent] = useState(false);
+  const [scanningInquiry, setScanningInquiry] = useState(false);
   const [scanProgress, setScanProgress] = useState<string | null>(null);
 
-  async function runBatchScan(
-    kind: "segments" | "intents",
-  ) {
-    const busy = kind === "segments" ? scanningSeg : scanningIntent;
-    if (busy) return;
+  const anyScanning = scanningSeg || scanningIntent || scanningInquiry;
+
+  async function runBatchScan(kind: "segments" | "intents" | "inquiry") {
+    if (anyScanning) return;
     if (kind === "segments") setScanningSeg(true);
-    else setScanningIntent(true);
+    else if (kind === "intents") setScanningIntent(true);
+    else setScanningInquiry(true);
 
     let offset = 0;
     let totalScanned = 0;
     let totalApplied = 0;
     let totalSkipped = 0;
+    let totalProducts = 0;
+    let totalQuestions = 0;
     const samples: string[] = [];
 
     try {
       for (let i = 0; i < 50; i++) {
-        setScanProgress(
+        const labelProgress =
           kind === "segments"
-            ? `Evaluando segmentos… revisados ${totalScanned}, asignados ${totalApplied}`
-            : `Evaluando intenciones/flujos… revisados ${totalScanned}, asignados ${totalApplied}`,
+            ? "segmentos"
+            : kind === "intents"
+              ? "intenciones/flujos"
+              : "productos/preguntas";
+        setScanProgress(
+          `Evaluando ${labelProgress}… revisados ${totalScanned}, actualizados ${totalApplied}`,
         );
-        const fn = kind === "segments" ? scanSegFn : scanIntentFn;
+        const fn =
+          kind === "segments" ? scanSegFn : kind === "intents" ? scanIntentFn : scanInquiryFn;
         const res = (await fn({ data: { limit: 40, offset } })) as {
           scanned: number;
           applied: number;
@@ -189,29 +199,44 @@ function IntentWatcherPage() {
           done: boolean;
           nextOffset: number;
           samples?: string[];
+          productsAdded?: number;
+          questionsAdded?: number;
         };
         totalScanned += res.scanned || 0;
         totalApplied += res.applied || 0;
         totalSkipped += res.skipped || 0;
+        totalProducts += res.productsAdded || 0;
+        totalQuestions += res.questionsAdded || 0;
         if (res.samples?.length) samples.push(...res.samples.slice(0, 3));
         offset = res.nextOffset;
         if (res.done || (res.scanned || 0) === 0) break;
       }
 
-      const label = kind === "segments" ? "Segmentos" : "Intenciones/flujos";
+      const label =
+        kind === "segments"
+          ? "Segmentos"
+          : kind === "intents"
+            ? "Intenciones/flujos"
+            : "Productos/preguntas";
+      const extra =
+        kind === "inquiry"
+          ? ` · +${totalProducts} productos · +${totalQuestions} preguntas`
+          : "";
       toast.success(
-        `${label}: ${totalApplied} asignados · ${totalSkipped} omitidos (ya tenían o sin match) · ${totalScanned} revisados`,
+        `${label}: ${totalApplied} actualizados · ${totalSkipped} omitidos · ${totalScanned} revisados${extra}`,
       );
       if (samples.length) {
         toast.message(samples.slice(0, 5).join(" · "));
       }
       qc.invalidateQueries({ queryKey: ["adSegments"] });
       qc.invalidateQueries({ queryKey: ["intentRules"] });
+      qc.invalidateQueries({ queryKey: ["contacts"] });
     } catch (e: any) {
       toast.error(e?.message || "Error en el barrido del vigilante");
     } finally {
       setScanningSeg(false);
       setScanningIntent(false);
+      setScanningInquiry(false);
       setScanProgress(null);
     }
   }
@@ -278,7 +303,7 @@ function IntentWatcherPage() {
             <div className="flex flex-wrap gap-2 shrink-0">
               <Button
                 variant="secondary"
-                disabled={scanningSeg || scanningIntent}
+                disabled={anyScanning}
                 onClick={() => void runBatchScan("segments")}
               >
                 {scanningSeg ? (
@@ -290,7 +315,7 @@ function IntentWatcherPage() {
               </Button>
               <Button
                 variant="secondary"
-                disabled={scanningSeg || scanningIntent}
+                disabled={anyScanning}
                 onClick={() => void runBatchScan("intents")}
               >
                 {scanningIntent ? (
@@ -299,6 +324,18 @@ function IntentWatcherPage() {
                   <Workflow className="h-4 w-4 mr-1" />
                 )}
                 Intenciones y flujos
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={anyScanning}
+                onClick={() => void runBatchScan("inquiry")}
+              >
+                {scanningInquiry ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <MessageSquareText className="h-4 w-4 mr-1" />
+                )}
+                Productos y preguntas
               </Button>
               <Button onClick={() => setEditingSeg(emptySegment())}>
                 <Plus className="h-4 w-4 mr-1" /> Nuevo segmento
@@ -310,14 +347,15 @@ function IntentWatcherPage() {
             <Card className="p-3 text-xs text-muted-foreground border-dashed">
               {scanProgress}
               <span className="block mt-1 text-[10px]">
-                Si ya tiene segmento o flujo asignado, se omite y no se cuenta.
+                Si ya tiene el dato, se omite y no se cuenta.
               </span>
             </Card>
           ) : (
             <p className="text-[11px] text-muted-foreground">
-              <b>Evaluar segmentos</b> recorre chats sin segmento y marca publicidad.{" "}
-              <b>Intenciones y flujos</b> clasifica y asigna flujo solo si aún no lo tiene.
-              Activa el vigilante en “Configuración IA” para el segundo botón.
+              <b>Evaluar segmentos</b> marca publicidad.{" "}
+              <b>Intenciones y flujos</b> asigna flujo si aún no lo tiene.{" "}
+              <b>Productos y preguntas</b> rellena esas columnas del Excel/Contactos
+              leyendo el historial (omite si ya están llenas).
             </p>
           )}
 
