@@ -408,21 +408,47 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
     !!profilePictureUrl;
   const mediaRecovered = !!media?.base64 && base.media?.missing_media;
 
-  if (!idsChanged && !contactChanged && !mediaRecovered) return mediaRecovered;
+  const phoneFromResolved = (() => {
+    const jid = fromMe ? realTo || realChatId : realFrom || realChatId;
+    if (!jid || typeof jid !== "string" || jid.endsWith("@lid") || jid.endsWith("@g.us")) {
+      return undefined;
+    }
+    const d = jid.split("@")[0].replace(/\D/g, "");
+    return d.length >= 8 && d.length <= 15 ? d : undefined;
+  })();
+
+  const contactPayload = {
+    waId: phoneFromResolved
+      ? `${phoneFromResolved}@c.us`
+      : String((fromMe ? realTo || realChatId : realFrom || realChatId) || base.chatId || ""),
+    phone: phoneFromResolved,
+    displayName: displayName || pushname || notifyName,
+    profilePictureUrl,
+  };
+
+  // Reenviar si resolvimos LID→teléfono (aunque no haya media/nombre nuevo)
+  const lidResolved =
+    String(base.chatId || "").endsWith("@lid") &&
+    String(realChatId || "").endsWith("@c.us");
+
+  if (!idsChanged && !contactChanged && !mediaRecovered && !lidResolved) {
+    return mediaRecovered;
+  }
 
   emit(eventType, {
     ...base,
-    chatId: realChatId,
+    chatId: phoneFromResolved ? `${phoneFromResolved}@c.us` : realChatId,
     from: realFrom,
     to: realTo,
     pushname,
     notifyName,
     displayName,
     profilePictureUrl,
+    contact: contactPayload,
     media,
-    mediaRecovery: mediaRecovered || undefined,
+    mediaRecovery: mediaRecovered || lidResolved || undefined,
   });
-  return mediaRecovered;
+  return mediaRecovered || lidResolved;
 }
 
 /** Reintento tardío de media (audios/imágenes) sin bloquear WhatsApp. */
@@ -464,14 +490,99 @@ function scheduleMediaRetry(msg: any, base: any, eventType: WAEventType): void {
 }
 
 async function resolveLidJid(WPP: any, jid: string): Promise<string | undefined> {
+  if (!jid || typeof jid !== "string") return undefined;
+  if (!jid.endsWith("@lid")) return jid;
+
+  const digitsOnly = (v: any): string | null => {
+    if (v == null) return null;
+    const s = String(v).split("@")[0].replace(/\D/g, "");
+    return s || null;
+  };
+  const looksLikePhone = (d: string | null) =>
+    !!d && d.length >= 8 && d.length <= 15;
+
+  let phone: string | null = null;
+
+  // 1) ApiContact.getPhoneNumber
   try {
     const wid = createWidSafely(WPP, jid);
-    if (!wid) return undefined;
-    const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-    return numObj?._serialized || undefined;
+    if (wid && WPP.whatsapp?.ApiContact?.getPhoneNumber) {
+      const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
+      const d = digitsOnly(numObj?._serialized || numObj?.user || numObj);
+      if (looksLikePhone(d)) phone = d;
+    }
   } catch {
-    return undefined;
+    /* ignore */
   }
+
+  // 2) contact.get — campos phoneNumber / phone / wid
+  if (!phone) {
+    try {
+      const c = await WPP.contact?.get?.(jid);
+      const candidates = [
+        c?.phoneNumber?._serialized,
+        c?.phoneNumber?.user,
+        c?.phoneNumber,
+        c?.phone?._serialized,
+        c?.phone?.user,
+        c?.phone,
+        c?.id?._serialized,
+        c?.wid?._serialized,
+        c?.wid?.user,
+      ];
+      for (const x of candidates) {
+        const d = digitsOnly(x);
+        // Evitar devolver el propio LID numérico como "teléfono"
+        if (looksLikePhone(d) && !String(x || "").includes("@lid")) {
+          phone = d;
+          break;
+        }
+        if (looksLikePhone(d) && typeof x === "string" && x.includes("@c.us")) {
+          phone = d;
+          break;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 3) LidToPnMap / LidUtils
+  if (!phone) {
+    try {
+      const map =
+        WPP.whatsapp?.LidToPnMap ||
+        WPP.whatsapp?.LidUtils ||
+        WPP.whatsapp?.LidPnMap ||
+        WPP.whatsapp?.SignalDeviceLidPnMap;
+      const fnName = ["findPnForLid", "getPhoneNumber", "getPn", "getPhoneForLid", "lidToPn"].find(
+        (n) => map && typeof map[n] === "function",
+      );
+      if (fnName) {
+        const pn = await (map as any)[fnName](jid);
+        const d = digitsOnly(pn?._serialized || pn?.user || pn);
+        if (looksLikePhone(d)) phone = d;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 4) queryExists
+  if (!phone) {
+    try {
+      const r = await WPP.contact?.queryExists?.(jid);
+      const widSer = r?.wid?._serialized || r?.wid?.user || r?.wid || r;
+      if (typeof widSer === "string" && widSer.includes("@c.us")) {
+        const d = digitsOnly(widSer);
+        if (looksLikePhone(d)) phone = d;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return phone ? `${phone}@c.us` : undefined;
 }
 
 async function downloadMessageMedia(

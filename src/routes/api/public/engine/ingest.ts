@@ -478,27 +478,51 @@ async function resolvePhoneForLidMessage(args: {
     .maybeSingle()
   if (existing?.phone) return { contactId: existing.id, phone: existing.phone }
 
-  if (!text?.trim()) return { contactId: existing?.id ?? null, phone: null }
+  // Contacto ya fusionado: wa_id=@c.us pero el LID llegó en un mensaje nuevo
+  // Buscar por LID en observations no aplica; mirar comandos recientes.
 
-  const { data: commands } = await supabaseAdmin
-    .from('engine_commands')
-    .select('payload, created_at')
-    .eq('org_id', orgId)
-    .eq('session_id', sessionId)
-    .eq('type', 'send_message')
-    .order('created_at', { ascending: false })
-    .limit(20)
+  if (text?.trim()) {
+    const { data: commands } = await supabaseAdmin
+      .from('engine_commands')
+      .select('payload, created_at')
+      .eq('org_id', orgId)
+      .eq('session_id', sessionId)
+      .eq('type', 'send_message')
+      .order('created_at', { ascending: false })
+      .limit(20)
 
-  const targetTs = sentAt ? new Date(sentAt).getTime() : Date.now()
-  for (const cmd of commands ?? []) {
-    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-    if (String(payload.text ?? '').trim() !== text.trim()) continue
-    const chatId = String(payload.chatId ?? '')
-    const phone = digits(chatId)
-    if (!phone) continue
-    const createdTs = new Date(cmd.created_at).getTime()
-    if (Math.abs(targetTs - createdTs) > 1000 * 60 * 30) continue
-    return { contactId: existing?.id ?? null, phone }
+    const targetTs = sentAt ? new Date(sentAt).getTime() : Date.now()
+    for (const cmd of commands ?? []) {
+      const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+      if (String(payload.text ?? '').trim() !== text.trim()) continue
+      const chatId = String(payload.chatId ?? '')
+      const phone = digits(chatId)
+      if (!phone) continue
+      const createdTs = new Date(cmd.created_at).getTime()
+      if (Math.abs(targetTs - createdTs) > 1000 * 60 * 30) continue
+      return { contactId: existing?.id ?? null, phone }
+    }
+  }
+
+  // Fallback: último envío reciente de la sesión (5 min) si el texto no coincide
+  {
+    const { data: recent } = await supabaseAdmin
+      .from('engine_commands')
+      .select('payload, created_at')
+      .eq('org_id', orgId)
+      .eq('session_id', sessionId)
+      .eq('type', 'send_message')
+      .order('created_at', { ascending: false })
+      .limit(5)
+
+    const now = Date.now()
+    for (const cmd of recent ?? []) {
+      const createdTs = new Date(cmd.created_at).getTime()
+      if (now - createdTs > 1000 * 60 * 5) continue
+      const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+      const phone = digits(String(payload.chatId ?? ''))
+      if (phone) return { contactId: existing?.id ?? null, phone }
+    }
   }
 
   return { contactId: existing?.id ?? null, phone: null }

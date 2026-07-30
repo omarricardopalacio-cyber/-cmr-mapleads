@@ -411,6 +411,10 @@ class SenderEngine {
     messageId?: string,
     error?: string
   ): void {
+    const phone = String(task.chatId || "")
+      .split("@")[0]
+      .replace(/\D/g, "");
+
     postFromInjected("WA_EVENT", {
       event: status === "sent" ? "MESSAGE_SENT" : status === "failed" ? "MESSAGE_FAILED" : "MESSAGE_ACK",
       payload: {
@@ -424,14 +428,40 @@ class SenderEngine {
         waMessageId: messageId,
         error,
         timestamp: Date.now(),
+        contact: phone
+          ? {
+              waId: phone.length >= 8 ? `${phone}@c.us` : task.chatId,
+              phone: phone.length >= 8 ? phone : undefined,
+            }
+          : undefined,
         // Incluir media en el payload para que el backend pueda actualizar el mensaje
-        media: task.media ? {
-          base64: task.media,
-          mimetype: task.options?.mimetype,
-          caption: task.caption,
-        } : undefined,
+        media: task.media
+          ? {
+              base64: task.media,
+              mimetype: task.options?.mimetype,
+              caption: task.caption,
+            }
+          : undefined,
       },
     });
+
+    // Vincular LID ↔ teléfono cuando WA responde con …@lid en el messageId
+    // (necesario para que los mensajes entrantes del mismo chat no se descarten).
+    if (status === "sent" && messageId && phone.length >= 8) {
+      const lidMatch = String(messageId).match(/(\d+@lid)/);
+      if (lidMatch?.[1]) {
+        postFromInjected("WA_EVENT", {
+          event: "CONTACT_INFO",
+          payload: {
+            waId: lidMatch[1],
+            chatId: lidMatch[1],
+            phone,
+            displayName: undefined,
+            timestamp: Date.now(),
+          },
+        });
+      }
+    }
   }
 
   private delay(ms: number): Promise<void> {

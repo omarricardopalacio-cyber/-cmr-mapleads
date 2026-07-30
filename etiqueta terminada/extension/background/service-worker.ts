@@ -473,8 +473,16 @@ async function flushIngestQueue(): Promise<void> {
       case "SESSION_READY": return "heartbeat";
       case "SESSION_LOST": return "heartbeat";
       case "HEARTBEAT": return "heartbeat";
+      case "CONTACT_INFO": return "CONTACT_INFO";
       default: return "status"; // CONNECTION_STATE_CHANGED, PRESENCE_CHANGED, etc.
     }
+  }
+
+  function phoneDigitsFromJid(jid?: unknown): string | undefined {
+    if (typeof jid !== "string" || !jid) return undefined;
+    if (jid.endsWith("@lid") || jid.endsWith("@g.us")) return undefined;
+    const d = jid.split("@")[0].replace(/\D/g, "");
+    return d.length >= 8 && d.length <= 15 ? d : undefined;
   }
 
   let activeSession = activeSessions.values().next().value;
@@ -499,22 +507,68 @@ async function flushIngestQueue(): Promise<void> {
       const fromMe = flat.fromMe as boolean | undefined;
       const inferredType =
         e.type === "NEW_MESSAGE" && fromMe ? "message-out" : mapEventType(e.type);
+
+      const existingContact =
+        flat.contact && typeof flat.contact === "object"
+          ? (flat.contact as Record<string, unknown>)
+          : undefined;
+
+      const phone =
+        (typeof existingContact?.phone === "string" && existingContact.phone.replace(/\D/g, "")) ||
+        phoneDigitsFromJid(flat.chatId) ||
+        phoneDigitsFromJid(flat.from) ||
+        phoneDigitsFromJid(flat.to) ||
+        phoneDigitsFromJid(existingContact?.waId) ||
+        undefined;
+
+      let chatId = (flat.chatId || flat.from || flat.to) as string | undefined;
+      // Preferir @c.us cuando ya tenemos teléfono (evita que ingest descarte @lid)
+      if (phone && (!chatId || String(chatId).endsWith("@lid"))) {
+        chatId = `${phone}@c.us`;
+      }
+
+      const displayName =
+        (existingContact?.displayName as string | undefined) ||
+        (flat.displayName as string | undefined) ||
+        (flat.pushname as string | undefined) ||
+        (flat.notifyName as string | undefined);
+
+      const contact = {
+        waId: phone ? `${phone}@c.us` : String(chatId || existingContact?.waId || ""),
+        displayName: displayName || undefined,
+        phone: phone || undefined,
+        profilePictureUrl:
+          (existingContact?.profilePictureUrl as string | undefined) ||
+          (flat.profilePictureUrl as string | undefined),
+      };
+
       return {
         id: `${e.id}`,
         type: inferredType as any,
-        chatId: flat.chatId as string | undefined,
+        chatId,
         waMessageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
-        direction: (flat.direction as "in" | "out" | undefined) ?? (typeof fromMe === "boolean" ? (fromMe ? "out" : "in") : undefined),
+        direction:
+          (flat.direction as "in" | "out" | undefined) ??
+          (typeof fromMe === "boolean" ? (fromMe ? "out" : "in") : undefined),
         text: (flat.text ?? flat.body) as string | undefined,
         media: slimMediaForIngest(flat.media as Record<string, unknown> | undefined),
-        contact: flat.contact as { waId: string; displayName?: string; phone?: string } | undefined,
+        contact: contact.waId ? contact : undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
         mediaRecovery: flat.mediaRecovery as boolean | undefined,
         payload: {
           fromMe: flat.fromMe as boolean | undefined,
-          phoneNumber: (flat.phoneNumber as string) || phoneNumber,
+          from: flat.from as string | undefined,
+          to: flat.to as string | undefined,
+          chatId,
+          phoneNumber: phone || (flat.phoneNumber as string) || phoneNumber,
+          phone,
+          pushname: flat.pushname as string | undefined,
+          notifyName: flat.notifyName as string | undefined,
+          displayName,
+          profilePictureUrl: flat.profilePictureUrl as string | undefined,
           messageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
           type: flat.type as string | undefined,
+          waId: contact.waId,
         },
         timestamp: e.timestamp,
       };
