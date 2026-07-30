@@ -97,12 +97,30 @@ function phoneFromChat(chat: any): string | undefined {
   return undefined;
 }
 
+async function ensureBackendPermission(backendUrl: string): Promise<void> {
+  try {
+    const origin = new URL(backendUrl).origin + "/*";
+    const have = await chrome.permissions.contains({ origins: [origin] });
+    if (have) return;
+    const granted = await chrome.permissions.request({ origins: [origin, "https://*/*"] });
+    if (!granted) {
+      throw new Error(
+        "Chrome bloqueó el acceso al CRM. Recarga la extensión y acepta el permiso de host.",
+      );
+    }
+  } catch (err: any) {
+    // permissions.request desde SW a veces no muestra UI; seguimos e intentamos fetch
+    console.warn("[HistoryImport] ensureBackendPermission:", err?.message || err);
+  }
+}
+
 async function postImportHistory(
   backendUrl: string,
   sessionToken: string,
   body: Record<string, unknown>,
 ): Promise<any> {
-  const url = `${backendUrl.replace(/\/$/, "")}${API_ENDPOINTS.POST_IMPORT_HISTORY}`;
+  const base = backendUrl.replace(/\/$/, "");
+  const url = `${base}${API_ENDPOINTS.POST_IMPORT_HISTORY}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -113,10 +131,9 @@ async function postImportHistory(
       },
       body: JSON.stringify(body),
     });
-  } catch (err: any) {
-    throw new Error(
-      `Failed to fetch (${url}). Revisa Config → Backend URL y que la extensión tenga permiso para Netlify.`,
-    );
+  } catch {
+    // Fallback: mismo canal que el ingest en vivo (suele tener permiso ya otorgado)
+    return postImportViaIngest(base, sessionToken, body);
   }
   const text = await res.text();
   let data: any = null;
@@ -126,9 +143,77 @@ async function postImportHistory(
     data = { error: text?.slice(0, 200) };
   }
   if (!res.ok) {
+    // Si el endpoint nuevo falla, intentar ingest
+    if (res.status >= 500 || res.status === 404) {
+      return postImportViaIngest(base, sessionToken, body);
+    }
     throw new Error(data?.error || `HTTP ${res.status} en import-history`);
   }
   return data;
+}
+
+/** Guarda historial vía /ingest (ruta ya usada por la extensión en vivo). */
+async function postImportViaIngest(
+  backendUrl: string,
+  sessionToken: string,
+  body: Record<string, unknown>,
+): Promise<any> {
+  const chatId = String(body.chatId || "");
+  const contact = (body.contact || {}) as Record<string, unknown>;
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const labels = Array.isArray(body.labels) ? body.labels : [];
+
+  const events = messages.map((m: any, idx: number) => {
+    const fromMe = m.fromMe === true || m.direction === "out";
+    const isLast = idx === messages.length - 1;
+    return {
+      type: fromMe ? "message-out" : "message-in",
+      chatId,
+      waMessageId: m.waMessageId || undefined,
+      direction: fromMe ? "out" : "in",
+      text: m.text || "",
+      sentAt: m.sentAt,
+      historical: true,
+      historicalClassify: isLast,
+      contact: {
+        waId: contact.waId || chatId,
+        displayName: contact.displayName || undefined,
+        phone: contact.phone || undefined,
+      },
+      labels,
+    };
+  });
+
+  if (!events.length) {
+    return { ok: true, imported: 0, skipped: 0, via: "ingest-empty" };
+  }
+
+  // ingest acepta máx 50 por request
+  let imported = 0;
+  for (let i = 0; i < events.length; i += 45) {
+    const chunk = events.slice(i, i + 45);
+    // Solo el último chunk lleva classify en su último evento
+    if (i + 45 < events.length) {
+      chunk.forEach((e: any) => {
+        e.historicalClassify = false;
+      });
+    }
+    const res = await fetch(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Session-Token": sessionToken,
+      },
+      body: JSON.stringify({ events: chunk }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`ingest fallback HTTP ${res.status}: ${t.slice(0, 180)}`);
+    }
+    imported += chunk.length;
+  }
+
+  return { ok: true, imported, skipped: 0, via: "ingest" };
 }
 
 export async function startHistoryImport(opts: ImportOptions): Promise<HistoryImportStatus> {
@@ -153,6 +238,28 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
     try {
       if (!opts.backendUrl || !opts.sessionToken) {
         throw new Error("Configura backend URL y session token");
+      }
+
+      await ensureBackendPermission(opts.backendUrl);
+
+      // Smoke test: si ni ingest responde, fallar claro
+      try {
+        const ping = await fetch(`${opts.backendUrl.replace(/\/$/, "")}${API_ENDPOINTS.POST_INGEST}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Token": opts.sessionToken,
+          },
+          body: JSON.stringify({ events: [{ type: "heartbeat", text: "history-ping" }] }),
+        });
+        if (ping.status === 401) {
+          throw new Error("Session Token inválido. Revisa Config.");
+        }
+      } catch (err: any) {
+        if (String(err?.message || "").includes("Session Token")) throw err;
+        throw new Error(
+          `No hay conexión con el CRM (${opts.backendUrl}). Quita y vuelve a cargar la extensión descomprimida desde /dist y acepta permisos.`,
+        );
       }
 
       const list = await opts.sendWaCommand("GET_CHAT_LIST", {

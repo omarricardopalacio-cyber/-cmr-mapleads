@@ -77,6 +77,27 @@ export default function HistoryImportPanel() {
     setHint(null);
     setStatus((s) => ({ ...s, lastError: null, phase: "listing" }));
 
+    // Pedir permiso de host al CRM (Chrome a veces no aplica host_permissions al actualizar)
+    try {
+      const cfg = await chrome.storage.local.get(["backendUrl"]);
+      const backendUrl = String(cfg.backendUrl || "https://cmrmaleads.netlify.app").replace(/\/$/, "");
+      const origin = new URL(backendUrl).origin + "/*";
+      const ok = await chrome.permissions.request({ origins: [origin, "https://*/*"] });
+      if (!ok) {
+        setBusy(false);
+        setHint("Debes aceptar el permiso para conectar con el CRM.");
+        setStatus((s) => ({
+          ...s,
+          phase: "error",
+          lastError: "Permiso de host denegado",
+          running: false,
+        }));
+        return;
+      }
+    } catch {
+      /* SW / popup: seguimos */
+    }
+
     const response = await sendPopupRequest("START_HISTORY_IMPORT", {
       maxChats,
       messagesPerChat: 50,

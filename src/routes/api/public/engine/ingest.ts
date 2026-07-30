@@ -70,6 +70,10 @@ const EventSchema = z
     commandId: z.string().uuid().optional(),
     ackStatus: z.string().max(32).optional(),
     payload: z.record(z.string(), z.any()).optional(),
+    /** Importación de historial: guardar sin auto-reply / IA / flujos */
+    historical: z.boolean().optional(),
+    /** Tras guardar, clasificar vigilante+segmentos+tags (sin flujos) */
+    historicalClassify: z.boolean().optional(),
   })
   .passthrough()
 
@@ -86,6 +90,8 @@ type NormalizedEvent = {
   commandId?: string
   ackStatus?: string
   mediaRecovery?: boolean
+  historical?: boolean
+  historicalClassify?: boolean
 }
 
 const TYPE_MAP: Record<string, NormalizedEvent['type']> = {
@@ -280,6 +286,10 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
     commandId,
     ackStatus: ackStatus != null ? String(ackStatus) : undefined,
     mediaRecovery: !!(e as { mediaRecovery?: boolean }).mediaRecovery || !!(p as { mediaRecovery?: boolean }).mediaRecovery,
+    historical: !!(e as { historical?: boolean }).historical || !!(p as { historical?: boolean }).historical,
+    historicalClassify:
+      !!(e as { historicalClassify?: boolean }).historicalClassify ||
+      !!(p as { historicalClassify?: boolean }).historicalClassify,
   }
 }
 
@@ -1983,9 +1993,70 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
+            // Import historial: clasificar ficha sin responder ni iniciar flujos
+            if (e.historical && e.historicalClassify && contactId) {
+              try {
+                let classifyText =
+                  ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text?.trim()) ||
+                  ''
+                if (!classifyText) {
+                  const { data: ins } = await supabaseAdmin
+                    .from('messages')
+                    .select('text')
+                    .eq('thread_id', thread.id)
+                    .eq('direction', 'in')
+                    .not('text', 'is', null)
+                    .order('sent_at', { ascending: true })
+                    .limit(25)
+                  classifyText = ((ins ?? []) as any[])
+                    .map((m) => String(m.text || '').trim())
+                    .filter(Boolean)
+                    .join('\n')
+                    .slice(0, 4000)
+                }
+                if (classifyText) {
+                  const { applyEntrySegmentToContact } = await import('@/lib/ad-segments.server')
+                  const { ensureContactTag } = await import('@/lib/contact-tag.server')
+                  const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
+                  const firstLine = classifyText.split('\n').find((l) => l.trim()) || classifyText
+                  const seg = await applyEntrySegmentToContact({
+                    orgId: session.org_id,
+                    contactId,
+                    text: firstLine,
+                  })
+                  if (seg.applied && seg.segment) {
+                    await ensureContactTag({
+                      orgId: session.org_id,
+                      contactId,
+                      tagName: seg.segment.name,
+                      color: '#a855f7',
+                    })
+                  }
+                  const watch = await runIntentWatcher({
+                    orgId: session.org_id,
+                    contactId,
+                    threadId: thread.id,
+                    text: classifyText,
+                    trigger: 'message',
+                    skipFlowStart: true,
+                  })
+                  if (watch.intent_key) {
+                    await ensureContactTag({
+                      orgId: session.org_id,
+                      contactId,
+                      tagName: watch.intent_key,
+                      color: '#0ea5e9',
+                    })
+                  }
+                }
+              } catch (histErr) {
+                console.warn('[ingest] historical classify:', (histErr as Error)?.message)
+              }
+            }
+
             const textForAiInsert = (e.text?.trim() || audioAiFallbackText || '').trim()
             const inboundDir = (e.direction ?? (e.type === 'message-in' ? 'in' : 'out'))
-            if (inboundDir === 'in' && textForAiInsert) {
+            if (inboundDir === 'in' && textForAiInsert && !e.historical) {
               // Use phone@c.us when we have a real phone (avoids @lid issues)
               const sendChatId = e.contact?.phone
                 ? `${e.contact.phone}@c.us`
