@@ -1041,6 +1041,18 @@ async function maybeAiReply(
         chatId,
         actions,
       })
+      // Garantizar IA ON: a veces el modelo llama transfer_to_human en el mismo
+      // turno y deja el toggle apagado aunque el flujo diga "Activar IA".
+      try {
+        await supabaseAdmin
+          .from('threads')
+          .update({ ai_enabled: true } as unknown as Record<string, never>)
+          .eq('id', threadId)
+          .eq('org_id', orgId)
+        console.info('[ai-reply] IA forzada ON tras activate_flow', { threadId, orgId })
+      } catch (reOnErr) {
+        console.warn('[ai-reply] no se pudo forzar IA ON tras flujo:', (reOnErr as Error)?.message)
+      }
     }
 
     // === APRENDIZAJE: la IA "aprende" de este contacto a medida que atiende ===

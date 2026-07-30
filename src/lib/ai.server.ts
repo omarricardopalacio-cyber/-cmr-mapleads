@@ -670,6 +670,8 @@ export type ToolExecCtx = {
   catalogSearchQuery?: string | null;
   /** Consulta de catálogo resuelta para esta herramienta. */
   resolvedCatalogQuery?: string | null;
+  /** True si en este turno la IA ya arrancó un paquete (activate_flow). */
+  activatedFlowThisTurn?: boolean;
 };
 
 function mapProductsForTool(products: CatalogProduct[]) {
@@ -1902,6 +1904,14 @@ export async function executeToolCall(
     result = `Recordatorio creado para dentro de ${minutes} minutos.`;
     details = `Programo un recordatorio: "${note}" para ${dueAt}`;
   } else if (name === "transfer_to_human") {
+    // Tras activar un paquete (saludo/menú), la IA a menudo "transfiere" y apaga el
+    // hilo aunque el flujo tenga "Activar IA". Bloquear en el mismo turno.
+    if (ctx.activatedFlowThisTurn) {
+      result =
+        "NO transfieras. Acabas de activar un paquete; la IA debe seguir activa para atender la opción del cliente (1, 2, 3…) y dudas. Continúa la conversación.";
+      details = "transfer_to_human bloqueado: paquete activado en este turno";
+      return { name, result };
+    }
     // Con producto en foco + observación: no apagar IA por precio/envío (dato está en la observación)
     try {
       const { data: th } = await (supabaseAdmin as any)
@@ -1916,7 +1926,7 @@ export async function executeToolCall(
         result =
           "NO transfieras. Hay producto en foco con OBSERVACIÓN DEL VENDEDOR. Responde precio/envío/ciudad desde esa observación y continúa la atención.";
         details = "transfer_to_human bloqueado: producto con ai_observation";
-        return { result, details };
+        return { name, result };
       }
     } catch {
       /* continuar con transferencia normal */
@@ -2505,6 +2515,9 @@ export async function executeToolCall(
           result = r.message;
           details = `activate_flow: ${flowId} (${r.started ? "iniciado" : "no iniciado"})`;
           flowStarted = !!r.started;
+          if (r.started) {
+            ctx.activatedFlowThisTurn = true;
+          }
         } else if (!result) {
           result = "Indica el id o el nombre del paquete a activar.";
         }
@@ -3244,7 +3257,15 @@ export async function runAiAgent({
       : "El cliente NO está en modo recolección de datos. Atiende normalmente según la jerarquía de modos."
   }`;
 
-  const ctx: ToolExecCtx = { orgId, threadId, contactId, sessionId, chatId, catalogCfg };
+  const ctx: ToolExecCtx = {
+    orgId,
+    threadId,
+    contactId,
+    sessionId,
+    chatId,
+    catalogCfg,
+    activatedFlowThisTurn: false,
+  };
 
   // === MEMORIA DEL CLIENTE (aprendizaje entre conversaciones) ===
   // Se carga lo que la IA ya "aprendio" de este contacto y se inyecta como un

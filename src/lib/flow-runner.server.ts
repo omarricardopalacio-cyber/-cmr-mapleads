@@ -428,11 +428,30 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "toggle_ai":
     case "ai_enable":
     case "ai_disable": {
+      // ai_enable SIEMPRE enciende; ai_disable apaga.
+      // toggle_ai: default ON si no viene flag (antes undefined apagaba la IA por error).
+      let enabled = false;
+      if (step.step_type === "ai_enable") enabled = true;
+      else if (step.step_type === "ai_disable") enabled = false;
+      else enabled = sd.ai_enabled !== false;
+
       const threadId = await getThreadId();
-      const enabled = step.step_type === "ai_enable" || (step.step_type === "toggle_ai" && sd.ai_enabled);
       if (threadId) {
         await supabaseAdmin.from("threads").update({ ai_enabled: enabled }).eq("id", threadId);
+      } else if (contactId && orgId) {
+        await supabaseAdmin
+          .from("threads")
+          .update({ ai_enabled: enabled })
+          .eq("contact_id", contactId)
+          .eq("org_id", orgId);
       }
+      console.info("[flow-runner] paso IA", {
+        stepType: step.step_type,
+        enabled,
+        threadId: threadId || null,
+        contactId,
+        orgId,
+      });
       return {};
     }
     // ---- CRM ----
