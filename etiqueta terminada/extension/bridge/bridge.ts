@@ -199,8 +199,10 @@ export class BackgroundBridge {
     }
 
     // Solicitudes directas del content script
+    // IMPORTANTE: no responder aquí. El service-worker.ts maneja WA_REQUEST
+    // (FETCH_MEDIA, START_HISTORY_IMPORT, etc.). Si respondemos antes,
+    // robamos la respuesta y el popup/content cree que no pasó nada.
     if (bridgeMsg.channel === "WA_REQUEST") {
-      sendResponse({ ok: true, payload: bridgeMsg.payload });
       return false;
     }
 

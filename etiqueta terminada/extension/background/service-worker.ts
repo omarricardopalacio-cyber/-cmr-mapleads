@@ -633,20 +633,32 @@ async function flushIngestQueue(): Promise<void> {
 // ============================================================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.source !== "MAPLE_WA_CONTENT") return false;
+  // Popup y content usan el mismo canal de requests hacia el SW
+  if (message?.source !== "MAPLE_WA_CONTENT" && message?.source !== "MAPLE_WA_POPUP") {
+    return false;
+  }
 
   (async () => {
     switch (message.channel) {
       case "WA_EVENT":
+        if (message.source !== "MAPLE_WA_CONTENT") {
+          sendResponse({ ok: false, error: "events_only_from_content" });
+          break;
+        }
         await handleWAEvent(message.payload as WAEvent, sender);
         sendResponse({ ok: true });
         break;
 
       case "WA_REQUEST":
-        console.log("[ServiceWorker] WA_REQUEST recibido desde content:", message.event, message.payload);
+        console.log("[ServiceWorker] WA_REQUEST recibido:", message.source, message.event, message.payload);
         try {
           const result = await handleRequest(message);
-          console.log("[ServiceWorker] WA_REQUEST result:", result?.mimeType ? { mimeType: result.mimeType, hasDataUri: !!result.dataUri } : result);
+          console.log(
+            "[ServiceWorker] WA_REQUEST result:",
+            result?.mimeType
+              ? { mimeType: result.mimeType, hasDataUri: !!result.dataUri }
+              : result,
+          );
           sendResponse({ ok: true, payload: result });
         } catch (err: any) {
           console.error("[ServiceWorker] Error en WA_REQUEST handleRequest:", err);
@@ -657,7 +669,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "CONFIG":
         await saveConfig(
           message.payload?.backendUrl || backendUrl,
-          message.payload?.sessionToken || sessionToken || ""
+          message.payload?.sessionToken || sessionToken || "",
         );
         sendResponse({ ok: true });
         break;
@@ -908,6 +920,10 @@ async function handleRequest(message: any): Promise<any> {
     case "STOP_HISTORY_IMPORT":
       return stopHistoryImport();
     case "START_HISTORY_IMPORT": {
+      // Recargar config por si el SW se reinició y perdió memoria
+      if (!backendUrl || !sessionToken) {
+        await loadConfig();
+      }
       if (!backendUrl || !sessionToken) {
         throw new Error("Configura Backend URL y Session Token en la pestaña config");
       }

@@ -26,66 +26,86 @@ const empty: HistoryStatus = {
   lastError: null,
 };
 
+function sendPopupRequest(event: string, payload: Record<string, unknown> = {}) {
+  return new Promise<{ ok?: boolean; payload?: any; error?: string }>((resolve) => {
+    try {
+      chrome.runtime.sendMessage(
+        {
+          source: "MAPLE_WA_POPUP",
+          channel: "WA_REQUEST",
+          event,
+          payload: { type: event, ...payload },
+        },
+        (response) => {
+          const err = chrome.runtime.lastError?.message;
+          if (err) {
+            resolve({ ok: false, error: err });
+            return;
+          }
+          resolve(response || { ok: false, error: "Sin respuesta del service worker" });
+        },
+      );
+    } catch (e: any) {
+      resolve({ ok: false, error: e?.message || String(e) });
+    }
+  });
+}
+
 export default function HistoryImportPanel() {
   const [status, setStatus] = useState<HistoryStatus>(empty);
   const [maxChats, setMaxChats] = useState(50);
   const [busy, setBusy] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
 
-  const refresh = () => {
-    chrome.runtime.sendMessage(
-      {
-        source: "MAPLE_WA_CONTENT",
-        channel: "WA_REQUEST",
-        event: "GET_HISTORY_IMPORT_STATUS",
-        payload: { type: "GET_HISTORY_IMPORT_STATUS" },
-      },
-      (response) => {
-        if (response?.payload) setStatus({ ...empty, ...response.payload });
-      },
-    );
+  const refresh = async () => {
+    const response = await sendPopupRequest("GET_HISTORY_IMPORT_STATUS");
+    if (response?.payload && typeof response.payload.phase === "string") {
+      setStatus({ ...empty, ...response.payload });
+    }
   };
 
   useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 1500);
+    void refresh();
+    const id = setInterval(() => {
+      void refresh();
+    }, 1500);
     return () => clearInterval(id);
   }, []);
 
-  const start = () => {
+  const start = async () => {
     setBusy(true);
-    chrome.runtime.sendMessage(
-      {
-        source: "MAPLE_WA_CONTENT",
-        channel: "WA_REQUEST",
-        event: "START_HISTORY_IMPORT",
-        payload: {
-          type: "START_HISTORY_IMPORT",
-          maxChats,
-          messagesPerChat: 50,
-        },
-      },
-      (response) => {
-        setBusy(false);
-        if (response?.payload) setStatus({ ...empty, ...response.payload });
-        if (response?.error) {
-          setStatus((s) => ({ ...s, lastError: response.error, phase: "error" }));
-        }
-      },
-    );
+    setHint(null);
+    setStatus((s) => ({ ...s, lastError: null, phase: "listing" }));
+
+    const response = await sendPopupRequest("START_HISTORY_IMPORT", {
+      maxChats,
+      messagesPerChat: 50,
+    });
+
+    setBusy(false);
+
+    if (!response?.ok) {
+      const err = response?.error || "No se pudo iniciar la importación";
+      setHint(err);
+      setStatus((s) => ({ ...s, lastError: err, phase: "error", running: false }));
+      return;
+    }
+
+    if (response.payload && typeof response.payload.phase === "string") {
+      setStatus({ ...empty, ...response.payload });
+      setHint(
+        response.payload.running
+          ? "Importación iniciada. Deja WhatsApp Web abierto."
+          : null,
+      );
+    } else {
+      setHint("Service worker respondió vacío. Recarga la extensión.");
+    }
   };
 
-  const stop = () => {
-    chrome.runtime.sendMessage(
-      {
-        source: "MAPLE_WA_CONTENT",
-        channel: "WA_REQUEST",
-        event: "STOP_HISTORY_IMPORT",
-        payload: { type: "STOP_HISTORY_IMPORT" },
-      },
-      (response) => {
-        if (response?.payload) setStatus({ ...empty, ...response.payload });
-      },
-    );
+  const stop = async () => {
+    const response = await sendPopupRequest("STOP_HISTORY_IMPORT");
+    if (response?.payload) setStatus({ ...empty, ...response.payload });
   };
 
   const pct =
@@ -101,6 +121,9 @@ export default function HistoryImportPanel() {
           <b className="text-emerald-400">1:1</b> (sin grupos). El vigilante clasifica con
           intención, etiquetas y segmentos. <b>No envía mensajes</b> ni inicia flujos.
         </p>
+        <p className="text-[10px] text-slate-500">
+          Requiere WhatsApp Web abierto y Backend/Token en Config.
+        </p>
         <label className="flex items-center justify-between gap-2 text-slate-400">
           <span>Máx. chats</span>
           <input
@@ -108,7 +131,7 @@ export default function HistoryImportPanel() {
             min={1}
             max={200}
             value={maxChats}
-            disabled={status.running}
+            disabled={status.running || busy}
             onChange={(e) => setMaxChats(Number(e.target.value) || 50)}
             className="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-slate-200"
           />
@@ -117,20 +140,21 @@ export default function HistoryImportPanel() {
           <button
             type="button"
             disabled={status.running || busy}
-            onClick={start}
+            onClick={() => void start()}
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded py-2 font-medium"
           >
-            {status.running ? "Importando…" : "Importar historial"}
+            {busy ? "Iniciando…" : status.running ? "Importando…" : "Importar historial"}
           </button>
           <button
             type="button"
             disabled={!status.running}
-            onClick={stop}
+            onClick={() => void stop()}
             className="px-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 text-slate-200 rounded"
           >
             Detener
           </button>
         </div>
+        {hint ? <p className="text-emerald-400/90 text-[10px]">{hint}</p> : null}
       </div>
 
       <div className="bg-slate-800 rounded p-3 space-y-2">
