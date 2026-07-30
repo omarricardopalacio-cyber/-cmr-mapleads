@@ -1761,15 +1761,17 @@ async function queueOutgoingMedia(
   const cmdId = (globalThis.crypto?.randomUUID?.() ??
     `cmd_${Date.now()}_${Math.random()}`) as string;
   // Echo en la conversación para que el operador lo vea en el CRM
-  await (supabaseAdmin as any).from("messages").insert({
-    org_id: ctx.orgId,
-    thread_id: ctx.threadId,
-    direction: "out",
-    text: caption || "",
-    media: { url: finalUrl, mimeType, mime_type: mimeType },
-    wa_message_id: `pending-${cmdId}`,
-    sent_at: new Date().toISOString(),
-  });
+  if (finalUrl) {
+    await (supabaseAdmin as any).from("messages").insert({
+      org_id: ctx.orgId,
+      thread_id: ctx.threadId,
+      direction: "out",
+      text: caption?.trim() ? caption : null,
+      media: { url: finalUrl, mimeType, mime_type: mimeType, type: kind },
+      wa_message_id: `pending-${cmdId}`,
+      sent_at: new Date().toISOString(),
+    });
+  }
   const { error } = await (supabaseAdmin as any).from("engine_commands").insert({
     id: cmdId,
     org_id: ctx.orgId,

@@ -729,6 +729,17 @@ function ThreadPage() {
             const hasMissingMedia = !!(m.media && mediaObj?.missing_media);
             const hasLocalOnly = !!(m.media && mediaObj?.localOnly && !mediaObj?.url);
             const hasMediaButNoUrl = !!(m.media && !mediaObj?.url && !hasError && !hasMissingMedia && !hasLocalOnly);
+
+            // Ocultar cáscaras vacías ya guardadas (eco sin texto ni media usable)
+            const isEmptyShell =
+              !displayText &&
+              !mediaObj?.url &&
+              !hasMediaButNoUrl &&
+              !hasError &&
+              !hasMissingMedia &&
+              !hasLocalOnly &&
+              !isBase64Thumbnail(m.text);
+            if (isEmptyShell) return null;
             
             return (
               <div
@@ -831,9 +842,6 @@ function ThreadPage() {
                   {displayText && !(hasLocalOnly && (isAudio || msgType === "ptt" || mediaObj?.transcribed)) ? (
                     <div className={mediaObj?.url || hasLocalOnly ? "mt-2" : ""}>{displayText}</div>
                   ) : null}
-                  {!displayText && !mediaObj?.url && !isBase64Thumbnail(m.text) && !hasMediaButNoUrl && !hasError && !hasMissingMedia && !hasLocalOnly && (
-                    <i className="opacity-60 text-xs">[mensaje vacío]</i>
-                  )}
                 </div>
                 <div className="text-[10px] opacity-70 mt-1 text-right">
                   {m.sent_at ? new Date(m.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}

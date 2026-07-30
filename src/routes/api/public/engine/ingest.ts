@@ -859,6 +859,23 @@ async function hasDuplicateOutgoingMessage(
   return Array.isArray(data) && data.length > 0
 }
 
+/** True si el payload trae algo visible en el CRM (texto o media útil). */
+function hasRenderableMessageContent(
+  text: string | null | undefined,
+  media: Record<string, unknown> | null | undefined,
+): boolean {
+  if (typeof text === 'string' && text.trim().length > 0) return true
+  if (!media || typeof media !== 'object') return false
+  if (typeof media.url === 'string' && media.url.trim()) return true
+  if (media.localOnly === true) return true
+  if (media.missing_media === true) return true
+  if (typeof media.body === 'string' && media.body.length > 20) return true
+  if (typeof media.base64 === 'string' && media.base64.length > 20) return true
+  if (typeof media.data === 'string' && media.data.length > 20) return true
+  if (typeof media.type === 'string' && media.type.length > 0) return true
+  return false
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -1942,12 +1959,23 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
+            // No guardar cáscaras vacías (eco MESSAGE_SENT de media sin texto → "[mensaje vacío]")
+            if (!hasRenderableMessageContent(e.text, enrichedMedia as Record<string, unknown> | undefined)) {
+              console.log('[ingest] skip empty message (sin texto ni media)', {
+                threadId: thread.id,
+                waMessageId: e.waMessageId,
+                direction: messageDirection,
+                type: e.type,
+              })
+              continue
+            }
+
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,
               wa_message_id: e.waMessageId ?? null,
               direction: e.direction ?? (e.type === 'message-in' ? 'in' : 'out'),
-              text: e.text ?? null,
+              text: e.text?.trim() ? e.text : null,
               media: enrichedMedia as any,
               // raw se deja vacio a proposito: el payload crudo ocupa mucho espacio,
               // nunca se lee para features y ya queda auditado en la tabla `events`.
