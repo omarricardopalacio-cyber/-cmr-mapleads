@@ -206,17 +206,49 @@ export async function enrichMediaForMessage(
     };
   }
 
+  const base64Raw = (media.base64 || media.body || media.data) as string | undefined;
+  const mimeHint = resolveMimeFromMedia(media);
+  const msgType = typeof media.type === "string" ? media.type : undefined;
+
+  // Audio con bytes: SIEMPRE subir a Storage temporal para Whisper,
+  // aunque la extensión marque storedLocally/localOnly (p. ej. falló upload-media).
+  if (base64Raw && isAudioMedia(media, mimeHint)) {
+    try {
+      const uploaded = await uploadBase64ToStorage(base64Raw, orgId, {
+        mimeType: (media.mimetype || media.mimeType || media.mime_type || mimeHint) as string,
+        msgType,
+        fileName: (media.filename || media.fileName) as string | undefined,
+      });
+      if (!uploaded) {
+        console.log("[engine-media] audio uploadBase64ToStorage returned null");
+        return { ...media, url: null, error: "Archivo vacio o corrupto" };
+      }
+      console.log("[engine-media] Audio upload success (Whisper):", uploaded.url);
+      return {
+        url: uploaded.url,
+        mimeType: uploaded.mimeType,
+        mime_type: uploaded.mime_type,
+        type: media.type,
+        caption: (media.caption as string) || undefined,
+        filename: uploaded.filename,
+        storagePath: uploaded.storagePath,
+        size: uploaded.size,
+        localRef: media.localRef as string | undefined,
+        storedLocally: media.storedLocally === true ? true : undefined,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[engine-media] audio upload error:", message);
+      return { ...media, url: null, error: message };
+    }
+  }
+
   // Sin URL de nube: metadatos solo-PC (fotos/videos/docs o audio ya limpio).
   if (media.localOnly === true || media.storedLocally === true) {
     return toLocalOnlyMediaMeta(media);
   }
 
-  const base64Raw = (media.base64 || media.body || media.data) as string | undefined;
-  const mimeHint = resolveMimeFromMedia(media);
-  const msgType = typeof media.type === "string" ? media.type : undefined;
-
   // Imágenes/videos/docs: no guardar en la nube (gasto en el PC vía extensión).
-  // Solo audios se suben temporalmente para Whisper.
   if (base64Raw && !isAudioMedia(media, mimeHint)) {
     console.log("[engine-media] Skipping cloud upload for non-audio (localOnly)");
     const approxBytes = Math.floor((base64Raw.length * 3) / 4);

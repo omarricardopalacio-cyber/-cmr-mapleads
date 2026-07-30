@@ -46,6 +46,15 @@ export const listContacts = createServerFn({ method: "GET" })
           purchased: !!r.purchased,
           asked_products: r.asked_products ?? null,
           asked_questions: r.asked_questions ?? null,
+          city: r.city ?? null,
+          address: r.address ?? null,
+          neighborhood: r.neighborhood ?? null,
+          last_intent_key: r.last_intent_key ?? null,
+          last_intent_at: r.last_intent_at ?? null,
+          entry_segment: r.entry_segment ?? null,
+          entry_phrase: r.entry_phrase ?? null,
+          entry_origin_summary: r.entry_origin_summary ?? null,
+          entry_segment_at: r.entry_segment_at ?? null,
         })),
       };
     }
@@ -57,11 +66,11 @@ export const listContacts = createServerFn({ method: "GET" })
     {
       const res = await supabaseAdmin
         .from("contacts")
-        .select("id, wa_id, display_name, phone, updated_at, asked_products, asked_questions")
+        .select("id, wa_id, display_name, phone, updated_at, asked_products, asked_questions, city, address, neighborhood, last_intent_key, last_intent_at")
         .eq("org_id", orgId)
         .order("updated_at", { ascending: false })
         .limit(200);
-      if (res.error && (String(res.error.message || "").includes("asked_") || res.error.code === "42703")) {
+      if (res.error && (String(res.error.message || "").includes("asked_") || String(res.error.message || "").includes("city") || res.error.code === "42703")) {
         const retry = await supabaseAdmin
           .from("contacts")
           .select("id, wa_id, display_name, phone, updated_at")

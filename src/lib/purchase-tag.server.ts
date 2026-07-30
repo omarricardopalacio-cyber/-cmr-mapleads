@@ -58,6 +58,18 @@ export async function assignComproTag(params: {
       triggerValue: tagId!,
     }).catch((err) => console.warn("[assignComproTag] triggerFlows", err));
 
+    // Vigilante: intención "compro" → solo el último flujo asignado
+    import("@/lib/intent-watcher.server")
+      .then(({ runIntentWatcher }) =>
+        runIntentWatcher({
+          orgId: params.orgId,
+          contactId,
+          trigger: "purchase",
+          forcedIntentKey: "compro",
+        }),
+      )
+      .catch((err) => console.warn("[assignComproTag] watcher", err));
+
     return { assigned: true, tagId: tagId! };
   } catch (err) {
     console.warn(

@@ -32,6 +32,15 @@ type ContactRow = {
   purchased: boolean;
   asked_products?: string | null;
   asked_questions?: string | null;
+  city?: string | null;
+  address?: string | null;
+  neighborhood?: string | null;
+  last_intent_key?: string | null;
+  last_intent_at?: string | null;
+  entry_segment?: string | null;
+  entry_phrase?: string | null;
+  entry_origin_summary?: string | null;
+  entry_segment_at?: string | null;
 };
 
 function previewLines(raw: string | null | undefined, max = 3): string {
@@ -72,6 +81,13 @@ function ContactsPage() {
           c.wa_id,
           c.asked_products,
           c.asked_questions,
+          c.city,
+          c.address,
+          c.neighborhood,
+          c.last_intent_key,
+          c.entry_segment,
+          c.entry_phrase,
+          c.entry_origin_summary,
         ]
           .filter(Boolean)
           .join("\n")
@@ -138,10 +154,17 @@ function ContactsPage() {
           <td>${nombre}</td>
           ${phoneCell(c.wa_id)}
           ${phoneCell(c.phone)}
+          <td>${h(c.city || "—")}</td>
+          <td>${h(c.address || "—")}</td>
+          <td>${h(c.neighborhood || "—")}</td>
+          <td>${h(c.entry_segment || "—")}</td>
+          <td>${h(c.entry_phrase || "—")}</td>
+          <td>${h(c.entry_origin_summary || "—")}</td>
           <td>${h(estado)}</td>
           <td style="mso-number-format:'0';">${c.message_count ?? 0}</td>
           ${listCell(c.asked_products)}
           ${listCell(c.asked_questions)}
+          <td>${h(c.last_intent_key || "—")}</td>
           <td>${actualizado}</td>
         </tr>`;
       })
@@ -162,11 +185,18 @@ function ContactsPage() {
 <tr>
   <th>Nombre</th>
   <th>WhatsApp ID</th>
-  <th>Teléfono</th>
-  <th>Estado</th>
+  <th>Teléfono / Cel</th>
+  <th>Ciudad</th>
+  <th>Dirección</th>
+  <th>Barrio</th>
+  <th>Segmento</th>
+  <th>Frase de entrada</th>
+  <th>Origen seguimiento</th>
+  <th>Estado compra</th>
   <th>Mensajes</th>
   <th>Productos consultados</th>
   <th>Preguntas</th>
+  <th>Última intención</th>
   <th>Actualizado</th>
 </tr>
 </thead>

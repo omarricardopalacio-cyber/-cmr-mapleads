@@ -5,6 +5,95 @@ import { processRunUntilWaitOrCompleted } from "./flow-runner.server";
 const ACTIVE_RUN_STATUSES = ["active", "running", "wait_node", "paused"];
 
 /**
+ * Cancela ejecuciones activas del contacto.
+ * Regla del vigilante: si hay varios flujos, solo debe quedar el último asignado.
+ */
+export async function cancelActiveFlowRunsForContact(params: {
+  orgId: string;
+  contactId: string;
+  exceptFlowId?: string | null;
+  reason?: string;
+}): Promise<number> {
+  const now = new Date().toISOString();
+  let q = supabaseAdmin
+    .from("flow_runs")
+    .update({
+      status: "cancelled",
+      finished_at: now,
+      updated_at: now,
+      error: params.reason || "Reemplazado: solo el último flujo asignado",
+    })
+    .eq("org_id", params.orgId)
+    .eq("contact_id", params.contactId)
+    .in("status", ACTIVE_RUN_STATUSES);
+
+  if (params.exceptFlowId) {
+    q = q.neq("flow_id", params.exceptFlowId);
+  }
+
+  const { data, error } = await q.select("id");
+  if (error) {
+    console.warn("[cancelActiveFlowRunsForContact]", error.message);
+    return 0;
+  }
+  return data?.length ?? 0;
+}
+
+/**
+ * Arranca un flujo desde el vigilante (no exige ai_selectable).
+ * Cancela cualquier otro flujo activo del contacto y deja solo este.
+ */
+export async function startWatcherFlowForContact(params: {
+  orgId: string;
+  contactId: string;
+  flowId: string;
+}): Promise<{ started: boolean; message: string; run?: any }> {
+  const { orgId, contactId, flowId } = params;
+
+  const { data: flow } = await supabaseAdmin
+    .from("flows")
+    .select("id, name, is_active, max_sends_per_contact")
+    .eq("org_id", orgId)
+    .eq("id", flowId)
+    .maybeSingle();
+
+  if (!flow) return { started: false, message: "El flujo no existe." };
+  if (!flow.is_active) {
+    return { started: false, message: `El flujo "${flow.name}" no está activo.` };
+  }
+
+  const { data: firstStep } = await supabaseAdmin
+    .from("flow_steps")
+    .select("id")
+    .eq("flow_id", flowId)
+    .is("parent_step_id", null)
+    .order("step_order", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!firstStep) {
+    return { started: false, message: `El flujo "${flow.name}" no tiene pasos.` };
+  }
+
+  // Solo el último: cancela los demás (y el mismo si estaba a medias, se reinicia abajo).
+  await cancelActiveFlowRunsForContact({
+    orgId,
+    contactId,
+    reason: "Vigilante: nuevo flujo asignado (solo el último)",
+  });
+
+  return ensureFlowRunForContact({
+    orgId,
+    contactId,
+    flowId,
+    firstStepId: firstStep.id,
+    maxSends: flow.max_sends_per_contact,
+    flowName: flow.name,
+    processNow: true,
+  });
+}
+
+/**
  * NULL / <= 0 = ilimitado. Si hay tope, bloquea cuando send_count ya lo alcanzó.
  */
 export function canSendFlowToContact(params: {

@@ -23,6 +23,7 @@ import { Route as AuthenticatedConversationsRouteImport } from './routes/_authen
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated.dashboard'
 import { Route as AuthenticatedFlowsRouteImport } from './routes/_authenticated.flows'
 import { Route as AuthenticatedIntegrationsRouteImport } from './routes/_authenticated.integrations'
+import { Route as AuthenticatedIntentWatcherRouteImport } from './routes/_authenticated.intent-watcher'
 import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated.knowledge'
 import { Route as AuthenticatedMapleadsRouteImport } from './routes/_authenticated.mapleads'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated.orders'
@@ -51,8 +52,8 @@ import { Route as ApiPublicMapleadsIngestRouteImport } from './routes/api/public
 import { Route as ApiPublicStoreConfigRouteImport } from './routes/api/public/store/config'
 import { Route as ApiPublicStoreProductsRouteImport } from './routes/api/public/store/products'
 import { Route as ApiPublicStorePushRouteImport } from './routes/api/public/store/push'
-import { Route as StoreTokenProductProductIdRouteImport } from './routes/store.$token.product.$productId'
 import { Route as StoreTokenLegalSlugRouteImport } from './routes/store.$token.legal.$slug'
+import { Route as StoreTokenProductProductIdRouteImport } from './routes/store.$token.product.$productId'
 import { Route as ApiPublicStoreChatMessagesRouteImport } from './routes/api/public/store/chat/messages'
 import { Route as ApiPublicStoreChatSessionRouteImport } from './routes/api/public/store/chat/session'
 
@@ -127,6 +128,12 @@ const AuthenticatedIntegrationsRoute =
   AuthenticatedIntegrationsRouteImport.update({
     id: '/integrations',
     path: '/integrations',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedIntentWatcherRoute =
+  AuthenticatedIntentWatcherRouteImport.update({
+    id: '/intent-watcher',
+    path: '/intent-watcher',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedKnowledgeRoute = AuthenticatedKnowledgeRouteImport.update({
@@ -278,17 +285,17 @@ const ApiPublicStorePushRoute = ApiPublicStorePushRouteImport.update({
   path: '/api/public/store/push',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StoreTokenLegalSlugRoute = StoreTokenLegalSlugRouteImport.update({
+  id: '/legal/$slug',
+  path: '/legal/$slug',
+  getParentRoute: () => StoreTokenRoute,
+} as any)
 const StoreTokenProductProductIdRoute =
   StoreTokenProductProductIdRouteImport.update({
     id: '/product/$productId',
     path: '/product/$productId',
     getParentRoute: () => StoreTokenRoute,
   } as any)
-const StoreTokenLegalSlugRoute = StoreTokenLegalSlugRouteImport.update({
-  id: '/legal/$slug',
-  path: '/legal/$slug',
-  getParentRoute: () => StoreTokenRoute,
-} as any)
 const ApiPublicStoreChatMessagesRoute =
   ApiPublicStoreChatMessagesRouteImport.update({
     id: '/api/public/store/chat/messages',
@@ -316,6 +323,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
+  '/intent-watcher': typeof AuthenticatedIntentWatcherRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/mapleads': typeof AuthenticatedMapleadsRoute
   '/orders': typeof AuthenticatedOrdersRoute
@@ -344,6 +352,7 @@ export interface FileRoutesByFullPath {
   '/api/public/store/config': typeof ApiPublicStoreConfigRoute
   '/api/public/store/products': typeof ApiPublicStoreProductsRoute
   '/api/public/store/push': typeof ApiPublicStorePushRoute
+  '/store/$token/legal/$slug': typeof StoreTokenLegalSlugRoute
   '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
   '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
   '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
@@ -361,6 +370,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/flows': typeof AuthenticatedFlowsRoute
   '/integrations': typeof AuthenticatedIntegrationsRoute
+  '/intent-watcher': typeof AuthenticatedIntentWatcherRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/mapleads': typeof AuthenticatedMapleadsRoute
   '/orders': typeof AuthenticatedOrdersRoute
@@ -388,6 +398,7 @@ export interface FileRoutesByTo {
   '/api/public/store/config': typeof ApiPublicStoreConfigRoute
   '/api/public/store/products': typeof ApiPublicStoreProductsRoute
   '/api/public/store/push': typeof ApiPublicStorePushRoute
+  '/store/$token/legal/$slug': typeof StoreTokenLegalSlugRoute
   '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
   '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
   '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
@@ -408,6 +419,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/flows': typeof AuthenticatedFlowsRoute
   '/_authenticated/integrations': typeof AuthenticatedIntegrationsRoute
+  '/_authenticated/intent-watcher': typeof AuthenticatedIntentWatcherRoute
   '/_authenticated/knowledge': typeof AuthenticatedKnowledgeRoute
   '/_authenticated/mapleads': typeof AuthenticatedMapleadsRoute
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
@@ -436,6 +448,7 @@ export interface FileRoutesById {
   '/api/public/store/config': typeof ApiPublicStoreConfigRoute
   '/api/public/store/products': typeof ApiPublicStoreProductsRoute
   '/api/public/store/push': typeof ApiPublicStorePushRoute
+  '/store/$token/legal/$slug': typeof StoreTokenLegalSlugRoute
   '/store/$token/product/$productId': typeof StoreTokenProductProductIdRoute
   '/api/public/store/chat/messages': typeof ApiPublicStoreChatMessagesRoute
   '/api/public/store/chat/session': typeof ApiPublicStoreChatSessionRoute
@@ -456,6 +469,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/flows'
     | '/integrations'
+    | '/intent-watcher'
     | '/knowledge'
     | '/mapleads'
     | '/orders'
@@ -484,6 +498,7 @@ export interface FileRouteTypes {
     | '/api/public/store/config'
     | '/api/public/store/products'
     | '/api/public/store/push'
+    | '/store/$token/legal/$slug'
     | '/store/$token/product/$productId'
     | '/api/public/store/chat/messages'
     | '/api/public/store/chat/session'
@@ -501,6 +516,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/flows'
     | '/integrations'
+    | '/intent-watcher'
     | '/knowledge'
     | '/mapleads'
     | '/orders'
@@ -528,6 +544,7 @@ export interface FileRouteTypes {
     | '/api/public/store/config'
     | '/api/public/store/products'
     | '/api/public/store/push'
+    | '/store/$token/legal/$slug'
     | '/store/$token/product/$productId'
     | '/api/public/store/chat/messages'
     | '/api/public/store/chat/session'
@@ -547,6 +564,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/flows'
     | '/_authenticated/integrations'
+    | '/_authenticated/intent-watcher'
     | '/_authenticated/knowledge'
     | '/_authenticated/mapleads'
     | '/_authenticated/orders'
@@ -575,6 +593,7 @@ export interface FileRouteTypes {
     | '/api/public/store/config'
     | '/api/public/store/products'
     | '/api/public/store/push'
+    | '/store/$token/legal/$slug'
     | '/store/$token/product/$productId'
     | '/api/public/store/chat/messages'
     | '/api/public/store/chat/session'
@@ -703,6 +722,13 @@ declare module '@tanstack/react-router' {
       path: '/integrations'
       fullPath: '/integrations'
       preLoaderRoute: typeof AuthenticatedIntegrationsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/intent-watcher': {
+      id: '/_authenticated/intent-watcher'
+      path: '/intent-watcher'
+      fullPath: '/intent-watcher'
+      preLoaderRoute: typeof AuthenticatedIntentWatcherRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/knowledge': {
@@ -901,6 +927,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicStorePushRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/store/$token/legal/$slug': {
+      id: '/store/$token/legal/$slug'
+      path: '/legal/$slug'
+      fullPath: '/store/$token/legal/$slug'
+      preLoaderRoute: typeof StoreTokenLegalSlugRouteImport
+      parentRoute: typeof StoreTokenRoute
+    }
     '/store/$token/product/$productId': {
       id: '/store/$token/product/$productId'
       path: '/product/$productId'
@@ -952,6 +985,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedFlowsRoute: typeof AuthenticatedFlowsRoute
   AuthenticatedIntegrationsRoute: typeof AuthenticatedIntegrationsRoute
+  AuthenticatedIntentWatcherRoute: typeof AuthenticatedIntentWatcherRoute
   AuthenticatedKnowledgeRoute: typeof AuthenticatedKnowledgeRoute
   AuthenticatedMapleadsRoute: typeof AuthenticatedMapleadsRoute
   AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
@@ -973,6 +1007,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedFlowsRoute: AuthenticatedFlowsRoute,
   AuthenticatedIntegrationsRoute: AuthenticatedIntegrationsRoute,
+  AuthenticatedIntentWatcherRoute: AuthenticatedIntentWatcherRoute,
   AuthenticatedKnowledgeRoute: AuthenticatedKnowledgeRoute,
   AuthenticatedMapleadsRoute: AuthenticatedMapleadsRoute,
   AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
@@ -991,15 +1026,15 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 interface StoreTokenRouteChildren {
   StoreTokenChatRoute: typeof StoreTokenChatRoute
   StoreTokenIndexRoute: typeof StoreTokenIndexRoute
-  StoreTokenProductProductIdRoute: typeof StoreTokenProductProductIdRoute
   StoreTokenLegalSlugRoute: typeof StoreTokenLegalSlugRoute
+  StoreTokenProductProductIdRoute: typeof StoreTokenProductProductIdRoute
 }
 
 const StoreTokenRouteChildren: StoreTokenRouteChildren = {
   StoreTokenChatRoute: StoreTokenChatRoute,
   StoreTokenIndexRoute: StoreTokenIndexRoute,
-  StoreTokenProductProductIdRoute: StoreTokenProductProductIdRoute,
   StoreTokenLegalSlugRoute: StoreTokenLegalSlugRoute,
+  StoreTokenProductProductIdRoute: StoreTokenProductProductIdRoute,
 }
 
 const StoreTokenRouteWithChildren = StoreTokenRoute._addFileChildren(

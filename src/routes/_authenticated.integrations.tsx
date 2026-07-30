@@ -417,6 +417,7 @@ function IntegrationsPage() {
           <Card className="p-5 space-y-3">
             <div className="text-sm text-muted-foreground">
               Conecta directamente con la API de Groq usando tu propia API Key.
+              También se usa (o la de OpenAI) para transcribir notas de voz y que la IA pueda responderlas.
             </div>
             <div>
               <Label>API Key de Groq</Label>

@@ -716,7 +716,17 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
   // Solo audios van temporalmente a la nube (Whisper). Fotos/videos/docs = solo PC.
   if (isAudio) {
     console.log("[MAPLE MULTIMEDIA] Subiendo audio temporal a Storage para transcripción...");
-    const uploaded = await uploadMediaToBackend(b64, mime, msgType);
+    // Reintentos: NO dejamos base64 en chrome.storage (cuota ~10MB y puede tumbar la cola).
+    // El listener de WhatsApp no se toca; esto corre solo en el service worker.
+    let uploaded: { url: string; storagePath: string; mimeType: string } | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      uploaded = await uploadMediaToBackend(b64, mime, msgType);
+      if (uploaded?.url) break;
+      console.warn(
+        `[MAPLE MULTIMEDIA] Upload audio intento ${attempt}/3 falló; reintentando...`
+      );
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 800 * attempt));
+    }
     if (uploaded?.url) {
       const slimMedia: Record<string, unknown> = {
         ...media,
@@ -732,6 +742,9 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
       delete slimMedia.data;
       return { ...event, payload: { ...p, media: slimMedia } };
     }
+    console.warn(
+      "[MAPLE MULTIMEDIA] Upload audio falló tras reintentos; enviando localOnly (sin base64 en cola)"
+    );
   }
 
   const localOnlyMedia: Record<string, unknown> = {

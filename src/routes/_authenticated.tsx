@@ -13,7 +13,7 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X, Package, Tags } from "lucide-react";
+import { LayoutDashboard, MessagesSquare, MessageSquare, Users, Smartphone, KanbanSquare, LogOut, Zap, Sparkles, Bell, Clock, GitBranch, Megaphone, Settings, BookOpen, UserCheck, MapPin, Store, ClipboardList, Shield, X, Package, Tags, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -65,6 +65,7 @@ function AppSidebar() {
     { title: "Respuestas Rápidas", url: "/quick-replies", icon: Zap },
     { title: "Campañas Masivas", url: "/broadcasts", icon: Megaphone },
     { title: "Flujos Automatizados", url: "/flows", icon: GitBranch },
+    { title: "Vigilante intenciones", url: "/intent-watcher", icon: Eye },
   ];
 
   const aiConfig = [

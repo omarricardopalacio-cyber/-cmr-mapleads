@@ -9,7 +9,7 @@ import {
 } from '@/lib/engine-media.server'
 import { registerFailedAiRequest, sendSupportMessage } from '@/lib/retry-manager.server'
 import { loadCustomerMemory, extractAndSaveMemory } from '@/lib/ai/customer-memory.server'
-import { transcribeAudioFromUrl } from '@/lib/ai/transcribe.server'
+import { transcribeInboundAudio } from '@/lib/ai/transcribe.server'
 import { storagePathFromMediaUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createDedupTracker, buildInboundDedupKey, buildAiReplyDedupKey } from './-ingest-dedupe'
@@ -1068,23 +1068,38 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
         const meWaId = session.me_wa_id ?? null
         const normalized = events.map((ev) => normalizeEvent(ev, meWaId))
 
-        // Key de Groq para transcribir audios (se carga una sola vez, on-demand).
-        // Reutiliza la misma API de Groq configurada en Ajustes > IA; si no está,
-        // cae al env GROQ_API_KEY. undefined = aún no consultada.
-        let groqApiKeyCache: string | null | undefined = undefined
-        const getGroqApiKey = async (): Promise<string | null> => {
-          if (groqApiKeyCache !== undefined) return groqApiKeyCache
+        // Claves para Whisper (Groq preferido, OpenAI de respaldo). undefined = aún no consultada.
+        let transcriptionKeysCache:
+          | { groq: string | null; openai: string | null }
+          | undefined = undefined
+        const getTranscriptionKeys = async (): Promise<{
+          groq: string | null
+          openai: string | null
+        }> => {
+          if (transcriptionKeysCache !== undefined) return transcriptionKeysCache
           try {
             const { data } = await supabaseAdmin
               .from('ai_configs')
-              .select('grok_api_key')
+              .select('grok_api_key, openai_api_key')
               .eq('org_id', session.org_id)
               .maybeSingle()
-            groqApiKeyCache = ((data as any)?.grok_api_key as string) || process.env.GROQ_API_KEY || null
+            transcriptionKeysCache = {
+              groq:
+                ((data as any)?.grok_api_key as string) ||
+                process.env.GROQ_API_KEY ||
+                null,
+              openai:
+                ((data as any)?.openai_api_key as string) ||
+                process.env.OPENAI_API_KEY ||
+                null,
+            }
           } catch {
-            groqApiKeyCache = process.env.GROQ_API_KEY || null
+            transcriptionKeysCache = {
+              groq: process.env.GROQ_API_KEY || null,
+              openai: process.env.OPENAI_API_KEY || null,
+            }
           }
-          return groqApiKeyCache
+          return transcriptionKeysCache
         }
 
         for (const e of normalized) {
@@ -1321,59 +1336,102 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             }
 
             // === AUDIOS: transcribir notas de voz entrantes para que la IA las entienda ===
-            // Si es un audio ENTRANTE y no trae texto, lo transcribimos con Groq (Whisper)
-            // y guardamos el resultado como `e.text`. Así el resto del flujo (historial,
-            // IA, herramientas, flujos) funciona igual y la IA puede responderlo.
-            // No infla el almacenamiento (el texto pesa casi nada) ni el prompt.
+            // Whisper (Groq → OpenAI). El texto queda en `e.text` como si el cliente escribiera.
+            // Si no se puede transcribir, igual disparamos la IA con un prompt de respaldo
+            // (sin guardar texto falso en el mensaje).
             const incomingDirection = e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
-            if (
-              process.env.DISABLE_AUDIO_TRANSCRIPTION !== 'true' &&
-              incomingDirection === 'in' &&
-              !e.text?.trim() &&
-              enrichedMedia &&
-              typeof (enrichedMedia as any).url === 'string'
-            ) {
+            let audioAiFallbackText: string | null = null
+            {
               const mt = String(
-                (enrichedMedia as any).mimeType || (enrichedMedia as any).mime_type || '',
-              ).toLowerCase();
-              const rawType = String((e.media as any)?.type || '').toLowerCase();
-              const isAudio = mt.startsWith('audio/') || rawType === 'ptt' || rawType === 'audio';
-              if (isAudio) {
-                try {
-                  const groqKey = await getGroqApiKey();
-                  if (groqKey) {
-                    const transcript = await transcribeAudioFromUrl(
-                      (enrichedMedia as any).url as string,
-                      groqKey,
-                    );
-                    if (transcript?.trim()) {
-                      e.text = transcript.trim();
-                      console.log('[ingest] 🎤 audio transcrito', {
-                        threadId: thread.id,
-                        waMessageId: e.waMessageId,
-                        length: e.text.length,
-                      });
-                      // Nube ligera: borrar audio de Storage; el texto queda en el mensaje.
-                      await deleteCloudMediaFile(enrichedMedia as Record<string, unknown>);
-                      Object.assign(
-                        enrichedMedia as object,
-                        toLocalOnlyMediaMeta(enrichedMedia as Record<string, unknown>, {
-                          transcribed: true,
-                        }),
-                      );
+                (enrichedMedia as any)?.mimeType || (enrichedMedia as any)?.mime_type || '',
+              ).toLowerCase()
+              const rawType = String(
+                (e.media as any)?.type || (enrichedMedia as any)?.type || '',
+              ).toLowerCase()
+              const isAudio =
+                mt.startsWith('audio/') || rawType === 'ptt' || rawType === 'audio'
+              const audioUrl =
+                enrichedMedia && typeof (enrichedMedia as any).url === 'string'
+                  ? ((enrichedMedia as any).url as string)
+                  : null
+
+              if (
+                process.env.DISABLE_AUDIO_TRANSCRIPTION !== 'true' &&
+                incomingDirection === 'in' &&
+                !e.text?.trim() &&
+                isAudio
+              ) {
+                if (audioUrl) {
+                  try {
+                    const keys = await getTranscriptionKeys()
+                    if (!keys.groq && !keys.openai) {
+                      console.warn(
+                        '[ingest] 🎤 sin grok_api_key/GROQ_API_KEY ni openai_api_key para transcribir audio',
+                      )
+                      audioAiFallbackText =
+                        'El cliente envió una nota de voz. No pude escucharla porque no hay API de transcripción configurada. Responde amablemente pidiendo que escriba lo que necesita.'
                     } else {
-                      console.log('[ingest] 🎤 audio sin transcripción utilizable', {
-                        waMessageId: e.waMessageId,
-                      });
+                      const { text: transcript, provider } = await transcribeInboundAudio(
+                        audioUrl,
+                        keys,
+                        {
+                          mimeType:
+                            (enrichedMedia as any).mimeType ||
+                            (enrichedMedia as any).mime_type ||
+                            undefined,
+                        },
+                      )
+                      if (transcript?.trim()) {
+                        e.text = transcript.trim()
+                        console.log('[ingest] 🎤 audio transcrito', {
+                          threadId: thread.id,
+                          waMessageId: e.waMessageId,
+                          length: e.text.length,
+                          provider,
+                        })
+                        await deleteCloudMediaFile(enrichedMedia as Record<string, unknown>)
+                        Object.assign(
+                          enrichedMedia as object,
+                          toLocalOnlyMediaMeta(enrichedMedia as Record<string, unknown>, {
+                            transcribed: true,
+                          }),
+                        )
+                      } else {
+                        console.log('[ingest] 🎤 audio sin transcripción utilizable', {
+                          waMessageId: e.waMessageId,
+                          provider,
+                        })
+                        audioAiFallbackText =
+                          'El cliente envió una nota de voz que no pude entender. Responde amablemente pidiendo que escriba lo que necesita en un mensaje de texto.'
+                        await deleteCloudMediaFile(enrichedMedia as Record<string, unknown>)
+                        Object.assign(
+                          enrichedMedia as object,
+                          toLocalOnlyMediaMeta(enrichedMedia as Record<string, unknown>, {
+                            transcribed: false,
+                          }),
+                        )
+                      }
                     }
-                  } else {
-                    console.warn('[ingest] 🎤 no hay grok_api_key/GROQ_API_KEY para transcribir audio');
+                  } catch (err) {
+                    console.warn(
+                      '[ingest] 🎤 transcripción de audio falló:',
+                      (err as Error)?.message,
+                    )
+                    audioAiFallbackText =
+                      'El cliente envió una nota de voz que no pude escuchar. Responde amablemente pidiendo que escriba lo que necesita.'
                   }
-                } catch (err) {
-                  console.warn(
-                    '[ingest] 🎤 transcripción de audio falló (ignorado):',
-                    (err as Error)?.message,
-                  );
+                } else {
+                  console.warn('[ingest] 🎤 audio entrante sin URL/base64 — no se puede transcribir', {
+                    waMessageId: e.waMessageId,
+                    hasMedia: !!e.media,
+                    localOnly: !!(enrichedMedia as any)?.localOnly,
+                    missing: !!(enrichedMedia as any)?.missing_media,
+                  })
+                  // Solo pedir texto si ya no esperamos mediaRecovery (sin missing_media)
+                  if (!(enrichedMedia as any)?.missing_media) {
+                    audioAiFallbackText =
+                      'El cliente envió una nota de voz que no pude recibir. Responde amablemente pidiendo que escriba lo que necesita.'
+                  }
                 }
               }
             }
@@ -1498,8 +1556,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               const newHasLocalOnly = !!(enrichedMedia && (enrichedMedia as any).localOnly);
               const previousText = String(existingMessage.text ?? '').trim();
               const gotNewTranscript = !!(e.text?.trim() && !previousText);
+              const textForAi = (e.text?.trim() || audioAiFallbackText || '').trim();
+              const shouldFireAudioAi =
+                !!textForAi &&
+                !previousText &&
+                (gotNewTranscript || !!audioAiFallbackText) &&
+                (e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in';
 
-              if (existingMissing && (newHasUrl || newHasLocalOnly || gotNewTranscript)) {
+              if (existingMissing && (newHasUrl || newHasLocalOnly || gotNewTranscript || !!audioAiFallbackText)) {
                 console.log('[ingest] Actualizando mensaje existente con media recuperada:', e.waMessageId);
                 await supabaseAdmin
                   .from('messages')
@@ -1509,8 +1573,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   })
                   .eq('id', existingMessage.id);
 
-                // Audio transcrito tarde: disparar IA ahora que ya hay texto
-                if (gotNewTranscript && (e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in') {
+                // Audio transcrito (o fallback) tarde: disparar IA
+                if (shouldFireAudioAi) {
                   const sendChatId = e.contact?.phone
                     ? `${e.contact.phone}@c.us`
                     : /^\d+$/.test(waId)
@@ -1529,7 +1593,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     session.org_id,
                     session.id,
                     sendChatId,
-                    e.text!,
+                    textForAi,
                     thread.id,
                     contactId,
                   )
@@ -1538,7 +1602,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     const aiReplyDedupKey = buildAiReplyDedupKey({
                       sessionId: session.id,
                       threadId: thread.id,
-                      text: e.text,
+                      text: textForAi,
                       waMessageId: e.waMessageId,
                       sentAt: e.sentAt,
                       chatId: sendChatId,
@@ -1549,9 +1613,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       aiReplyDedupKey,
                     )
                     if (!alreadyQueued && aiReplyDedupe.shouldProcess(aiReplyDedupKey)) {
-                      console.log('[ingest] 🎤 IA disparada tras transcripción de audio', {
+                      console.log('[ingest] 🎤 IA disparada tras audio', {
                         waMessageId: e.waMessageId,
                         threadId: thread.id,
+                        transcribed: gotNewTranscript,
                       })
                       if (process.env.ASYNC_AI_REPLY === 'true') {
                         maybeAiReply(
@@ -1560,7 +1625,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                           sendChatId,
                           contactId,
                           thread.id,
-                          e.text!,
+                          textForAi,
                           totalDelaySec,
                           autoRepliesWereSent,
                           aiReplyDedupKey,
@@ -1574,7 +1639,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                           sendChatId,
                           contactId,
                           thread.id,
-                          e.text!,
+                          textForAi,
                           totalDelaySec,
                           autoRepliesWereSent,
                           aiReplyDedupKey,
@@ -1583,17 +1648,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     }
                   }
                 }
-              } else if (gotNewTranscript) {
-                console.log('[ingest] Actualizando texto transcrito de audio:', e.waMessageId);
-                await supabaseAdmin
-                  .from('messages')
-                  .update({
-                    text: e.text,
-                    ...(enrichedMedia ? { media: enrichedMedia as any } : {}),
-                  })
-                  .eq('id', existingMessage.id);
+              } else if (gotNewTranscript || (shouldFireAudioAi && !!audioAiFallbackText)) {
+                if (gotNewTranscript) {
+                  console.log('[ingest] Actualizando texto transcrito de audio:', e.waMessageId);
+                  await supabaseAdmin
+                    .from('messages')
+                    .update({
+                      text: e.text,
+                      ...(enrichedMedia ? { media: enrichedMedia as any } : {}),
+                    })
+                    .eq('id', existingMessage.id);
+                }
 
-                if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in') {
+                if (shouldFireAudioAi) {
                   const sendChatId = e.contact?.phone
                     ? `${e.contact.phone}@c.us`
                     : /^\d+$/.test(waId)
@@ -1603,7 +1670,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     session.org_id,
                     session.id,
                     sendChatId,
-                    e.text!,
+                    textForAi,
                     thread.id,
                     contactId,
                   )
@@ -1611,7 +1678,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     const aiReplyDedupKey = buildAiReplyDedupKey({
                       sessionId: session.id,
                       threadId: thread.id,
-                      text: e.text,
+                      text: textForAi,
                       waMessageId: e.waMessageId,
                       sentAt: e.sentAt,
                       chatId: sendChatId,
@@ -1627,7 +1694,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                           sendChatId,
                           contactId,
                           thread.id,
-                          e.text!,
+                          textForAi,
                           totalDelaySec,
                           totalDelaySec > 0,
                           aiReplyDedupKey,
@@ -1675,15 +1742,18 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               sent_at: e.sentAt ?? new Date().toISOString(),
             })
 
-            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && e.text) {
-              try {
-                const { appendContactAskedQuestion } = await import('@/lib/contact-inquiry.server')
-                await appendContactAskedQuestion({
-                  orgId: session.org_id,
-                  contactId,
-                  text: e.text,
-                })
-              } catch (_) { /* ignore */ }
+            const textForAiInsert = (e.text?.trim() || audioAiFallbackText || '').trim()
+            if ((e.direction ?? (e.type === 'message-in' ? 'in' : 'out')) === 'in' && textForAiInsert) {
+              if (e.text?.trim()) {
+                try {
+                  const { appendContactAskedQuestion } = await import('@/lib/contact-inquiry.server')
+                  await appendContactAskedQuestion({
+                    orgId: session.org_id,
+                    contactId,
+                    text: e.text,
+                  })
+                } catch (_) { /* ignore */ }
+              }
 
               // Use phone@c.us when we have a real phone (avoids @lid issues)
               const sendChatId = e.contact?.phone
@@ -1702,7 +1772,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .is('cancelled_at', null)
               } catch (_) { /* ignore */ }
 
-              const { aiDisabled, totalDelaySec } = await maybeAutoReply(session.org_id, session.id, sendChatId, e.text, thread.id, contactId)
+              const { aiDisabled, totalDelaySec } = await maybeAutoReply(session.org_id, session.id, sendChatId, textForAiInsert, thread.id, contactId)
               if (!aiDisabled) {
                 // auto-replies already ran synchronously above, so AI enters right after.
                 // Pass autoRepliesWereSent so the AI uses contextual-entry mode.
@@ -1710,7 +1780,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 const aiReplyDedupKey = buildAiReplyDedupKey({
                   sessionId: session.id,
                   threadId: thread.id,
-                  text: e.text,
+                  text: textForAiInsert,
                   waMessageId: e.waMessageId,
                   sentAt: e.sentAt,
                   chatId: sendChatId,
@@ -1723,15 +1793,29 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 } else if (process.env.ASYNC_AI_REPLY === 'true') {
                   // Asynchronous ejecución (optimizado)
                   console.log('[ingest] Despachando maybeAiReply en segundo plano (asíncrono)');
-                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey).catch((err) => {
+                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, textForAiInsert, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey).catch((err) => {
                     console.error('[ingest] Error en maybeAiReply asíncrono:', err);
                   });
                 } else {
                   // Fallback síncrono (reversión a comportamiento anterior)
                   console.log('[ingest] Ejecutando maybeAiReply de forma síncrona (rollback/legacy)');
-                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, e.text, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey);
+                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, textForAiInsert, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey);
                 }
               }
+
+              // Vigilante de intenciones (IA aparte): ficha + flujo (solo el último)
+              try {
+                const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
+                void runIntentWatcher({
+                  orgId: session.org_id,
+                  contactId,
+                  threadId: thread.id,
+                  text: e.text || textForAiInsert,
+                  trigger: 'message',
+                }).catch((err) => {
+                  console.warn('[ingest] watcher:', (err as Error)?.message)
+                })
+              } catch (_) { /* ignore */ }
 
               // Schedule no-response pending entries for active no_response rules
               try {

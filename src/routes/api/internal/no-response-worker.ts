@@ -257,6 +257,22 @@ async function runNoResponseWorker(): Promise<{ fired: number; skipped: number }
         await supabaseAdmin.from('threads').update({ ai_enabled: true }).eq('id', threadId)
       }
 
+      // Vigilante: silencio → intención no_responde (cancela otros flujos, deja el último)
+      if (contactId) {
+        try {
+          const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
+          await runIntentWatcher({
+            orgId,
+            contactId,
+            threadId,
+            trigger: 'no_response',
+            forcedIntentKey: 'no_responde',
+          })
+        } catch (wErr: any) {
+          console.warn('[no-response-worker] watcher:', wErr?.message)
+        }
+      }
+
       // Marcar como disparado
       await supabaseAdmin
         .from('no_response_pending')
