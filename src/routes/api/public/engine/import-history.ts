@@ -36,20 +36,78 @@ const MsgSchema = z.object({
 });
 
 const BodySchema = z.object({
-  chatId: z.string().min(3).max(128),
+  chatId: z.string().min(3).max(200),
   contact: z
     .object({
-      waId: z.string().min(1).max(128).optional(),
+      waId: z.string().min(1).max(200).optional(),
       displayName: z.string().max(255).optional().nullable(),
       phone: z.string().max(32).optional().nullable(),
       profilePictureUrl: z.string().max(2000).optional().nullable(),
     })
     .optional(),
-  messages: z.array(MsgSchema).max(220),
+  messages: z.array(MsgSchema).max(250),
   classify: z.boolean().optional().default(true),
   /** Etiquetas de WhatsApp Business (labels) del chat */
   labels: z.array(z.string().max(80)).max(20).optional(),
 });
+
+/** Normaliza el body antes de Zod para evitar "Invalid payload" por basura de WA. */
+function sanitizeImportBody(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const b = raw as Record<string, unknown>;
+  const contact = (b.contact && typeof b.contact === "object"
+    ? { ...(b.contact as Record<string, unknown>) }
+    : {}) as Record<string, unknown>;
+
+  if (typeof contact.displayName === "string") {
+    contact.displayName = contact.displayName.slice(0, 255);
+  }
+  if (typeof contact.profilePictureUrl === "string") {
+    const pic = contact.profilePictureUrl;
+    if (!pic.startsWith("http") || pic.length > 2000) delete contact.profilePictureUrl;
+  }
+  if (typeof contact.phone === "string") {
+    contact.phone = contact.phone.replace(/\D/g, "").slice(0, 32) || null;
+  }
+
+  const msgsIn = Array.isArray(b.messages) ? b.messages : [];
+  const messages = msgsIn.slice(0, 220).map((m: any) => {
+    const waMessageId =
+      typeof m?.waMessageId === "string" && m.waMessageId.trim()
+        ? m.waMessageId.trim().slice(0, 200)
+        : undefined;
+    let text = m?.text ?? m?.body ?? "";
+    if (typeof text !== "string") text = String(text ?? "");
+    text = text.slice(0, 20000);
+    let type = typeof m?.type === "string" ? m.type.slice(0, 64) : undefined;
+    let sentAt = m?.sentAt ?? m?.timestamp;
+    if (typeof sentAt === "string" || typeof sentAt === "number") {
+      /* ok */
+    } else {
+      sentAt = undefined;
+    }
+    return {
+      waMessageId,
+      text,
+      fromMe: !!m?.fromMe,
+      direction: m?.fromMe ? "out" : m?.direction === "out" ? "out" : "in",
+      sentAt,
+      type,
+    };
+  });
+
+  const labels = Array.isArray(b.labels)
+    ? b.labels.map((l) => String(l).slice(0, 80)).filter(Boolean).slice(0, 20)
+    : undefined;
+
+  return {
+    chatId: String(b.chatId || "").trim().slice(0, 200),
+    contact: Object.keys(contact).length ? contact : undefined,
+    messages,
+    classify: b.classify !== false,
+    labels,
+  };
+}
 
 function digits(v: unknown): string | undefined {
   if (v == null) return undefined;
@@ -102,9 +160,12 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
           return json(400, { error: "Invalid JSON" });
         }
 
-        const parsed = BodySchema.safeParse(raw);
+        const parsed = BodySchema.safeParse(sanitizeImportBody(raw));
         if (!parsed.success) {
-          return json(400, { error: "Invalid payload", issues: parsed.error.issues });
+          return json(400, {
+            error: "Invalid payload",
+            issues: parsed.error.issues.slice(0, 5),
+          });
         }
 
         const body = parsed.data;
@@ -144,10 +205,13 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
           !/^cliente\s*\d+/i.test(rawName) &&
           rawName.toLowerCase() !== "unknown" &&
           rawName.toLowerCase() !== "sin número" &&
+          !/^[.\-…·_*]+$/.test(rawName) &&
           rawName !== digits(waId);
 
-        // No crear registros vacíos solo-LID (sin celular ni nombre útil)
-        if (String(waId).includes("@lid") && !phone && !usefulName) {
+        const hasMessages = Array.isArray(body.messages) && body.messages.length > 0;
+
+        // Solo-LID vacío SIN mensajes → omitir. Con mensajes → crear (luego se enriquece).
+        if (String(waId).includes("@lid") && !phone && !usefulName && !hasMessages) {
           return json(200, {
             ok: true,
             skipped: true,
@@ -158,7 +222,7 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
 
         const displayName =
           rawName ||
-          (phone ? `+${phone}` : "Cliente");
+          (phone ? `+${phone}` : usefulName ? rawName : hasMessages ? "Cliente WhatsApp" : "Cliente");
 
         const pic =
           typeof body.contact?.profilePictureUrl === "string" &&

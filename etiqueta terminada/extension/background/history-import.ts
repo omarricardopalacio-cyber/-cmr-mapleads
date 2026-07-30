@@ -154,7 +154,10 @@ async function postImportHistory(
     if (res.status >= 500 || res.status === 404) {
       return postImportViaIngest(base, sessionToken, body);
     }
-    throw new Error(data?.error || `HTTP ${res.status} en import-history`);
+    const issueHint = Array.isArray(data?.issues) && data.issues[0]
+      ? ` (${data.issues[0].path?.join(".")}: ${data.issues[0].message})`
+      : "";
+    throw new Error((data?.error || `HTTP ${res.status} en import-history`) + issueHint);
   }
   return data;
 }
@@ -322,32 +325,50 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
             /* seguir con datos slim del chat */
           }
 
-          const payload = {
-            chatId,
-            contact: {
-              waId: chatId,
-              displayName: displayName || undefined,
-              phone: phone || undefined,
-              profilePictureUrl: profilePictureUrl || undefined,
-            },
-            labels: Array.isArray(chat.labels)
-              ? chat.labels.map((l: any) => String(l)).filter(Boolean).slice(0, 10)
-              : [],
-            classify: true,
-            messages: msgs.map((m: any) => ({
-              waMessageId: m.messageId || m.id || undefined,
-              text: m.body || m.text || "",
+          const cleanMsgs = msgs.slice(0, 200).map((m: any) => {
+            const idRaw = m.messageId || m.id;
+            const waMessageId =
+              typeof idRaw === "string" && idRaw.trim() ? idRaw.trim().slice(0, 200) : undefined;
+            const text = String(m.body || m.text || "").slice(0, 20000);
+            const type =
+              typeof m.type === "string" ? String(m.type).slice(0, 64) : undefined;
+            return {
+              waMessageId,
+              text,
               fromMe: !!m.fromMe,
               direction: m.fromMe ? "out" : "in",
-              sentAt: m.timestamp,
-              type: m.type,
-            })),
+              sentAt: typeof m.timestamp === "number" || typeof m.timestamp === "string"
+                ? m.timestamp
+                : undefined,
+              type,
+            };
+          });
+
+          const payload = {
+            chatId: chatId.slice(0, 200),
+            contact: {
+              waId: chatId.slice(0, 200),
+              displayName: displayName ? String(displayName).slice(0, 255) : undefined,
+              phone: phone || undefined,
+              profilePictureUrl:
+                profilePictureUrl &&
+                profilePictureUrl.startsWith("http") &&
+                profilePictureUrl.length <= 2000
+                  ? profilePictureUrl
+                  : undefined,
+            },
+            labels: Array.isArray(chat.labels)
+              ? chat.labels.map((l: any) => String(l).slice(0, 80)).filter(Boolean).slice(0, 10)
+              : [],
+            classify: true,
+            messages: cleanMsgs,
           };
 
-          // No empujar registros vacíos LID al CRM
+          // LID sin datos y SIN mensajes → omitir. Con mensajes → importar.
           if (
             chatId.endsWith("@lid") &&
             !phone &&
+            cleanMsgs.length === 0 &&
             (!displayName ||
               /^cliente\s*\d+/i.test(displayName) ||
               displayName.toLowerCase() === "sin número")

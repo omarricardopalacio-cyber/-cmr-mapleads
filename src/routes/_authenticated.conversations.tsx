@@ -89,8 +89,9 @@ function ConversationsLayout() {
 
   const threads = (data?.threads ?? []).filter((t) => {
     const c = Array.isArray(t.contacts) ? t.contacts[0] : t.contacts;
-    // Ocultar registros vacíos LID (Cliente XXXX + "LID: …" / Sin número)
-    if (isBlankLidContact(c as any)) return false;
+    // Ocultar LID vacío solo si no hay actividad (sin mensajes)
+    const hasActivity = !!(t as any).last_message_at;
+    if (isBlankLidContact(c as any) && !hasActivity) return false;
     if (!q.trim()) return true;
     const hay = `${c?.display_name ?? ""} ${c?.wa_id ?? ""} ${c?.phone ?? ""}`.toLowerCase();
     return hay.includes(q.toLowerCase());
