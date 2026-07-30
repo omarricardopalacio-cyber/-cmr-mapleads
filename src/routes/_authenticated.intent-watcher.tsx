@@ -58,7 +58,17 @@ type AdSegment = {
   flow_id: string | null;
   priority: number;
   is_active: boolean;
+  observations?: string | null;
+  ad_investment?: number | null;
   flows?: { id: string; name: string } | { id: string; name: string }[] | null;
+  stats?: {
+    contacts: number;
+    messages_in: number;
+    sales: number;
+    cost_per_message: number | null;
+    cost_per_sale: number | null;
+    messages_per_sale: number | null;
+  };
 };
 
 const emptyRule = (): Omit<IntentRule, "id"> & { id?: string } => ({
@@ -81,7 +91,23 @@ const emptySegment = (): Omit<AdSegment, "id"> & { id?: string } => ({
   flow_id: null,
   priority: 100,
   is_active: true,
+  observations: "",
+  ad_investment: 0,
 });
+
+function formatMoney(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  });
+}
+
+function formatNum(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("es-CO", { maximumFractionDigits: 2 });
+}
 
 const SUGGESTED = [
   { key: "precio_caro", label: "Precio caro / no me alcanza" },
@@ -160,7 +186,7 @@ function IntentWatcherPage() {
       <div>
         <h1 className="text-2xl font-semibold flex items-center gap-2">
           <Eye className="h-6 w-6" />
-          Vigilante de intenciones
+          Vigilante de segmentos y clasificador de flujos
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           Segmenta leads de Facebook por frase/emoticon, detecta intenciones y asigna
@@ -206,29 +232,76 @@ function IntentWatcherPage() {
           <div className="grid gap-3">
             {segments.map((s) => {
               const flowName = Array.isArray(s.flows) ? s.flows[0]?.name : s.flows?.name;
+              const st = s.stats;
               return (
-                <Card key={s.id} className="p-4 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium truncate">{s.name}</p>
-                      <Badge variant={s.is_active ? "default" : "secondary"} className="text-[10px]">
-                        {s.is_active ? "Activo" : "Inactivo"}
-                      </Badge>
-                      <Badge variant="outline" className="text-[10px]">
-                        {s.match_mode}
-                      </Badge>
+                <Card key={s.id} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium truncate">{s.name}</p>
+                        <Badge variant={s.is_active ? "default" : "secondary"} className="text-[10px]">
+                          {s.is_active ? "Activo" : "Inactivo"}
+                        </Badge>
+                        <Badge variant="outline" className="text-[10px]">
+                          {s.match_mode}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1 truncate">
+                        Frase: “{s.match_phrase}”
+                        {flowName ? ` · Flujo: ${flowName}` : " · Sin flujo"}
+                        {` · Prioridad ${s.priority}`}
+                        {s.ad_investment != null && Number(s.ad_investment) > 0
+                          ? ` · Inversión ${formatMoney(Number(s.ad_investment))}`
+                          : ""}
+                      </p>
+                      {s.observations ? (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          Obs: {s.observations}
+                        </p>
+                      ) : null}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1 truncate">
-                      Frase: “{s.match_phrase}”
-                      {flowName ? ` · Flujo: ${flowName}` : " · Sin flujo"}
-                      {` · Prioridad ${s.priority}`}
-                    </p>
+                    <div className="flex gap-1 shrink-0">
+                      <Button variant="ghost" size="sm" onClick={() => setEditingSeg({ ...s })}>
+                        <Settings2 className="h-4 w-4" />
+                      </Button>
+                      <DeleteSegmentButton id={s.id} />
+                    </div>
                   </div>
-                  <div className="flex gap-1 shrink-0">
-                    <Button variant="ghost" size="sm" onClick={() => setEditingSeg({ ...s })}>
-                      <Settings2 className="h-4 w-4" />
-                    </Button>
-                    <DeleteSegmentButton id={s.id} />
+
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <div className="rounded-md border bg-muted/30 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Costo por mensaje
+                      </p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {formatMoney(st?.cost_per_message)}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {st?.messages_in ?? 0} msgs recibidos
+                      </p>
+                    </div>
+                    <div className="rounded-md border bg-muted/30 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Costo por venta
+                      </p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {formatMoney(st?.cost_per_sale)}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {st?.sales ?? 0} ventas consolidadas
+                      </p>
+                    </div>
+                    <div className="rounded-md border bg-muted/30 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Nº mensajes para venta
+                      </p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {formatNum(st?.messages_per_sale)}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        msgs ÷ ventas
+                      </p>
+                    </div>
                   </div>
                 </Card>
               );
@@ -434,7 +507,7 @@ function SegmentEditor({
   onClose,
   onSaved,
 }: {
-  segment: ReturnType<typeof emptySegment> & { id?: string };
+  segment: ReturnType<typeof emptySegment> & { id?: string; stats?: AdSegment["stats"] };
   flows: { id: string; name: string }[];
   onClose: () => void;
   onSaved: () => void;
@@ -442,6 +515,15 @@ function SegmentEditor({
   const upsertFn = useServerFn(upsertAdSegment);
   const [form, setForm] = useState({ ...segment });
   const [saving, setSaving] = useState(false);
+
+  const previewInv = Number(form.ad_investment) || 0;
+  const msgs = segment.stats?.messages_in ?? 0;
+  const sales = segment.stats?.sales ?? 0;
+  const preview = {
+    cost_per_message: msgs > 0 ? previewInv / msgs : null,
+    cost_per_sale: sales > 0 ? previewInv / sales : null,
+    messages_per_sale: sales > 0 ? msgs / sales : null,
+  };
 
   async function save() {
     if (!form.name.trim() || !form.match_phrase.trim()) {
@@ -459,6 +541,8 @@ function SegmentEditor({
           flow_id: form.flow_id || null,
           priority: Number(form.priority) || 100,
           is_active: !!form.is_active,
+          observations: form.observations || null,
+          ad_investment: Number(form.ad_investment) || 0,
         },
       });
       toast.success("Segmento guardado");
@@ -549,6 +633,61 @@ function SegmentEditor({
             </SelectContent>
           </Select>
         </div>
+        <div className="sm:col-span-2">
+          <Label>Observaciones</Label>
+          <Textarea
+            rows={3}
+            value={form.observations || ""}
+            onChange={(e) => setForm((s) => ({ ...s, observations: e.target.value }))}
+            placeholder="Anotaciones internas del segmento (campaña, público, creativo…)"
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <Label>Inversión publicitaria</Label>
+          <Input
+            type="number"
+            min={0}
+            step="1000"
+            value={form.ad_investment ?? 0}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, ad_investment: Number(e.target.value) || 0 }))
+            }
+            placeholder="0"
+          />
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Con este valor se calculan costo por mensaje, costo por venta y mensajes por venta.
+          </p>
+        </div>
+        {form.id ? (
+          <div className="sm:col-span-2 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-md border bg-muted/30 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Costo por mensaje
+              </p>
+              <p className="text-sm font-semibold">{formatMoney(preview.cost_per_message)}</p>
+              <p className="text-[10px] text-muted-foreground">{msgs} msgs recibidos</p>
+            </div>
+            <div className="rounded-md border bg-muted/30 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Costo por venta
+              </p>
+              <p className="text-sm font-semibold">{formatMoney(preview.cost_per_sale)}</p>
+              <p className="text-[10px] text-muted-foreground">{sales} ventas</p>
+            </div>
+            <div className="rounded-md border bg-muted/30 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Nº mensajes para venta
+              </p>
+              <p className="text-sm font-semibold">{formatNum(preview.messages_per_sale)}</p>
+              <p className="text-[10px] text-muted-foreground">msgs ÷ ventas</p>
+            </div>
+          </div>
+        ) : (
+          <div className="sm:col-span-2 rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">
+            Guarda el segmento e indica la inversión para ver costo por mensaje, costo por venta y
+            número de mensajes para venta (según leads de este segmento).
+          </div>
+        )}
       </div>
       <div className="flex gap-2 justify-end">
         <Button variant="outline" onClick={onClose}>

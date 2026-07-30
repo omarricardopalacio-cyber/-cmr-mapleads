@@ -65,7 +65,7 @@ function AppSidebar() {
     { title: "Respuestas Rápidas", url: "/quick-replies", icon: Zap },
     { title: "Campañas Masivas", url: "/broadcasts", icon: Megaphone },
     { title: "Flujos Automatizados", url: "/flows", icon: GitBranch },
-    { title: "Vigilante intenciones", url: "/intent-watcher", icon: Eye },
+    { title: "Vigilante de segmentos y clasificador de flujos", url: "/intent-watcher", icon: Eye },
   ];
 
   const aiConfig = [
