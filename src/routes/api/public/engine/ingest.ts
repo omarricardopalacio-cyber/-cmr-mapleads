@@ -768,13 +768,8 @@ async function shouldSkipAutomation(opts: {
   }
   const recent = await countRecentOutboundCommands(opts.orgId, opts.sessionId, opts.chatId, 60_000)
   if (recent >= 4) {
-    try {
-      await supabaseAdmin
-        .from('threads')
-        .update({ ai_enabled: false } as any)
-        .eq('id', opts.threadId)
-        .eq('org_id', opts.orgId)
-    } catch (_) { /* ignore */ }
+    // No apagar la IA del hilo: tras un menú/paquete el cliente escribe "1"
+    // y si apagamos aquí el chat queda muerto. Solo saltamos este turno.
     await cancelPendingSendsForChat(opts.orgId, opts.sessionId, opts.chatId)
     return { skip: true, reason: `rate_limit_${recent}` }
   }
@@ -1052,18 +1047,11 @@ async function maybeAiReply(
 
       const recentCmds = await countRecentOutboundCommands(orgId, sessionId, chatId, 60_000)
       if (recentCmds >= 4) {
-        console.warn('[ai-reply] rate limit: demasiados envíos recientes; se apaga IA del hilo', {
+        console.warn('[ai-reply] rate limit: demasiados envíos recientes; se omite esta respuesta (IA sigue activa)', {
           threadId,
           chatId,
           recentCmds,
         })
-        try {
-          await supabaseAdmin
-            .from('threads')
-            .update({ ai_enabled: false } as any)
-            .eq('id', threadId)
-            .eq('org_id', orgId)
-        } catch (_) { /* ignore */ }
         await cancelPendingSendsForChat(orgId, sessionId, chatId)
         skipQueue = true
       }

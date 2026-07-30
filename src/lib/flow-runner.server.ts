@@ -2,14 +2,58 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { waitMs } from "./flow-blocks";
 
-/** Reactiva la IA del hilo al completar un flujo cuando la config/promesa del paquete lo indica. */
+/** ¿Este flujo espera que la IA siga atendiendo (menú, dudas, siguiente paquete)? */
+function flowWantsAiAttendance(flow: any): boolean {
+  if (!flow) return false;
+  const mode = String(flow.ai_mode || "none");
+  const hasInstructions = Boolean(String(flow.ai_instructions || "").trim());
+  return (
+    flow.ai_enabled_after_flow === true ||
+    flow.ai_enabled_during_flow === true ||
+    mode === "on_completion" ||
+    mode === "during_flow" ||
+    mode === "on_response" ||
+    flow.ai_selectable === true ||
+    hasInstructions
+  );
+}
+
+async function setThreadAiEnabled(orgId: string, contactId: string, enabled: boolean, reason: string) {
+  const { data: thread } = await supabaseAdmin
+    .from("threads")
+    .select("id")
+    .eq("contact_id", contactId)
+    .eq("org_id", orgId)
+    .order("last_message_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!thread?.id) return;
+
+  await supabaseAdmin
+    .from("threads")
+    .update({ ai_enabled: enabled } as unknown as Record<string, unknown>)
+    .eq("id", thread.id)
+    .eq("org_id", orgId);
+
+  console.info("[flow-runner] thread.ai_enabled actualizado", {
+    orgId,
+    contactId,
+    threadId: thread.id,
+    enabled,
+    reason,
+  });
+}
+
+/** Reactiva la IA del hilo al completar / esperar un flujo cuando el paquete lo requiere. */
 async function applyFlowAiPolicyOnComplete(params: {
   orgId: string;
   contactId: string;
   flowId: string;
   skipAiReenable?: boolean;
+  reason?: string;
 }) {
-  const { orgId, contactId, flowId, skipAiReenable } = params;
+  const { orgId, contactId, flowId, skipAiReenable, reason } = params;
   if (skipAiReenable || !orgId || !contactId || !flowId) return;
 
   try {
@@ -19,44 +63,9 @@ async function applyFlowAiPolicyOnComplete(params: {
       .eq("id", flowId)
       .maybeSingle();
 
-    const mode = String((flow as any)?.ai_mode || "none");
-    const hasInstructions = Boolean(String((flow as any)?.ai_instructions || "").trim());
-    const shouldEnable =
-      (flow as any)?.ai_enabled_after_flow === true ||
-      mode === "on_completion" ||
-      mode === "during_flow" ||
-      mode === "on_response" ||
-      (flow as any)?.ai_selectable === true ||
-      hasInstructions;
+    if (!flowWantsAiAttendance(flow)) return;
 
-    if (!shouldEnable) return;
-
-    const { data: thread } = await supabaseAdmin
-      .from("threads")
-      .select("id")
-      .eq("contact_id", contactId)
-      .eq("org_id", orgId)
-      .order("last_message_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!thread?.id) return;
-
-    await supabaseAdmin
-      .from("threads")
-      .update({ ai_enabled: true } as unknown as Record<string, unknown>)
-      .eq("id", thread.id)
-      .eq("org_id", orgId);
-
-    console.info("[flow-runner] IA reactivada al completar flujo", {
-      flowId,
-      contactId,
-      threadId: thread.id,
-      mode,
-      ai_selectable: (flow as any)?.ai_selectable,
-      ai_enabled_after_flow: (flow as any)?.ai_enabled_after_flow,
-      hasInstructions,
-    });
+    await setThreadAiEnabled(orgId, contactId, true, reason || "flow_complete");
   } catch (err: any) {
     console.warn("[flow-runner] applyFlowAiPolicyOnComplete failed:", err?.message || err);
   }
@@ -183,12 +192,22 @@ export async function processRun(run: any) {
   const skipAiReenable = isAiDisableStep(step);
 
   if (result.wait) {
-    // Si el paso retornó una espera, pausamos hasta la fecha
+    // Si el paso retornó una espera, pausamos hasta la fecha.
+    // Importante: muchos saludos/menús quedan en wait_node y NUNCA "completan";
+    // sin esto la IA queda apagada y no atiende la opción (1, 2, 3…).
     const nextAt = new Date(Date.now() + result.wait).toISOString();
     await supabaseAdmin
       .from("flow_runs")
       .update({ status: "wait_node", next_execution_at: nextAt })
       .eq("id", run.id);
+    if (!skipAiReenable) {
+      await applyFlowAiPolicyOnComplete({
+        orgId: run.org_id,
+        contactId: run.contact_id,
+        flowId: run.flow_id,
+        reason: "flow_wait_node",
+      });
+    }
     return;
   }
 

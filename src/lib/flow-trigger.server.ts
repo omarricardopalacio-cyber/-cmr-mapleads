@@ -277,6 +277,15 @@ export async function startFlowForContact(params: {
 
   if (!firstStep) return { started: false, message: `El paquete "${flow.name}" está vacío.` };
 
+  // Al activar un paquete desde la IA, cerrar otros runs (p.ej. saludo en wait_node).
+  // Si no, quedan "N ejecutándose", el contexto dice "en curso" y la IA no manda el siguiente.
+  await cancelActiveFlowRunsForContact({
+    orgId,
+    contactId,
+    exceptFlowId: flowId,
+    reason: "IA activó otro paquete",
+  });
+
   const result = await ensureFlowRunForContact({
     orgId,
     contactId,
@@ -286,6 +295,29 @@ export async function startFlowForContact(params: {
     flowName: flow.name,
     processNow: true,
   });
+
+  // La promesa del sistema es seguir atendiendo tras el paquete (dudas / opción del menú).
+  if (result.started) {
+    try {
+      const { data: thread } = await supabaseAdmin
+        .from("threads")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("contact_id", contactId)
+        .order("last_message_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (thread?.id) {
+        await supabaseAdmin
+          .from("threads")
+          .update({ ai_enabled: true } as unknown as Record<string, unknown>)
+          .eq("id", thread.id)
+          .eq("org_id", orgId);
+      }
+    } catch (err: any) {
+      console.warn("[startFlowForContact] no se pudo dejar IA activa:", err?.message || err);
+    }
+  }
 
   // Si el paquete arrancó, anexar instrucciones para que la IA sepa cómo atender después.
   const instructions = String(flow.ai_instructions || "").trim();

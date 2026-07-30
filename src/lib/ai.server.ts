@@ -1803,7 +1803,7 @@ function stableStringify(value: unknown): string {
 export async function executeToolCall(
   toolCall: { id: string; function: { name: string; arguments: string | Record<string, unknown> } },
   ctx: ToolExecCtx,
-): Promise<{ name: string; result: string }> {
+): Promise<{ name: string; result: string; flowStarted?: boolean }> {
   const { orgId, threadId, contactId, sessionId, chatId, catalogCfg } = ctx;
   const name = toolCall.function.name;
 
@@ -1821,6 +1821,7 @@ export async function executeToolCall(
 
   let result = "";
   let details = "";
+  let flowStarted: boolean | undefined;
 
   const onPurchaseConfirmed = async (orderForm: Record<string, unknown> | null) => {
     try {
@@ -2503,6 +2504,7 @@ export async function executeToolCall(
           });
           result = r.message;
           details = `activate_flow: ${flowId} (${r.started ? "iniciado" : "no iniciado"})`;
+          flowStarted = !!r.started;
         } else if (!result) {
           result = "Indica el id o el nombre del paquete a activar.";
         }
@@ -2524,7 +2526,7 @@ export async function executeToolCall(
     action_details: details,
   });
 
-  return { name, result };
+  return { name, result, ...(flowStarted !== undefined ? { flowStarted } : {}) };
 }
 
 function normalizeCatalogQuery(text: string): string {
@@ -3281,7 +3283,7 @@ export async function runAiAgent({
     try {
       const { data: recentRun } = await (supabaseAdmin as any)
         .from("flow_runs")
-        .select("id, status, updated_at, flow_id, flows(id, name, ai_instructions)")
+        .select("id, status, updated_at, flow_id, flows(id, name, ai_instructions, description)")
         .eq("org_id", orgId)
         .eq("contact_id", contactId)
         .in("status", ["active", "running", "wait_node", "paused", "completed"])
@@ -3301,13 +3303,21 @@ export async function runAiAgent({
             : instructions
           : "";
         const pkgName = activePackageName || "paquete";
+        const status = String(recentRun?.status || "");
+        const waitingMenu = status === "wait_node" || status === "paused";
         const statusHint =
-          recentRun?.status === "completed"
+          status === "completed"
             ? "ya se envió"
-            : "se está enviando o está en curso";
+            : waitingMenu
+              ? "YA se envió su contenido y está esperando la respuesta del cliente"
+              : "se está enviando o está en curso";
+        const menuHint = waitingMenu
+          ? `\nSi el cliente responde con un número u opción del menú (1, 2, 3…), USA activate_flow con el paquete que corresponda a esa opción (cotización, pedido, portafolio, etc.). NO digas que no puedes ayudar. NO reenvíes el menú.\n`
+          : "";
         activePackageContextText =
           `\n\n=== CONTEXTO DEL PAQUETE ACTIVO ("${pkgName}") ===\n` +
           `Este paquete ${statusHint} para este cliente. NO reenvíes ni copies su contenido.\n` +
+          menuHint +
           `Usa la BASE DE CONOCIMIENTO y estas instrucciones para cotizar (precios por ciudad, cantidades, envío). ` +
           `NUNCA digas que no tienes el precio si aparece en la base de conocimiento o en las instrucciones.\n` +
           (clipped ? `Instrucciones:\n${clipped}` : "");
@@ -5111,6 +5121,11 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         exec = await executeToolCall(tc, ctx);
       }
       actions.push(exec.name);
+      // Solo contar activate_flow como éxito si el paquete realmente arrancó;
+      // si falló, la IA debe poder responder en texto (maybeAiReply).
+      if (exec.name === "activate_flow" && (exec as any).flowStarted !== true) {
+        actions.pop();
+      }
       if (
         exec.name === "confirm_order" &&
         exec.result.toLowerCase().includes("pedido guardado exitosamente")
