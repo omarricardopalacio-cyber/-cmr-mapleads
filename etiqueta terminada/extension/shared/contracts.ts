@@ -40,6 +40,7 @@ export const CONSTANTS = {
 export const API_ENDPOINTS = {
   GET_COMMANDS: "/api/public/engine/commands",
   POST_INGEST: "/api/public/engine/ingest",
+  POST_IMPORT_HISTORY: "/api/public/engine/import-history",
   POST_UPLOAD_MEDIA: "/api/public/engine/upload-media",
   POST_HEARTBEAT: "/api/public/engine/heartbeat",
 } as const;

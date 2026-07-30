@@ -12,6 +12,11 @@ import {
   getActiveSession,
   saveLocalMedia,
 } from "../storage/db";
+import {
+  startHistoryImport,
+  stopHistoryImport,
+  getHistoryImportStatus,
+} from "./history-import";
 
 // Estado del service worker
 let sessionToken: string | null = null;
@@ -297,6 +302,25 @@ async function resolveMediaInServiceWorker(
     console.error("[ServiceWorker] No se pudo convertir media remota a data URI:", err);
     return { payload, error: err?.message || String(err) };
   }
+}
+
+async function sendWaCommandToTab(
+  type: string,
+  payload: Record<string, unknown> = {},
+): Promise<any> {
+  const tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
+  if (tabs.length === 0 || !tabs[0]?.id) {
+    throw new Error("no_whatsapp_tab");
+  }
+  const id = `hist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return await chrome.tabs.sendMessage(tabs[0].id, {
+    source: "MAPLE_WA_BACKGROUND",
+    direction: "BACKGROUND_TO_CONTENT",
+    channel: "WA_COMMAND",
+    id,
+    event: type,
+    payload,
+  });
 }
 
 async function dispatchCommand(cmd: BackendCommand): Promise<void> {
@@ -879,6 +903,24 @@ async function handleRequest(message: any): Promise<any> {
         backendUrl: backendUrl || "",
         sessionToken: sessionToken || "",
       };
+    case "GET_HISTORY_IMPORT_STATUS":
+      return getHistoryImportStatus();
+    case "STOP_HISTORY_IMPORT":
+      return stopHistoryImport();
+    case "START_HISTORY_IMPORT": {
+      if (!backendUrl || !sessionToken) {
+        throw new Error("Configura Backend URL y Session Token en la pestaña config");
+      }
+      const maxChats = Number(message.payload?.maxChats ?? 50);
+      const messagesPerChat = Number(message.payload?.messagesPerChat ?? 50);
+      return await startHistoryImport({
+        maxChats,
+        messagesPerChat,
+        backendUrl,
+        sessionToken,
+        sendWaCommand: sendWaCommandToTab,
+      });
+    }
     case "FETCH_MEDIA": {
       const url = message.payload?.url;
       if (!url || typeof url !== "string") {

@@ -136,10 +136,15 @@ export class ContentBridge {
   // Enviar comando al injected script y esperar respuesta
   sendToInjected(msg: BridgeMessage): Promise<any> {
     return new Promise((resolve, reject) => {
+      const cmd = String(msg.event || "").toUpperCase();
+      const waitMs =
+        cmd === "GET_CHAT_LIST" || cmd === "GET_CHAT_MESSAGES" || cmd === "GET_CONTACT_LIST"
+          ? 45000
+          : 15000;
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(msg.id!);
         reject(new Error("[ContentBridge] Timeout esperando respuesta del injected script"));
-      }, 15000);
+      }, waitMs);
 
       this.pendingResponses.set(msg.id!, (payload) => {
         clearTimeout(timeout);

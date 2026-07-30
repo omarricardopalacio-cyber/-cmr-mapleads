@@ -45,6 +45,7 @@ import { Route as ApiPublicCronCleanupRouteImport } from './routes/api/public/cr
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
 import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
+import { Route as ApiPublicEngineImportHistoryRouteImport } from './routes/api/public/engine/import-history'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineRetryProcessorRouteImport } from './routes/api/public/engine/retry-processor'
 import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/public/engine/upload-media'
@@ -248,6 +249,12 @@ const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
   path: '/api/public/engine/commands',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicEngineImportHistoryRoute =
+  ApiPublicEngineImportHistoryRouteImport.update({
+    id: '/api/public/engine/import-history',
+    path: '/api/public/engine/import-history',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicEngineIngestRoute = ApiPublicEngineIngestRouteImport.update({
   id: '/api/public/engine/ingest',
   path: '/api/public/engine/ingest',
@@ -345,6 +352,7 @@ export interface FileRoutesByFullPath {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
@@ -391,6 +399,7 @@ export interface FileRoutesByTo {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
@@ -441,6 +450,7 @@ export interface FileRoutesById {
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
   '/api/public/engine/upload-media': typeof ApiPublicEngineUploadMediaRoute
@@ -491,6 +501,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
+    | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
@@ -537,6 +548,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
+    | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
@@ -586,6 +598,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/engine/commands'
+    | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
     | '/api/public/engine/upload-media'
@@ -613,6 +626,7 @@ export interface RootRouteChildren {
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
+  ApiPublicEngineImportHistoryRoute: typeof ApiPublicEngineImportHistoryRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
   ApiPublicEngineRetryProcessorRoute: typeof ApiPublicEngineRetryProcessorRoute
   ApiPublicEngineUploadMediaRoute: typeof ApiPublicEngineUploadMediaRoute
@@ -878,6 +892,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEngineCommandsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/engine/import-history': {
+      id: '/api/public/engine/import-history'
+      path: '/api/public/engine/import-history'
+      fullPath: '/api/public/engine/import-history'
+      preLoaderRoute: typeof ApiPublicEngineImportHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/engine/ingest': {
       id: '/api/public/engine/ingest'
       path: '/api/public/engine/ingest'
@@ -1055,6 +1076,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
+  ApiPublicEngineImportHistoryRoute: ApiPublicEngineImportHistoryRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
   ApiPublicEngineRetryProcessorRoute: ApiPublicEngineRetryProcessorRoute,
   ApiPublicEngineUploadMediaRoute: ApiPublicEngineUploadMediaRoute,

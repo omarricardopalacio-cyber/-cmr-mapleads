@@ -217,6 +217,11 @@ export async function runIntentWatcher(params: {
   trigger: WatcherTrigger;
   /** Forzar una intención (ej. purchase → compro) sin clasificar texto */
   forcedIntentKey?: string | null;
+  /**
+   * Solo clasificar ficha (intención / perfil), sin iniciar flujos.
+   * Obligatorio en importación de historial para no spamear WhatsApp.
+   */
+  skipFlowStart?: boolean;
 }): Promise<{
   ok: boolean;
   intent_key?: string | null;
@@ -310,6 +315,27 @@ export async function runIntentWatcher(params: {
         skipped: "cooldown",
         intent_key: chosen.intent_key,
         flow_id: chosen.flow_id,
+      };
+    }
+
+    // Solo ficha: no iniciar flujos (import historial / clasificación silenciosa)
+    if (params.skipFlowStart) {
+      const now = new Date().toISOString();
+      await supabaseAdmin
+        .from("contacts")
+        .update({
+          last_intent_key: chosen.intent_key,
+          last_intent_at: now,
+          last_watcher_flow_id: chosen.flow_id,
+          updated_at: now,
+        } as any)
+        .eq("id", contactId);
+      return {
+        ok: true,
+        intent_key: chosen.intent_key,
+        flow_id: chosen.flow_id,
+        started: false,
+        skipped: "solo_clasificacion",
       };
     }
 

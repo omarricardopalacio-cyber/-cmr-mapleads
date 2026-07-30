@@ -5,9 +5,12 @@ import SessionList from "./components/SessionList";
 import QueueStatus from "./components/QueueStatus";
 import DebugPanel from "./components/DebugPanel";
 import MediaBackupPanel from "./components/MediaBackupPanel";
+import HistoryImportPanel from "./components/HistoryImportPanel";
 
 function App() {
-  const [tab, setTab] = useState<"status" | "config" | "sessions" | "queue" | "media" | "debug">("status");
+  const [tab, setTab] = useState<
+    "status" | "config" | "sessions" | "queue" | "media" | "historial" | "debug"
+  >("status");
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -20,6 +23,8 @@ function App() {
     const interval = setInterval(check, 2000);
     return () => clearInterval(interval);
   }, []);
+
+  const tabs = ["status", "config", "sessions", "queue", "media", "historial", "debug"] as const;
 
   return (
     <div className="p-4">
@@ -40,7 +45,7 @@ function App() {
       </header>
 
       <nav className="flex gap-2 mb-4 text-xs flex-wrap">
-        {(["status", "config", "sessions", "queue", "media", "debug"] as const).map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -61,6 +66,7 @@ function App() {
         {tab === "sessions" && <SessionList />}
         {tab === "queue" && <QueueStatus />}
         {tab === "media" && <MediaBackupPanel />}
+        {tab === "historial" && <HistoryImportPanel />}
         {tab === "debug" && <DebugPanel />}
       </main>
     </div>
