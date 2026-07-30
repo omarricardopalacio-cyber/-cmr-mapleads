@@ -683,13 +683,23 @@ async function isEchoOfRecentOutbound(
     .order('sent_at', { ascending: false })
     .limit(25)
 
+  // Saludos cortos ("hola", "1", "ok") NUNCA son eco: el menú/IA casi siempre
+  // contiene esas palabras y el anti-eco dejaba el chat mudo al volver a escribir.
+  const shortGreeting = normalized.length <= 12
   return (data ?? []).some((m: any) => {
     const out = normalizeForReplyDedup(String(m.text ?? ''))
-    return out && (out === normalized || out.includes(normalized) || normalized.includes(out))
+    if (!out) return false
+    if (out === normalized) return true
+    if (shortGreeting) return false
+    // Solo eco si el cliente reenvía casi el mismo bloque largo que mandamos
+    const lenRatio = normalized.length / out.length
+    if (lenRatio < 0.7 || lenRatio > 1.3) return false
+    return out.includes(normalized) || normalized.includes(out)
   })
 }
 
-async function countRecentOutboundCommands(
+/** Solo cuenta respuestas de la IA (tienen dedupeKey), no flujos ni auto-replies. */
+async function countRecentAiOutboundCommands(
   orgId: string,
   sessionId: string,
   chatId: string,
@@ -711,30 +721,49 @@ async function countRecentOutboundCommands(
   const chat = String(chatId).trim()
   return (data ?? []).filter((cmd: any) => {
     const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-    // Los envíos de paquetes/flujos no cuentan para el anti-bucle de IA
-    // (un paquete con 4+ textos apagaba el hilo al terminar).
     if (payload.source === 'flow' || payload.fromFlow === true) return false
+    // Sin dedupeKey no es reply de maybeAiReply (flujos viejos / manuales)
+    if (!payload.dedupeKey) return false
     return String(payload.chatId ?? '').trim() === chat
   }).length
 }
 
-async function cancelPendingSendsForChat(orgId: string, sessionId: string, chatId?: string) {
+async function cancelPendingAiSendsForChat(orgId: string, sessionId: string, chatId?: string) {
   try {
-    let q = supabaseAdmin
+    // Solo cancela replies de IA pendientes (dedupeKey), nunca flujos.
+    const { data } = await supabaseAdmin
       .from('engine_commands')
-      .update({ status: 'cancelled', error: 'loop_guard' } as any)
+      .select('id, payload')
       .eq('org_id', orgId)
       .eq('session_id', sessionId)
       .in('type', ['SEND_MESSAGE', 'send_message'])
       .eq('status', 'pending')
-    if (chatId) {
-      // PostgREST no filtra JSON fácil; cancelamos todos pending de la sesión si hay flood
-      // y el caller ya decide por chat vía rate-limit.
-    }
-    await q
-    console.warn('[loop-guard] cancelled pending SEND_MESSAGE', { orgId, sessionId, chatId })
+      .limit(120)
+
+    const chat = chatId ? String(chatId).trim() : ''
+    const ids = (data ?? [])
+      .filter((cmd: any) => {
+        const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+        if (payload.source === 'flow' || payload.fromFlow === true) return false
+        if (!payload.dedupeKey) return false
+        if (chat && String(payload.chatId ?? '').trim() !== chat) return false
+        return true
+      })
+      .map((cmd: any) => cmd.id)
+
+    if (!ids.length) return
+    await supabaseAdmin
+      .from('engine_commands')
+      .update({ status: 'cancelled', error: 'loop_guard' } as any)
+      .in('id', ids)
+    console.warn('[loop-guard] cancelled pending AI SEND_MESSAGE', {
+      orgId,
+      sessionId,
+      chatId: chat || null,
+      count: ids.length,
+    })
   } catch (err) {
-    console.warn('[loop-guard] cancel pending failed', (err as Error)?.message)
+    console.warn('[loop-guard] cancel pending AI failed', (err as Error)?.message)
   }
 }
 
@@ -766,13 +795,9 @@ async function shouldSkipAutomation(opts: {
   if (await isEchoOfRecentOutbound(opts.threadId, text)) {
     return { skip: true, reason: 'echo_of_outbound' }
   }
-  const recent = await countRecentOutboundCommands(opts.orgId, opts.sessionId, opts.chatId, 60_000)
-  if (recent >= 4) {
-    // No apagar la IA del hilo: tras un menú/paquete el cliente escribe "1"
-    // y si apagamos aquí el chat queda muerto. Solo saltamos este turno.
-    await cancelPendingSendsForChat(opts.orgId, opts.sessionId, opts.chatId)
-    return { skip: true, reason: `rate_limit_${recent}` }
-  }
+  // Ya NO saltamos el mensaje del cliente por rate-limit: eso dejaba el chat
+  // mudo al borrar y volver a escribir "hola" tras un menú. El límite solo
+  // aplica al encolar replies de IA (maybeAiReply).
   return { skip: false }
 }
 
@@ -897,12 +922,33 @@ async function maybeAiReply(
 ) {
   const { data: thread } = await supabaseAdmin
     .from('threads')
-    .select('ai_enabled')
+    .select('ai_enabled, assigned_to_user_id')
     .eq('id', threadId)
     .maybeSingle();
 
+  // Si el cliente vuelve a escribir y no hay humano asignado, reactivar IA.
+  // Borrar el chat en WhatsApp NO limpia el CRM: el hilo quedaba ai_enabled=false.
   if ((thread as unknown as { ai_enabled?: boolean })?.ai_enabled === false) {
-    return;
+    const assigned = (thread as unknown as { assigned_to_user_id?: string | null })?.assigned_to_user_id
+    if (assigned) {
+      console.info('[ai-reply] skip: IA off y hay humano asignado', { threadId, assigned })
+      return
+    }
+    try {
+      await supabaseAdmin
+        .from('threads')
+        .update({ ai_enabled: true } as unknown as Record<string, never>)
+        .eq('id', threadId)
+        .eq('org_id', orgId)
+      console.info('[ai-reply] IA reactivada: cliente escribió de nuevo sin asesor asignado', {
+        orgId,
+        threadId,
+        chatId,
+      })
+    } catch (reErr) {
+      console.warn('[ai-reply] no se pudo reactivar IA:', (reErr as Error)?.message)
+      return
+    }
   }
 
   // Wait for all auto-reply steps to finish sending before AI enters
@@ -1045,14 +1091,14 @@ async function maybeAiReply(
         }
       }
 
-      const recentCmds = await countRecentOutboundCommands(orgId, sessionId, chatId, 60_000)
-      if (recentCmds >= 4) {
-        console.warn('[ai-reply] rate limit: demasiados envíos recientes; se omite esta respuesta (IA sigue activa)', {
+      const recentCmds = await countRecentAiOutboundCommands(orgId, sessionId, chatId, 60_000)
+      if (recentCmds >= 8) {
+        console.warn('[ai-reply] rate limit: demasiadas respuestas IA recientes; se omite esta (IA sigue activa)', {
           threadId,
           chatId,
           recentCmds,
         })
-        await cancelPendingSendsForChat(orgId, sessionId, chatId)
+        await cancelPendingAiSendsForChat(orgId, sessionId, chatId)
         skipQueue = true
       }
 
@@ -1155,9 +1201,9 @@ async function maybeAiReply(
       await sendSupportMessage(orgId, sessionId, chatId, requestId, threadId);
     }
 
-    // La IA no pudo responder -> PASAR A HUMANO. NO enviar filler al cliente
-    // ("dame un ratito…"): en bucles de error eso spamea WhatsApp.
-    if (process.env.DISABLE_AI_HANDOFF_ON_ERROR !== 'true') {
+    // Antes: un error de IA apagaba el hilo para siempre (aunque el cliente
+    // borrara el chat y volviera a escribir). Solo handoff si se pide explícito.
+    if (process.env.ENABLE_AI_HANDOFF_ON_ERROR === 'true') {
       try {
         await supabaseAdmin
           .from('threads')
@@ -1172,6 +1218,12 @@ async function maybeAiReply(
       } catch (handoffErr) {
         console.warn('[ai-reply] no se pudo transferir a humano (ai_enabled puede no existir):', (handoffErr as Error)?.message)
       }
+    } else {
+      console.warn('[ai-reply] error de IA; hilo sigue con IA activa (sin handoff automático)', {
+        orgId,
+        threadId,
+        chatId,
+      })
     }
   }
 }
@@ -1246,7 +1298,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               sessionId: session.id,
               pendingFlood,
             })
-            await cancelPendingSendsForChat(session.org_id, session.id)
+            await cancelPendingAiSendsForChat(session.org_id, session.id)
           }
         } catch (_) { /* ignore */ }
 
