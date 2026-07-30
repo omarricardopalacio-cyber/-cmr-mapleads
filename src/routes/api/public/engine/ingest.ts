@@ -711,6 +711,9 @@ async function countRecentOutboundCommands(
   const chat = String(chatId).trim()
   return (data ?? []).filter((cmd: any) => {
     const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
+    // Los envíos de paquetes/flujos no cuentan para el anti-bucle de IA
+    // (un paquete con 4+ textos apagaba el hilo al terminar).
+    if (payload.source === 'flow' || payload.fromFlow === true) return false
     return String(payload.chatId ?? '').trim() === chat
   }).length
 }

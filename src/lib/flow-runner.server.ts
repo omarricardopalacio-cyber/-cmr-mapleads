@@ -2,6 +2,94 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { waitMs } from "./flow-blocks";
 
+/** Reactiva la IA del hilo al completar un flujo cuando la config/promesa del paquete lo indica. */
+async function applyFlowAiPolicyOnComplete(params: {
+  orgId: string;
+  contactId: string;
+  flowId: string;
+  skipAiReenable?: boolean;
+}) {
+  const { orgId, contactId, flowId, skipAiReenable } = params;
+  if (skipAiReenable || !orgId || !contactId || !flowId) return;
+
+  try {
+    const { data: flow } = await supabaseAdmin
+      .from("flows")
+      .select("ai_enabled_after_flow, ai_enabled_during_flow, ai_mode, ai_selectable, ai_instructions")
+      .eq("id", flowId)
+      .maybeSingle();
+
+    const mode = String((flow as any)?.ai_mode || "none");
+    const hasInstructions = Boolean(String((flow as any)?.ai_instructions || "").trim());
+    const shouldEnable =
+      (flow as any)?.ai_enabled_after_flow === true ||
+      mode === "on_completion" ||
+      mode === "during_flow" ||
+      mode === "on_response" ||
+      (flow as any)?.ai_selectable === true ||
+      hasInstructions;
+
+    if (!shouldEnable) return;
+
+    const { data: thread } = await supabaseAdmin
+      .from("threads")
+      .select("id")
+      .eq("contact_id", contactId)
+      .eq("org_id", orgId)
+      .order("last_message_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!thread?.id) return;
+
+    await supabaseAdmin
+      .from("threads")
+      .update({ ai_enabled: true } as unknown as Record<string, unknown>)
+      .eq("id", thread.id)
+      .eq("org_id", orgId);
+
+    console.info("[flow-runner] IA reactivada al completar flujo", {
+      flowId,
+      contactId,
+      threadId: thread.id,
+      mode,
+      ai_selectable: (flow as any)?.ai_selectable,
+      ai_enabled_after_flow: (flow as any)?.ai_enabled_after_flow,
+      hasInstructions,
+    });
+  } catch (err: any) {
+    console.warn("[flow-runner] applyFlowAiPolicyOnComplete failed:", err?.message || err);
+  }
+}
+
+function isAiDisableStep(step: any): boolean {
+  const type = String(step?.step_type || "");
+  const sd = step?.step_data || {};
+  if (type === "ai_disable" || type === "ai_transfer_human") return true;
+  if (type === "toggle_ai" && sd.ai_enabled === false) return true;
+  return false;
+}
+
+async function markFlowRunCompleted(
+  run: { id: string; org_id?: string; contact_id?: string; flow_id?: string },
+  opts?: { clearCurrentStep?: boolean; skipAiReenable?: boolean },
+) {
+  const update: Record<string, unknown> = {
+    status: "completed",
+    finished_at: new Date().toISOString(),
+  };
+  if (opts?.clearCurrentStep) update.current_step_id = null;
+
+  await supabaseAdmin.from("flow_runs").update(update).eq("id", run.id);
+
+  await applyFlowAiPolicyOnComplete({
+    orgId: run.org_id,
+    contactId: run.contact_id,
+    flowId: run.flow_id,
+    skipAiReenable: opts?.skipAiReenable,
+  });
+}
+
 export async function processDueRuns(limit = 100) {
   const now = new Date().toISOString();
   const { data: runs, error } = await supabaseAdmin
@@ -72,10 +160,7 @@ export async function processRunUntilWaitOrCompleted(run: any, maxIterations = 5
 
 export async function processRun(run: any) {
   if (!run.current_step_id) {
-    await supabaseAdmin
-      .from("flow_runs")
-      .update({ status: "completed", finished_at: new Date().toISOString() })
-      .eq("id", run.id);
+    await markFlowRunCompleted(run);
     return;
   }
 
@@ -95,6 +180,7 @@ export async function processRun(run: any) {
   }
 
   const result = await execStep(run, step);
+  const skipAiReenable = isAiDisableStep(step);
 
   if (result.wait) {
     // Si el paso retornó una espera, pausamos hasta la fecha
@@ -107,10 +193,7 @@ export async function processRun(run: any) {
   }
 
   if (result.end) {
-    await supabaseAdmin
-      .from("flow_runs")
-      .update({ status: "completed", finished_at: new Date().toISOString() })
-      .eq("id", run.id);
+    await markFlowRunCompleted(run, { skipAiReenable });
     return;
   }
 
@@ -127,10 +210,7 @@ export async function processRun(run: any) {
       .eq("id", run.id);
   } else {
     // No hay más pasos
-    await supabaseAdmin
-      .from("flow_runs")
-      .update({ status: "completed", current_step_id: null, finished_at: new Date().toISOString() })
-      .eq("id", run.id);
+    await markFlowRunCompleted(run, { clearCurrentStep: true, skipAiReenable });
   }
 }
 
@@ -209,13 +289,17 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       normalizedPayload.chat_id = normalizeChatId(normalizedPayload.chat_id);
     }
 
+    // Marcar origen=flow para que el rate-limit anti-bucle de la IA
+    // no cuente los mensajes del paquete como spam ni apague el hilo.
+    const payloadWithSource = { ...normalizedPayload, source: "flow", flowRunId: run.id };
+
     const { data, error } = await supabaseAdmin
       .from("engine_commands")
       .insert({
         org_id: orgId,
         session_id: sessionId,
         type,
-        payload: normalizedPayload,
+        payload: payloadWithSource,
         status: "pending",
       })
       .select("id")
