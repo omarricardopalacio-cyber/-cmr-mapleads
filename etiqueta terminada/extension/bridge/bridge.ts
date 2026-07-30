@@ -16,6 +16,10 @@ export class ContentBridge {
   private initialized = false;
   private pendingResponses: Map<string, (payload: any) => void> = new Map();
   public engineReady = false; // Se pone true cuando el injected engine envía eventos
+  public lastEventAt = 0;
+  public lastCommandAt = 0;
+  public lastCommandOk = false;
+  public lastProbeError: string | null = null;
 
   init() {
     if (this.initialized) return;
@@ -42,6 +46,7 @@ export class ContentBridge {
     // Reenviar eventos de WA al backend vía background
     if (bridgeMsg.channel === "WA_EVENT" && bridgeMsg.event) {
       // Engine confirmado funcionando (WPP envió eventos o SESSION_READY)
+      this.lastEventAt = Date.now();
       if (!this.engineReady) {
         this.engineReady = true;
         console.log("[ContentBridge] Engine confirmado listo (WPP activo)");
@@ -148,6 +153,13 @@ export class ContentBridge {
 
       this.pendingResponses.set(msg.id!, (payload) => {
         clearTimeout(timeout);
+        this.lastCommandAt = Date.now();
+        this.lastCommandOk = !(payload && typeof payload === "object" && "error" in payload && payload.error);
+        if (!this.lastCommandOk) {
+          this.lastProbeError = String((payload as any)?.error || "command_error");
+        } else {
+          this.lastProbeError = null;
+        }
         resolve(payload);
       });
 
@@ -157,6 +169,23 @@ export class ContentBridge {
         payload: msg.payload,
       });
     });
+  }
+
+  /** Probe ligero para el Vigilante Bridge */
+  async probeWpp(): Promise<{ ready: boolean; error?: string }> {
+    try {
+      const id = `probe-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const result = await this.sendToInjected({
+        id,
+        channel: "WA_COMMAND",
+        event: "GET_WPP_STATUS",
+        payload: {},
+      } as BridgeMessage);
+      if (result?.error) return { ready: false, error: String(result.error) };
+      return { ready: !!result?.ready };
+    } catch (err: any) {
+      return { ready: false, error: err?.message || String(err) };
+    }
   }
 
   destroy() {

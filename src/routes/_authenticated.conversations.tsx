@@ -37,7 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Plus, Search, Trash2, Inbox, User, Users, AlertTriangle, RefreshCw, X, ChevronDown, Tag } from "lucide-react";
-import { getContactDisplayName, formatPhoneOrWaId } from "@/lib/utils";
+import { getContactDisplayName, formatPhoneOrWaId, isBlankLidContact } from "@/lib/utils";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/conversations")({
@@ -88,9 +88,11 @@ function ConversationsLayout() {
   });
 
   const threads = (data?.threads ?? []).filter((t) => {
-    if (!q.trim()) return true;
     const c = Array.isArray(t.contacts) ? t.contacts[0] : t.contacts;
-    const hay = `${c?.display_name ?? ""} ${c?.wa_id ?? ""}`.toLowerCase();
+    // Ocultar registros vacíos LID (Cliente XXXX + "LID: …" / Sin número)
+    if (isBlankLidContact(c as any)) return false;
+    if (!q.trim()) return true;
+    const hay = `${c?.display_name ?? ""} ${c?.wa_id ?? ""} ${c?.phone ?? ""}`.toLowerCase();
     return hay.includes(q.toLowerCase());
   });
 

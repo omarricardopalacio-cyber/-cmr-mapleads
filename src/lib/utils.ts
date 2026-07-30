@@ -28,6 +28,20 @@ function isLidWaId(waId?: string | null): boolean {
   return !!waId && waId.endsWith("@lid");
 }
 
+/**
+ * Contacto LID sin celular real → registro vacío (Cliente XXXX + "LID: …").
+ * No debe mostrarse en Chats en Vivo hasta tener número (o fusionarse).
+ */
+export function isBlankLidContact(contact: ContactLike | null | undefined): boolean {
+  if (!contact) return false;
+  const waId = contact.wa_id || contact.waId;
+  if (!isLidWaId(waId)) return false;
+  const phoneDigits = contact.phone ? String(contact.phone).replace(/\D/g, "") : "";
+  const lidDigits = String(waId).split("@")[0].replace(/\D/g, "");
+  if (phoneDigits && phoneDigits !== lidDigits && phoneDigits.length >= 8) return false;
+  return true;
+}
+
 export function getContactDisplayName(contact: ContactLike | null | undefined, indexFallback?: number): string {
   const displayName = contact?.display_name || contact?.displayName;
   const waId = contact?.wa_id || contact?.waId;

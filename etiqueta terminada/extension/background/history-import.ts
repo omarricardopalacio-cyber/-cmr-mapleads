@@ -230,7 +230,7 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
 
   // Cuentas grandes (~1000 chats): tope alto pero con pausa para no tumbar WA Web
   const maxChats = Math.max(1, Math.min(opts.maxChats ?? 200, 1000));
-  const messagesPerChat = Math.max(1, Math.min(opts.messagesPerChat ?? 50, 80));
+  const messagesPerChat = Math.max(1, Math.min(opts.messagesPerChat ?? 200, 220));
   const pauseMs = Math.max(250, Math.min(opts.pauseMs ?? 600, 5000));
 
   stopRequested = false;
@@ -344,9 +344,28 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
             })),
           };
 
+          // No empujar registros vacíos LID al CRM
+          if (
+            chatId.endsWith("@lid") &&
+            !phone &&
+            (!displayName ||
+              /^cliente\s*\d+/i.test(displayName) ||
+              displayName.toLowerCase() === "sin número")
+          ) {
+            status.skippedChats++;
+            status.processed++;
+            await persistStatus();
+            await sleep(pauseMs);
+            continue;
+          }
+
           const result = await postImportHistory(opts.backendUrl, opts.sessionToken, payload);
           status.importedMessages += Number(result?.imported || 0);
-          if (result?.skipped === true || result?.error === "groups_not_allowed") {
+          if (
+            result?.skipped === true ||
+            result?.error === "groups_not_allowed" ||
+            result?.reason === "blank_lid_contact"
+          ) {
             status.skippedChats++;
           }
         } catch (err: any) {

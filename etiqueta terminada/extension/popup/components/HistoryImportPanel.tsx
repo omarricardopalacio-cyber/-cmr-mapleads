@@ -100,7 +100,7 @@ export default function HistoryImportPanel() {
 
     const response = await sendPopupRequest("START_HISTORY_IMPORT", {
       maxChats,
-      messagesPerChat: 50,
+      messagesPerChat: 200,
       pauseMs: maxChats > 300 ? 400 : 600,
     });
 
@@ -139,7 +139,7 @@ export default function HistoryImportPanel() {
     <div className="space-y-3 text-xs">
       <div className="bg-slate-800 rounded p-3 space-y-2">
         <p className="text-slate-300 leading-relaxed">
-          Importa los últimos <b className="text-emerald-400">50 mensajes</b> de cada chat{" "}
+          Importa los últimos <b className="text-emerald-400">200 mensajes</b> de cada chat{" "}
           <b className="text-emerald-400">1:1</b> (sin grupos). Hasta{" "}
           <b className="text-emerald-400">1000 chats</b>. El vigilante clasifica con
           intención, etiquetas y segmentos. <b>No envía mensajes</b> ni inicia flujos.

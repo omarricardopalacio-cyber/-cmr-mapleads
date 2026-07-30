@@ -211,9 +211,12 @@ function canCreateContactRecord({
   const cleanPhone = sanitizeContactPhone(phone, waId)
   if (cleanPhone) return true
   if (!waId) return false
-  // Contacto solo-LID: crear sin phone para no perder el chat (luego CONTACT_INFO fusiona)
-  if (isLidKey(waId)) return true
-  if (!isLidKey(waId) && Boolean(digits(waId))) return true
+  // Solo-LID sin celular: no crear registro vacío (Cliente XXXX / LID:…).
+  // Se crea cuando haya teléfono real o nombre útil; CONTACT_INFO puede fusionar después.
+  if (isLidKey(waId)) {
+    return isUsefulDisplayName(displayName, phone ?? undefined, waId)
+  }
+  if (Boolean(digits(waId))) return true
   return isUsefulDisplayName(displayName, phone ?? undefined, waId)
 }
 

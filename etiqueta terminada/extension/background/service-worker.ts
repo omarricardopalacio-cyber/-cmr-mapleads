@@ -910,6 +910,29 @@ async function handleRequest(message: any): Promise<any> {
       const result = await chrome.storage.local.get("eventQueue");
       const queue = result.eventQueue || [];
       return { queueSize: queue.length };
+    case "GET_STATUS":
+    case "GET_BRIDGE_HEALTH": {
+      const stored = await chrome.storage.local.get([
+        "bridgeHealth",
+        "eventQueue",
+        "lastKeepAlive",
+        "wsStatus",
+      ]);
+      const health = stored.bridgeHealth || {};
+      const q = stored.eventQueue || [];
+      return {
+        wppReady: !!health.wppReady || !!health.engineReady,
+        sessionReady: activeSessions.size > 0 || !!health.engineReady,
+        backendConnected: !!(backendUrl && sessionToken),
+        queueSize: Array.isArray(q) ? q.length : 0,
+        pollingLatency: 0,
+        lastMessage: health.message || null,
+        lastCommand: health.lastError || null,
+        bridge: health,
+        lastKeepAlive: stored.lastKeepAlive || null,
+        wsStatus: stored.wsStatus || null,
+      };
+    }
     case "GET_CONFIG":
       return {
         backendUrl: backendUrl || "",
@@ -928,7 +951,7 @@ async function handleRequest(message: any): Promise<any> {
         throw new Error("Configura Backend URL y Session Token en la pestaña config");
       }
       const maxChats = Number(message.payload?.maxChats ?? 200);
-      const messagesPerChat = Number(message.payload?.messagesPerChat ?? 50);
+      const messagesPerChat = Number(message.payload?.messagesPerChat ?? 200);
       const pauseMs = Number(message.payload?.pauseMs ?? 600);
       return await startHistoryImport({
         maxChats,

@@ -6,6 +6,7 @@
 import { ContentBridge } from "../bridge/bridge";
 import { eventBus } from "../bridge/event-bus";
 import { startDomDetector } from "./dom-detector";
+import { startBridgeWatchdog } from "./bridge-watchdog";
 import "./message-parser"; // Cargar el parser para que esté disponible globalmente
 
 // === PROTOCOLO DE KEEP-ALIVE MV3 ===
@@ -106,7 +107,10 @@ async function init(): Promise<void> {
   console.log("[ContentScript] Inyectando engine desde:", engineUrl);
   injectScript(engineUrl);
 
-  // 6. Ping para popup
+  // 6. Vigilante Bridge: health-check + auto-reinyección
+  startBridgeWatchdog(bridge);
+
+  // 7. Ping para popup + estado del vigilante
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.source === "MAPLE_WA_POPUP_PING") {
       sendResponse({
@@ -117,6 +121,25 @@ async function init(): Promise<void> {
         url: location.href,
       });
       return false;
+    }
+    if (
+      msg?.source === "MAPLE_WA_POPUP" &&
+      (msg?.event === "GET_BRIDGE_HEALTH" || msg?.payload?.type === "GET_BRIDGE_HEALTH")
+    ) {
+      chrome.storage.local.get(["bridgeHealth"], (stored) => {
+        sendResponse({
+          ok: true,
+          payload: {
+            ...(stored.bridgeHealth || {}),
+            engineReady: bridge.engineReady,
+            lastEventAt: bridge.lastEventAt || null,
+            lastCommandAt: bridge.lastCommandAt || null,
+            lastCommandOk: bridge.lastCommandOk,
+            lastProbeError: bridge.lastProbeError,
+          },
+        });
+      });
+      return true;
     }
     return false;
   });

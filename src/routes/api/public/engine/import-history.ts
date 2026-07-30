@@ -45,7 +45,7 @@ const BodySchema = z.object({
       profilePictureUrl: z.string().max(2000).optional().nullable(),
     })
     .optional(),
-  messages: z.array(MsgSchema).max(80),
+  messages: z.array(MsgSchema).max(220),
   classify: z.boolean().optional().default(true),
   /** Etiquetas de WhatsApp Business (labels) del chat */
   labels: z.array(z.string().max(80)).max(20).optional(),
@@ -139,9 +139,26 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
 
         const rawName =
           (body.contact?.displayName && String(body.contact.displayName).trim()) || "";
+        const usefulName =
+          !!rawName &&
+          !/^cliente\s*\d+/i.test(rawName) &&
+          rawName.toLowerCase() !== "unknown" &&
+          rawName.toLowerCase() !== "sin número" &&
+          rawName !== digits(waId);
+
+        // No crear registros vacíos solo-LID (sin celular ni nombre útil)
+        if (String(waId).includes("@lid") && !phone && !usefulName) {
+          return json(200, {
+            ok: true,
+            skipped: true,
+            reason: "blank_lid_contact",
+            imported: 0,
+          });
+        }
+
         const displayName =
           rawName ||
-          (phone ? `+${phone}` : String(waId).includes("@lid") ? "Sin número" : "Cliente");
+          (phone ? `+${phone}` : "Cliente");
 
         const pic =
           typeof body.contact?.profilePictureUrl === "string" &&
