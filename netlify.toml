@@ -9,6 +9,10 @@
 [functions."daily-cleanup"]
   schedule = "0 6 * * *"
 
+# Flujos / waits / broadcasts / mensajes programados — cada minuto (UTC)
+[functions."engine-dispatch"]
+  schedule = "* * * * *"
+
 [[headers]]
   for = "/store-sw.js"
   [headers.values]
