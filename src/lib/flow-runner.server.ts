@@ -188,7 +188,27 @@ export async function processRun(run: any) {
     throw new Error("Paso actual no encontrado");
   }
 
-  const result = await execStep(run, step);
+  let result: { branch?: string; wait?: number; end?: boolean };
+  try {
+    result = await execStep(run, step);
+  } catch (err: any) {
+    const retryAt = new Date(Date.now() + 30_000).toISOString();
+    await supabaseAdmin
+      .from("flow_runs")
+      .update({
+        status: "active",
+        next_execution_at: retryAt,
+        error: err?.message || "Error enviando paso; se reintentará",
+      })
+      .eq("id", run.id);
+    console.error("[flow-runner] paso no enviado; reintento programado", {
+      runId: run.id,
+      stepId: step.id,
+      retryAt,
+      error: err?.message || err,
+    });
+    return;
+  }
   const skipAiReenable = isAiDisableStep(step);
 
   if (result.wait) {
@@ -224,7 +244,8 @@ export async function processRun(run: any) {
       .from("flow_runs")
       .update({
         current_step_id: nextStepId,
-        next_execution_at: new Date().toISOString()
+        next_execution_at: new Date().toISOString(),
+        error: null,
       })
       .eq("id", run.id);
   } else {
@@ -293,16 +314,12 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     return `${value}@c.us`;
   };
 
-  const jidDigits = (value: unknown): string => {
-    if (typeof value !== "string") return "";
-    return value.split("@")[0].replace(/\D/g, "");
-  };
-
   const enqueueCommand = async (type: string, payload: Record<string, unknown>) => {
     const sessionId = await getSessionId();
     if (!sessionId) {
-      console.warn(`[flow-runner] No WhatsApp session available for org=${orgId} contact=${contactId}`);
-      return null;
+      throw new Error(
+        `[flow-runner] No WhatsApp session available for org=${orgId} contact=${contactId}`,
+      );
     }
 
     const normalizedPayload = { ...payload };
@@ -311,33 +328,6 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     }
     if (normalizedPayload.chat_id) {
       normalizedPayload.chat_id = normalizeChatId(normalizedPayload.chat_id);
-    }
-
-    // Cinturón de seguridad: un flujo jamás debe enviarse al número de la
-    // propia sesión. Esto también contiene contactos históricos dañados.
-    const target =
-      jidDigits(normalizedPayload.chatId) || jidDigits(normalizedPayload.chat_id);
-    if (target) {
-      const { data: ownSession } = await supabaseAdmin
-        .from("wa_sessions")
-        .select("me_wa_id, phone_number")
-        .eq("id", sessionId)
-        .maybeSingle();
-      const ownNumbers = new Set(
-        [ownSession?.me_wa_id, ownSession?.phone_number]
-          .map(jidDigits)
-          .filter(Boolean),
-      );
-      if (ownNumbers.has(target)) {
-        console.error("[flow-runner] BLOQUEADO envío de flujo al número propio", {
-          orgId,
-          contactId,
-          runId: run.id,
-          sessionId,
-          type,
-        });
-        return null;
-      }
     }
 
     // Marcar origen=flow para que el rate-limit anti-bucle de la IA
@@ -363,7 +353,9 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
         payload: normalizedPayload,
         sessionId,
       });
-      return null;
+      // No avanzar el flujo como si el mensaje se hubiera enviado. El run
+      // conserva el paso actual para que el worker pueda reintentarlo.
+      throw new Error(`No se pudo encolar ${type}: ${error.message}`);
     }
 
     return data?.id ?? null;

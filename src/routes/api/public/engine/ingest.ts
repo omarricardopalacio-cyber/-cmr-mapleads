@@ -1296,7 +1296,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           })
           .eq('id', session.id)
 
-        const meWaId = session.me_wa_id ?? null
+        // Algunas sesiones no tienen me_wa_id configurado, pero sí phone_number
+        // detectado por SESSION_READY. Usarlo como respaldo permite corregir en
+        // servidor payloads de extensiones antiguas que ponían nuestro `to`
+        // como contacto en mensajes entrantes.
+        const meWaId = session.me_wa_id ?? session.phone_number ?? null
         const normalized = events.map((ev) => normalizeEvent(ev, meWaId))
 
         // Claves para Whisper (Groq preferido, OpenAI de respaldo). undefined = aún no consultada.
