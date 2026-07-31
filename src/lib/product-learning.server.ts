@@ -6,7 +6,6 @@
  */
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { callAiProvider, getAiConfigFromDb } from "@/lib/ai.server";
 
 export type MessageSource = "agent" | "ai" | "flow" | "unknown";
 
@@ -553,6 +552,8 @@ async function generatePromptWithAi(params: {
   samples: any[];
   currentPrompt?: string | null;
 }): Promise<string> {
+  // Dynamic import: evita arrastrar ai.server (+ meta-capi/node:crypto) al bundle del cliente
+  const { callAiProvider, getAiConfigFromDb } = await import("@/lib/ai.server");
   const cfg = await getAiConfigFromDb(params.orgId);
   if (!cfg) throw new Error("Sin configuración de IA en la organización");
 

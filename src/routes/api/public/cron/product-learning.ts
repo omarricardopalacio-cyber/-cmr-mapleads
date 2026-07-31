@@ -1,9 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { processPendingProductLearningJobs } from "@/lib/product-learning.server";
 
 /**
- * Cron: consolida jobs de aprendizaje (50 consultas / 50 ventas → ai_observation).
- * Llamar cada 1–5 min (Vercel Cron / Supabase pg_cron / n8n).
+ * Cron opcional: consolida jobs de aprendizaje.
+ * En producción también se procesa al llegar a 50 / ingest / botón en /catalog.
  */
 export const Route = createFileRoute("/api/public/cron/product-learning")({
   server: {
@@ -21,6 +20,9 @@ export const Route = createFileRoute("/api/public/cron/product-learning")({
         }
 
         try {
+          const { processPendingProductLearningJobs } = await import(
+            "@/lib/product-learning.server"
+          );
           const processed = await processPendingProductLearningJobs(3);
           return new Response(
             JSON.stringify({ ok: true, processed }),

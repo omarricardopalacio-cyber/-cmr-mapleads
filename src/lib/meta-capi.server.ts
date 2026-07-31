@@ -1,12 +1,16 @@
-import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 type CapiEventName = "Purchase" | "InitiateCheckout" | "Lead" | "ViewContent" | "PageView";
 
-function sha256Norm(value: string): string {
-  return createHash("sha256")
-    .update(value.trim().toLowerCase())
-    .digest("hex");
+/** SHA-256 vía Web Crypto (Node 18+ / Netlify) — sin import de node:crypto (rompe Vite client). */
+async function sha256Norm(value: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error("crypto.subtle no disponible");
+  const data = new TextEncoder().encode(value.trim().toLowerCase());
+  const digest = await subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function loadMetaCreds(orgId: string): Promise<{
@@ -54,9 +58,9 @@ export async function sendMetaCapiEvent(params: {
   const userData: Record<string, unknown> = {};
   if (params.phone) {
     const digits = String(params.phone).replace(/\D/g, "");
-    if (digits) userData.ph = [sha256Norm(digits)];
+    if (digits) userData.ph = [await sha256Norm(digits)];
   }
-  if (params.email) userData.em = [sha256Norm(params.email)];
+  if (params.email) userData.em = [await sha256Norm(params.email)];
   if (params.fbp) userData.fbp = params.fbp;
   if (params.fbc) userData.fbc = params.fbc;
 
