@@ -2371,6 +2371,34 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .is('cancelled_at', null)
               } catch (_) { /* ignore */ }
 
+              // Frase activadora (Observaciones): solo 1er mensaje → foco + flujo producto
+              // (sin búsqueda IA). La IA sigue después ya en product_focus (observación).
+              try {
+                const { tryProductEntryTriggerOnFirstMessage } = await import(
+                  '@/lib/product-entry-trigger.server'
+                )
+                const trig = await tryProductEntryTriggerOnFirstMessage({
+                  orgId: session.org_id,
+                  threadId: thread.id,
+                  contactId,
+                  sessionId: session.id,
+                  chatId: sendChatId || e.chatId || null,
+                  text: textForAiInsert,
+                })
+                if (trig.activated) {
+                  console.info('[ingest] entry_trigger_phrase activó producto', {
+                    threadId: thread.id,
+                    productId: trig.productId,
+                    productName: trig.productName,
+                  })
+                }
+              } catch (trigErr) {
+                console.warn(
+                  '[ingest] entry trigger:',
+                  trigErr instanceof Error ? trigErr.message : trigErr,
+                )
+              }
+
               const { aiDisabled, totalDelaySec } = await maybeAutoReply(session.org_id, session.id, sendChatId, textForAiInsert, thread.id, contactId)
               if (!aiDisabled) {
                 // auto-replies already ran synchronously above, so AI enters right after.

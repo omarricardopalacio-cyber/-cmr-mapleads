@@ -61,6 +61,7 @@ type CatalogRow = {
   is_active?: boolean | null;
   ai_observation?: string | null;
   search_keywords?: string | null;
+  entry_trigger_phrase?: string | null;
   chat_ask_text?: string | null;
   gallery_images?: string[] | null;
   chat_flow?: ChatFlowFlags | null;
@@ -125,6 +126,7 @@ function CatalogProductsPage() {
     category: "",
     ai_observation: "",
     search_keywords: "",
+    entry_trigger_phrase: "",
     chat_ask_text: "",
     gallery_images: [] as string[],
     send_specs: true,
@@ -201,6 +203,7 @@ function CatalogProductsPage() {
       category: p.category || "",
       ai_observation: p.ai_observation || "",
       search_keywords: p.search_keywords || "",
+      entry_trigger_phrase: p.entry_trigger_phrase || "",
       chat_ask_text: p.chat_ask_text || "",
       gallery_images: parseGallery(p.gallery_images),
       send_specs: flow.send_specs !== false,
@@ -272,6 +275,7 @@ function CatalogProductsPage() {
           category: form.category.trim() || null,
           ai_observation: form.ai_observation.trim() || null,
           search_keywords: form.search_keywords.trim() || null,
+          entry_trigger_phrase: form.entry_trigger_phrase.trim() || null,
           chat_ask_text: form.chat_ask_text.trim() || null,
           gallery_images: form.gallery_images,
           chat_flow: {
@@ -579,6 +583,12 @@ function CatalogProductsPage() {
                       <span className="font-semibold">Keywords IA:</span> {selected.search_keywords}
                     </p>
                   ) : null}
+                  {selected.entry_trigger_phrase ? (
+                    <p className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs">
+                      <span className="font-semibold">Frase activadora:</span>{" "}
+                      {selected.entry_trigger_phrase}
+                    </p>
+                  ) : null}
 
                   <div className="rounded-md border border-emerald-500/25 bg-emerald-500/5 p-3 space-y-2 text-xs">
                     <p className="font-semibold text-emerald-700 dark:text-emerald-400">
@@ -673,7 +683,25 @@ function CatalogProductsPage() {
                       placeholder="Ej: ab vertical, masajeador facial, jjf-071, ab1 (separadas por coma)"
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      Nombres o palabras con las que el cliente suele pedir este producto. Ayuda a la IA a encontrarlo y activar el flujo correcto aunque el nombre oficial no coincida.
+                      Nombres o palabras con las que el cliente suele pedir este producto. Ayuda a la IA a encontrarlo cuando{" "}
+                      <span className="font-medium text-foreground">no</span> usa la frase activadora.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Frase activadora (primer mensaje)</Label>
+                    <Textarea
+                      rows={2}
+                      value={form.entry_trigger_phrase}
+                      onChange={(e) =>
+                        setForm({ ...form, entry_trigger_phrase: e.target.value })
+                      }
+                      placeholder='Ej: deseo informacion de AB VERTICAL'
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Si el <span className="font-medium text-foreground">primer mensaje</span> del
+                      chat contiene esta frase, se enfoca este producto y se envía su flujo
+                      automáticamente (sin búsqueda IA). Ideal para textos de publicidad. Déjalo
+                      vacío para no usar activador.
                     </p>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
