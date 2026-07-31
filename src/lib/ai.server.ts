@@ -3344,13 +3344,24 @@ export async function runAiAgent({
 
   // === CONTEXTO DEL PAQUETE ACTIVO / RECIENTE PARA ESTE CLIENTE ===
   // Si ya se le envió (o se está enviando) un flujo con instrucciones de IA,
-  // inyectarlas para que sepa cómo atender (precios, ciudad, siguiente pregunta…).
-  // También guardamos el nombre del paquete para enriquecer la búsqueda de KB
-  // (si el cliente solo responde "Bogotá", sin esto se pierden los precios).
+  // inyectarlas SOLO sin producto en foco. Con foco → Observación del producto gana siempre.
   let activePackageContextText = "";
   let activePackageName = "";
   if (contactId) {
     try {
+      let threadFocusedProductId: string | null = null;
+      if (threadId) {
+        const { data: thFocus } = await (supabaseAdmin as any)
+          .from("threads")
+          .select("focused_product_id")
+          .eq("id", threadId)
+          .eq("org_id", orgId)
+          .maybeSingle();
+        threadFocusedProductId = thFocus?.focused_product_id
+          ? String(thFocus.focused_product_id)
+          : null;
+      }
+
       const { data: recentRun } = await (supabaseAdmin as any)
         .from("flow_runs")
         .select(
@@ -3367,9 +3378,11 @@ export async function runAiAgent({
         ? recentRun.flows[0]
         : recentRun?.flows;
       activePackageName = String(flowMeta?.name || "").trim();
-      // Solo flujo de entrada de producto: prompt = Observación del producto (no ai_instructions)
       const isProductEntryFlow = !!flowMeta?.is_product_entry;
-      const instructions = isProductEntryFlow
+      // Con producto en foco (o flujo de entrada): NUNCA inyectar ai_instructions del flujo
+      const preferProductObservation =
+        !!threadFocusedProductId || isProductEntryFlow;
+      const instructions = preferProductObservation
         ? ""
         : String(flowMeta?.ai_instructions || "").trim();
       if (activePackageName || instructions) {
@@ -3390,13 +3403,22 @@ export async function runAiAgent({
         const menuHint = waitingMenu
           ? `\nSi el cliente responde con un número u opción del menú (1, 2, 3…), USA activate_flow con el paquete que corresponda a esa opción (cotización, pedido, portafolio, etc.). NO digas que no puedes ayudar. NO reenvíes el menú.\n`
           : "";
-        activePackageContextText =
-          `\n\n=== CONTEXTO DEL PAQUETE ACTIVO ("${pkgName}") ===\n` +
-          `Este paquete ${statusHint} para este cliente. NO reenvíes ni copies su contenido.\n` +
-          menuHint +
-          `Usa la BASE DE CONOCIMIENTO y estas instrucciones para cotizar (precios por ciudad, cantidades, envío). ` +
-          `NUNCA digas que no tienes el precio si aparece en la base de conocimiento o en las instrucciones.\n` +
-          (clipped ? `Instrucciones:\n${clipped}` : "");
+        if (preferProductObservation) {
+          activePackageContextText =
+            `\n\n=== CONTEXTO DEL PAQUETE ACTIVO ("${pkgName}") ===\n` +
+            `Este paquete ${statusHint} para este cliente. NO reenvíes ni copies su contenido.\n` +
+            menuHint +
+            `PRIORIDAD: atiende SIEMPRE con la OBSERVACIÓN / PROMPT DEL VENDEDOR del producto en foco. ` +
+            `Ignora instrucciones del paquete si las hubiera.\n`;
+        } else {
+          activePackageContextText =
+            `\n\n=== CONTEXTO DEL PAQUETE ACTIVO ("${pkgName}") ===\n` +
+            `Este paquete ${statusHint} para este cliente. NO reenvíes ni copies su contenido.\n` +
+            menuHint +
+            `Usa la BASE DE CONOCIMIENTO y estas instrucciones para cotizar (precios por ciudad, cantidades, envío). ` +
+            `NUNCA digas que no tienes el precio si aparece en la base de conocimiento o en las instrucciones.\n` +
+            (clipped ? `Instrucciones:\n${clipped}` : "");
+        }
       }
     } catch (err) {
       console.error("[runAiAgent] load active package context failed", err, {
@@ -3655,19 +3677,29 @@ export async function runAiAgent({
           `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nActiva con activate_flow el paquete cuyo TEMA coincida. Usa id EXACTO. No reenvíes su contenido.\n${lines}`;
       }
     } else if (pkgs && pkgs.length) {
-      const lines = pkgs
-        .map((p: any) => {
-          const desc = String(p.description || p.ai_instructions || "")
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 200);
-          return `- ${p.name} (id: ${p.id})${desc ? ` — ${desc}` : ""}`;
-        })
-        .join("\n");
       if (promptMode === "product_focus") {
+        const lines = pkgs
+          .map((p: any) => {
+            const desc = String(p.description || "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 160);
+            return `- ${p.name} (id: ${p.id})${desc ? ` — ${desc}` : ""}`;
+          })
+          .join("\n");
         salesPackagesText =
-          `\n\n=== FLUJOS DE ESTE PRODUCTO ===\nNombre + observaciones/instrucciones. Activa con activate_flow usando el id EXACTO. El sistema envía el contenido; tú no lo copies.\n${lines}`;
+          `\n\n=== FLUJOS DE ESTE PRODUCTO ===\nActiva con activate_flow usando el id EXACTO. El sistema envía el contenido; tú no lo copies. ` +
+          `Tras activar, sigue atendiendo SOLO con la OBSERVACIÓN DEL VENDEDOR del producto en foco (no con instrucciones del flujo).\n${lines}`;
       } else {
+        const lines = pkgs
+          .map((p: any) => {
+            const desc = String(p.description || p.ai_instructions || "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 200);
+            return `- ${p.name} (id: ${p.id})${desc ? ` — ${desc}` : ""}`;
+          })
+          .join("\n");
         salesPackagesText =
           `\n\n=== PAQUETES QUE PUEDES OFRECER ===\nActiva con activate_flow el paquete cuyo TEMA coincida con lo que pide el cliente, pasando el id EXACTO de la lista. NO actives un paquete de otro tema. El sistema envía su contenido en orden; tú NO lo describas ni lo reenvíes. Después responde dudas con el historial y la base de conocimiento.\n${lines}`;
       }
@@ -3742,7 +3774,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const activeFlowGuide =
     promptMode === "product_focus"
-      ? `MODO PRODUCTO EN FOCO:\n1. En CADA respuesta usa la OBSERVACIÓN DEL VENDEDOR (precio, envío, ciudad, guion).\n2. Usa los FLUJOS DE ESTE PRODUCTO (list_flows / activate_flow) cuando el cliente pida lo que cubren.\n3. PROHIBIDO transferir a humano o decir "no tengo esa información" si el dato está en la observación.\n4. Si pide OTRO producto por nombre/SKU, llama present_product.\n5. Respuestas breves; una pregunta de cierre.`
+      ? `MODO PRODUCTO EN FOCO:\n1. En CADA respuesta usa la OBSERVACIÓN DEL VENDEDOR (prioridad máxima sobre cualquier flujo).\n2. Si activate_flow envía un paquete, el contenido lo manda el sistema; tú sigues con la misma observación del producto.\n3. PROHIBIDO transferir a humano o decir "no tengo esa información" si el dato está en la observación.\n4. Si pide OTRO producto por nombre/SKU, llama present_product.\n5. Respuestas breves; una pregunta de cierre.`
       : promptMode === "product_detail"
       ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la observación del vendedor.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
       : promptMode === "pedido"
