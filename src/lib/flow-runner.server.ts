@@ -293,6 +293,11 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     return `${value}@c.us`;
   };
 
+  const jidDigits = (value: unknown): string => {
+    if (typeof value !== "string") return "";
+    return value.split("@")[0].replace(/\D/g, "");
+  };
+
   const enqueueCommand = async (type: string, payload: Record<string, unknown>) => {
     const sessionId = await getSessionId();
     if (!sessionId) {
@@ -306,6 +311,33 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     }
     if (normalizedPayload.chat_id) {
       normalizedPayload.chat_id = normalizeChatId(normalizedPayload.chat_id);
+    }
+
+    // Cinturón de seguridad: un flujo jamás debe enviarse al número de la
+    // propia sesión. Esto también contiene contactos históricos dañados.
+    const target =
+      jidDigits(normalizedPayload.chatId) || jidDigits(normalizedPayload.chat_id);
+    if (target) {
+      const { data: ownSession } = await supabaseAdmin
+        .from("wa_sessions")
+        .select("me_wa_id, phone_number")
+        .eq("id", sessionId)
+        .maybeSingle();
+      const ownNumbers = new Set(
+        [ownSession?.me_wa_id, ownSession?.phone_number]
+          .map(jidDigits)
+          .filter(Boolean),
+      );
+      if (ownNumbers.has(target)) {
+        console.error("[flow-runner] BLOQUEADO envío de flujo al número propio", {
+          orgId,
+          contactId,
+          runId: run.id,
+          sessionId,
+          type,
+        });
+        return null;
+      }
     }
 
     // Marcar origen=flow para que el rate-limit anti-bucle de la IA

@@ -537,15 +537,22 @@ async function flushIngestQueue(): Promise<void> {
           ? (flat.contact as Record<string, unknown>)
           : undefined;
 
+      // El teléfono siempre debe salir del interlocutor. En mensajes entrantes
+      // `to` somos nosotros; usarlo como fallback creaba un contacto con el
+      // número de la sesión y hacía que los flujos se enviaran al chat "(Tú)".
+      const counterpartJid =
+        fromMe === true
+          ? flat.to || flat.chatId
+          : fromMe === false
+            ? flat.from || flat.chatId
+            : flat.chatId;
       const phone =
         (typeof existingContact?.phone === "string" && existingContact.phone.replace(/\D/g, "")) ||
-        phoneDigitsFromJid(flat.chatId) ||
-        phoneDigitsFromJid(flat.from) ||
-        phoneDigitsFromJid(flat.to) ||
+        phoneDigitsFromJid(counterpartJid) ||
         phoneDigitsFromJid(existingContact?.waId) ||
         undefined;
 
-      let chatId = (flat.chatId || flat.from || flat.to) as string | undefined;
+      let chatId = (counterpartJid || flat.chatId) as string | undefined;
       // Preferir @c.us cuando ya tenemos teléfono (evita que ingest descarte @lid)
       if (phone && (!chatId || String(chatId).endsWith("@lid"))) {
         chatId = `${phone}@c.us`;
@@ -584,7 +591,8 @@ async function flushIngestQueue(): Promise<void> {
           from: flat.from as string | undefined,
           to: flat.to as string | undefined,
           chatId,
-          phoneNumber: phone || (flat.phoneNumber as string) || phoneNumber,
+          // Telemetría de la sesión: nunca reemplazarla con el teléfono del cliente.
+          phoneNumber: (flat.phoneNumber as string) || phoneNumber,
           phone,
           pushname: flat.pushname as string | undefined,
           notifyName: flat.notifyName as string | undefined,
