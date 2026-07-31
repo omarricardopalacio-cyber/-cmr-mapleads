@@ -13,6 +13,27 @@ interface ContactLike {
   waId?: string | null;
 }
 
+function looksLikeMessageNotPersonName(name: string): boolean {
+  const t = name.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!t) return true;
+  if (/[¿?]/.test(t)) return true;
+  if (
+    /^(hola|holaa+|buenas|buenos días|buenas tardes|buenas noches|hey|hi|hello|saludos)\b/.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\b(cómo estás|como estas|qué tal|que tal|me interesa|quiero info|información|cotiz|precio|disponible)\b/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (t.split(" ").filter(Boolean).length >= 4) return true;
+  if (/[!…]$/.test(t)) return true;
+  return false;
+}
+
 function isAnonymousName(name?: string | null, waId?: string | null): boolean {
   if (!name) return true;
   const trimmed = name.trim();
@@ -24,6 +45,8 @@ function isAnonymousName(name?: string | null, waId?: string | null): boolean {
   if (/^\+?\d{6,}$/.test(trimmed)) return true;
   if (waId && trimmed === waId) return true;
   if (waId && trimmed === waId.split("@")[0]) return true;
+  // Primera línea del chat usada por error como nombre
+  if (looksLikeMessageNotPersonName(trimmed)) return true;
   return false;
 }
 

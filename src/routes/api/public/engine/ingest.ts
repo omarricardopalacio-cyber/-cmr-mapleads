@@ -181,10 +181,35 @@ function sanitizeContactPhone(
   return d
 }
 
+/** Saludos / primera línea de chat → NO son nombre de persona (evita 3 fichas "Hola cómo estás"). */
+function looksLikeMessageNotPersonName(name: string): boolean {
+  const t = name.trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!t) return true
+  if (/[¿?]/.test(t)) return true
+  if (
+    /^(hola|holaa+|buenas|buenos días|buenas tardes|buenas noches|hey|hi|hello|saludos)\b/.test(t)
+  ) {
+    return true
+  }
+  if (
+    /\b(cómo estás|como estas|qué tal|que tal|me interesa|quiero info|información|cotiz|precio|disponible)\b/.test(
+      t,
+    )
+  ) {
+    return true
+  }
+  // Nombres reales rara vez tienen ≥4 palabras
+  if (t.split(' ').filter(Boolean).length >= 4) return true
+  if (/[!…]$/.test(t)) return true
+  return false
+}
+
 function pickDisplayName(name: unknown, waId?: string, phone?: string): string | undefined {
   const clean = typeof name === 'string' ? name.trim() : ''
-  if (clean && clean.toLowerCase() !== 'unknown') return clean
-  return phone ?? waId?.replace(/@lid$/, '')
+  if (clean && clean.toLowerCase() !== 'unknown' && !looksLikeMessageNotPersonName(clean)) {
+    return clean
+  }
+  return phone ?? undefined
 }
 
 function isUsefulDisplayName(name: unknown, phone?: string, waId?: string): boolean {
@@ -198,6 +223,7 @@ function isUsefulDisplayName(name: unknown, phone?: string, waId?: string): bool
   if (phone && clean === phone) return false
   if (waId && clean === waId.replace(/@lid$/, '')) return false
   if (clean.startsWith('Cliente')) return false
+  if (looksLikeMessageNotPersonName(clean)) return false
   return true
 }
 
@@ -1375,26 +1401,52 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               if (byPhone) {
                 contactId = byPhone.id
                 
-                const currentIsAnonymous = !byPhone.display_name || 
-                  byPhone.display_name.startsWith('Cliente') || 
-                  byPhone.display_name.toLowerCase() === 'unknown' ||
-                  byPhone.display_name === phone;
-                  
-                const hasNewRealName = e.contact?.displayName && 
-                  !e.contact.displayName.startsWith('Cliente') && 
-                  e.contact.displayName.toLowerCase() !== 'unknown' &&
-                  e.contact.displayName !== phone;
+                const currentIsAnonymous = !isUsefulDisplayName(
+                  byPhone.display_name,
+                  phone ?? undefined,
+                  byPhone.wa_id,
+                )
+                const hasNewRealName = isUsefulDisplayName(
+                  e.contact?.displayName,
+                  phone ?? undefined,
+                  waId,
+                )
 
                 if (byPhone.wa_id !== waId || (currentIsAnonymous && hasNewRealName)) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
                       wa_id: waId,
-                      display_name: hasNewRealName ? e.contact.displayName : (byPhone.display_name ?? phone),
+                      display_name: hasNewRealName
+                        ? e.contact!.displayName
+                        : (byPhone.display_name ?? phone),
                       phone,
                       profile_picture_url: e.contact?.profilePictureUrl,
                     })
                     .eq('id', byPhone.id)
+                }
+
+                // Si existía ficha LID aparte, mover sus threads al contacto con teléfono
+                if (isLidKey(waId) && byPhone.wa_id !== waId) {
+                  const { data: lidContact } = await supabaseAdmin
+                    .from('contacts')
+                    .select('id')
+                    .eq('org_id', session.org_id)
+                    .eq('wa_id', waId)
+                    .maybeSingle()
+                  if (lidContact?.id && lidContact.id !== byPhone.id) {
+                    await supabaseAdmin
+                      .from('threads')
+                      .update({ contact_id: byPhone.id })
+                      .eq('org_id', session.org_id)
+                      .eq('contact_id', lidContact.id)
+                    await supabaseAdmin.from('contacts').delete().eq('id', lidContact.id)
+                    console.info('[ingest] fusionado contacto LID → teléfono', {
+                      lidContactId: lidContact.id,
+                      phoneContactId: byPhone.id,
+                      phone,
+                    })
+                  }
                 }
               }
             }
@@ -1417,13 +1469,20 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               })
 
               if (shouldCreateContact) {
+                const safeName = isUsefulDisplayName(
+                  e.contact?.displayName,
+                  phone ?? undefined,
+                  waId,
+                )
+                  ? e.contact!.displayName
+                  : phone ?? undefined
                 const { data: newContact } = await supabaseAdmin
                   .from('contacts')
                   .upsert(
                     {
                       org_id: session.org_id,
                       wa_id: waId,
-                      display_name: e.contact?.displayName ?? phone ?? undefined,
+                      display_name: safeName,
                       phone,
                       profile_picture_url: e.contact?.profilePictureUrl,
                     },
@@ -1442,25 +1501,35 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 .eq('id', contactId)
                 .maybeSingle()
               if (cont) {
-                const currentIsAnonymous = !cont.display_name || 
-                  cont.display_name.startsWith('Cliente') || 
-                  cont.display_name.toLowerCase() === 'unknown' ||
-                  cont.display_name === phone ||
-                  cont.display_name === waId.replace(/@lid$/, '');
-                  
-                const hasNewRealName = e.contact?.displayName && 
-                  !e.contact.displayName.startsWith('Cliente') && 
-                  e.contact.displayName.toLowerCase() !== 'unknown' &&
-                  e.contact.displayName !== phone &&
-                  e.contact.displayName !== waId.replace(/@lid$/, '');
+                const currentIsAnonymous = !isUsefulDisplayName(
+                  cont.display_name,
+                  phone ?? undefined,
+                  cont.wa_id || waId,
+                )
+                const hasNewRealName = isUsefulDisplayName(
+                  e.contact?.displayName,
+                  phone ?? undefined,
+                  waId,
+                )
 
                 if (currentIsAnonymous && hasNewRealName) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
-                      display_name: e.contact.displayName,
+                      display_name: e.contact!.displayName,
                       profile_picture_url: e.contact?.profilePictureUrl,
                     })
+                    .eq('id', contactId)
+                } else if (
+                  cont.display_name &&
+                  looksLikeMessageNotPersonName(String(cont.display_name))
+                ) {
+                  // Limpiar nombres basura ya guardados ("Hola cómo estás")
+                  await supabaseAdmin
+                    .from('contacts')
+                    .update({
+                      display_name: phone || null,
+                    } as any)
                     .eq('id', contactId)
                 }
               }

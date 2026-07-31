@@ -1007,7 +1007,11 @@ function ThreadPage() {
 
       {data?.thread?.contactId && data?.thread?.id && (
         <aside className="hidden md:flex w-72 lg:w-80 border-l bg-card flex-col shrink-0 overflow-hidden">
-          <ContactContextPanel contactId={data.thread.contactId} threadId={data.thread.id} />
+          <ContactContextPanel
+            key={`${data.thread.contactId}-${data.thread.id}`}
+            contactId={data.thread.contactId}
+            threadId={data.thread.id}
+          />
         </aside>
       )}
 
@@ -1500,11 +1504,19 @@ function ContactContextPanel({ contactId, threadId }: { contactId: string; threa
 
 function ContactProfileCard({ contact }: { contact: any }) {
   if (!contact) return null;
-  const name: string = contact.display_name || contact.phone || (contact.wa_id || "").replace(/@lid$/, "");
-  const phone: string | null = contact.phone || null;
+  const name = getContactDisplayName(contact);
+  const phoneLabel = formatPhoneOrWaId(contact);
+  const phoneDigits =
+    contact.phone && !String(contact.wa_id || "").endsWith("@lid")
+      ? String(contact.phone).replace(/\D/g, "")
+      : contact.phone &&
+          String(contact.phone).replace(/\D/g, "") !==
+            String(contact.wa_id || "").split("@")[0].replace(/\D/g, "")
+        ? String(contact.phone).replace(/\D/g, "")
+        : "";
   const pic: string | null = contact.profile_picture_url || null;
   const initials = (name || "?").slice(0, 2).toUpperCase();
-  const waLink = phone ? `https://wa.me/${phone}` : null;
+  const waLink = phoneDigits.length >= 8 ? `https://wa.me/${phoneDigits}` : null;
   return (
     <div className="px-3 pt-3">
       <div className="rounded-lg border bg-card p-3 flex items-center gap-3">
@@ -1522,17 +1534,17 @@ function ContactProfileCard({ contact }: { contact: any }) {
         )}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium truncate">{name}</p>
-          {phone ? (
+          {waLink ? (
             <a
-              href={waLink!}
+              href={waLink}
               target="_blank"
               rel="noreferrer"
               className="text-xs text-muted-foreground hover:text-primary truncate block"
             >
-              +{phone}
+              {phoneLabel}
             </a>
           ) : (
-            <p className="text-xs text-muted-foreground">Sin número</p>
+            <p className="text-xs text-muted-foreground truncate">{phoneLabel}</p>
           )}
         </div>
       </div>
