@@ -349,16 +349,24 @@ export async function focusStoreProduct(opts: {
   }
 
   try {
-    const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
-    const flowStart = await startProductEntryFlow({
-      orgId,
-      contactId: opts.contactId,
-      productId: String(product.id),
-    });
-    if (!flowStart.started) {
-      console.info("[focusStoreProduct] flujo producto no arrancó", {
+    const flowCfg = (product.chat_flow as any) || {};
+    const sendEntryFlow = flowCfg.send_entry_flow !== false;
+    if (sendEntryFlow) {
+      const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
+      const flowStart = await startProductEntryFlow({
+        orgId,
+        contactId: opts.contactId,
+        productId: String(product.id),
+      });
+      if (!flowStart.started) {
+        console.info("[focusStoreProduct] flujo producto no arrancó", {
+          productId: product.id,
+          message: flowStart.message,
+        });
+      }
+    } else {
+      console.info("[focusStoreProduct] flujo especializado omitido (send_entry_flow=false)", {
         productId: product.id,
-        message: flowStart.message,
       });
     }
   } catch (err) {
@@ -476,17 +484,25 @@ export async function presentProductToThread(opts: {
   }
 
   try {
-    const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
-    const flowStart = await startProductEntryFlow({
-      orgId: opts.orgId,
-      contactId: opts.contactId,
-      productId: String(product.id),
-    });
-    if (!flowStart.started) {
-      console.info("[presentProductToThread] flujo producto no arrancó", {
+    const flowCfgEarly = (product.chat_flow as any) || {};
+    const sendEntryFlow = flowCfgEarly.send_entry_flow !== false;
+    if (sendEntryFlow) {
+      const { startProductEntryFlow } = await import("@/lib/flow-trigger.server");
+      const flowStart = await startProductEntryFlow({
+        orgId: opts.orgId,
+        contactId: opts.contactId,
+        productId: String(product.id),
+      });
+      if (!flowStart.started) {
+        console.info("[presentProductToThread] flujo producto no arrancó", {
+          productId: product.id,
+          contactId: opts.contactId || null,
+          message: flowStart.message,
+        });
+      }
+    } else {
+      console.info("[presentProductToThread] flujo especializado omitido (send_entry_flow=false)", {
         productId: product.id,
-        contactId: opts.contactId || null,
-        message: flowStart.message,
       });
     }
   } catch (err) {

@@ -197,6 +197,7 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
           .object({
             send_specs: z.boolean().optional(),
             send_ask: z.boolean().optional(),
+            send_entry_flow: z.boolean().optional(),
             send_price: z.boolean().optional(),
             send_stock: z.boolean().optional(),
             send_sku: z.boolean().optional(),

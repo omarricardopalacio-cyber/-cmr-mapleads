@@ -66,6 +66,7 @@ export const Route = createFileRoute("/_authenticated/catalog")({
 type ChatFlowFlags = {
   send_specs?: boolean;
   send_ask?: boolean;
+  send_entry_flow?: boolean;
   send_price?: boolean;
   send_stock?: boolean;
   send_sku?: boolean;
@@ -170,6 +171,7 @@ function CatalogProductsPage() {
     gallery_images: [] as string[],
     send_specs: true,
     send_ask: true,
+    send_entry_flow: true,
     send_price: true,
     send_stock: true,
     send_sku: true,
@@ -249,6 +251,7 @@ function CatalogProductsPage() {
       gallery_images: parseGallery(p.gallery_images),
       send_specs: flow.send_specs !== false,
       send_ask: flow.send_ask !== false,
+      send_entry_flow: flow.send_entry_flow !== false,
       send_price: flow.send_price !== false,
       send_stock: flow.send_stock !== false,
       send_sku: flow.send_sku !== false,
@@ -342,6 +345,7 @@ function CatalogProductsPage() {
           chat_flow: {
             send_specs: form.send_specs,
             send_ask: form.send_ask,
+            send_entry_flow: form.send_entry_flow,
             send_price: form.send_price,
             send_stock: form.send_stock,
             send_sku: form.send_sku,
@@ -1184,16 +1188,42 @@ function CatalogProductsPage() {
                         </p>
                         <p className="mt-1 text-[11px] text-muted-foreground">
                           Etiquetas CRM, esperas, texto/imagen/video/documento, activar IA,
-                          transferir a humano, condicionales, etc. Se ejecuta al entrar a este
-                          producto (frase activadora o presentación).
+                          transferir a humano, condicionales, etc.
                         </p>
                       </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <Label htmlFor="send-entry-flow" className="text-xs whitespace-nowrap">
+                          Enviar
+                        </Label>
+                        <Switch
+                          id="send-entry-flow"
+                          checked={form.send_entry_flow}
+                          onCheckedChange={(v) => setForm({ ...form, send_entry_flow: v })}
+                        />
+                      </div>
+                    </div>
+                    <div className="rounded bg-background/70 p-2 text-[11px] text-muted-foreground space-y-1">
+                      <p className="font-medium text-foreground">¿Cuál se envía al entrar al producto?</p>
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        <li>
+                          <span className="text-foreground">Solo ficha:</span> Enviar ficha ON · este
+                          switch OFF
+                        </li>
+                        <li>
+                          <span className="text-foreground">Solo especializado:</span> Enviar ficha
+                          OFF · este switch ON (+ pasos en el editor)
+                        </li>
+                        <li>
+                          <span className="text-foreground">Ambos:</span> los dos ON (primero
+                          especializado, luego ficha)
+                        </li>
+                      </ul>
                     </div>
                     <p className="text-[11px] text-muted-foreground">
                       {(entryFlowQuery.data as any)?.flow
                         ? `Flujo: ${(entryFlowQuery.data as any).flow.name} · ${
                             (entryFlowQuery.data as any).flow.steps_count ?? 0
-                          } paso(s)`
+                          } paso(s)${form.send_entry_flow ? "" : " · pausado (no se envía)"}`
                         : "Aún no hay flujo de entrada para este producto (se crea al abrir el editor)."}
                     </p>
                     <Button
