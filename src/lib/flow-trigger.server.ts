@@ -338,6 +338,8 @@ export async function startFlowForContact(params: {
 
   // Si el paquete arrancó: con producto en foco NO anexar ai_instructions
   // (la Observación del producto tiene prioridad). Sin foco → sí.
+  // Tampoco pedir que la IA escriba YA: el flujo puede haber dejado una pregunta;
+  // debe esperar el próximo mensaje del cliente.
   const instructions = String(flow.ai_instructions || "").trim();
   if (result.started && instructions && !focusedProductId) {
     return {
@@ -352,8 +354,9 @@ export async function startFlowForContact(params: {
     return {
       ...result,
       message:
-        `${result.message}\n\nAtiende con la OBSERVACIÓN DEL VENDEDOR del producto en foco. ` +
-        `No uses instrucciones del paquete como prompt principal.`,
+        `${result.message}\n\nEl sistema YA envió (o está enviando) el flujo/ficha. ` +
+        `NO escribas nada más en este turno. Espera la próxima respuesta del cliente y entonces ` +
+        `atiende con la OBSERVACIÓN DEL VENDEDOR del producto en foco.`,
     };
   }
 

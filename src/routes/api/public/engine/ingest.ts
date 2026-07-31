@@ -1025,6 +1025,38 @@ async function maybeAiReply(
 
   if (!cfg || !cfg.enabled) return
 
+  // Si acabamos de presentar un producto (foco reciente) y este es el 1er mensaje
+  // entrante, NO responder: el flujo/ficha ya preguntó; espera la respuesta del cliente.
+  try {
+    const { data: thFocus } = await supabaseAdmin
+      .from('threads')
+      .select('focused_product_id, focused_updated_at')
+      .eq('id', threadId)
+      .eq('org_id', orgId)
+      .maybeSingle()
+    const focusedAt = (thFocus as any)?.focused_updated_at
+      ? new Date(String((thFocus as any).focused_updated_at)).getTime()
+      : 0
+    const focusAgeMs = focusedAt ? Date.now() - focusedAt : Number.POSITIVE_INFINITY
+    if ((thFocus as any)?.focused_product_id && focusAgeMs >= 0 && focusAgeMs < 90_000) {
+      const { count: inboundCount } = await supabaseAdmin
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('thread_id', threadId)
+        .eq('direction', 'in')
+      if ((inboundCount ?? 0) <= 1) {
+        console.info('[ai-reply] defer: producto recién presentado; espera consulta del cliente', {
+          threadId,
+          focusAgeMs,
+          inboundCount,
+        })
+        return
+      }
+    }
+  } catch (deferErr) {
+    console.warn('[ai-reply] defer check failed:', (deferErr as Error)?.message)
+  }
+
   if (cfg.respond_to === 'new') {
     const { count } = await supabaseAdmin
       .from('messages')
@@ -2372,7 +2404,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               } catch (_) { /* ignore */ }
 
               // Frase activadora (Observaciones): solo 1er mensaje → foco + flujo producto
-              // (sin búsqueda IA). La IA sigue después ya en product_focus (observación).
+              // (sin búsqueda IA). La IA queda activa pero NO responde a ESTE mensaje:
+              // espera la siguiente consulta del cliente (ej. cantidad de sillas).
+              let skipAiAfterProductEntry = false
               try {
                 const { tryProductEntryTriggerOnFirstMessage } = await import(
                   '@/lib/product-entry-trigger.server'
@@ -2386,10 +2420,12 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   text: textForAiInsert,
                 })
                 if (trig.activated) {
+                  skipAiAfterProductEntry = true
                   console.info('[ingest] entry_trigger_phrase activó producto', {
                     threadId: thread.id,
                     productId: trig.productId,
                     productName: trig.productName,
+                    skipAiThisInbound: true,
                   })
                 }
               } catch (trigErr) {
@@ -2400,7 +2436,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
 
               const { aiDisabled, totalDelaySec } = await maybeAutoReply(session.org_id, session.id, sendChatId, textForAiInsert, thread.id, contactId)
-              if (!aiDisabled) {
+              if (!aiDisabled && !skipAiAfterProductEntry) {
                 // auto-replies already ran synchronously above, so AI enters right after.
                 // Pass autoRepliesWereSent so the AI uses contextual-entry mode.
                 const autoRepliesWereSent = totalDelaySec > 0;
@@ -2428,6 +2464,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   console.log('[ingest] Ejecutando maybeAiReply de forma síncrona (rollback/legacy)');
                   await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, textForAiInsert, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey);
                 }
+              } else if (skipAiAfterProductEntry) {
+                console.info('[ingest] IA omitida este turno: flujo/ficha de producto ya preguntó; espera respuesta del cliente', {
+                  threadId: thread.id,
+                  chatId: sendChatId,
+                })
               }
 
               // Vigilante: clasifica/etiqueta, pero NO arranca flujos si la IA está

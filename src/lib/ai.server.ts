@@ -5188,6 +5188,13 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
     if (!toolCalls?.length) {
       const finalText = text || lastText;
+      if (ctx.activatedFlowThisTurn) {
+        console.info("[runAiAgent] sin texto: activate_flow este turno; espera cliente", {
+          orgId,
+          threadId,
+        });
+        return { reply: "", actions };
+      }
       if (
         isOrderClaimWithoutConfirmation(finalText) &&
         !actions.includes("confirm_order") &&
@@ -5315,6 +5322,15 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
   await markCollectingOrderDataIfNeeded(finalText || lastText);
   if (await recoverMissingOrderConfirmation(finalText || lastText)) {
     return { reply: finalText || lastText, actions };
+  }
+  // Flujo/paquete ya envió contenido (y quizá una pregunta): no añadir comentario extra.
+  if (ctx.activatedFlowThisTurn) {
+    console.info("[runAiAgent] sin texto final: activate_flow este turno; espera respuesta del cliente", {
+      orgId,
+      threadId,
+      actions,
+    });
+    return { reply: "", actions };
   }
   return buildSafeReply(finalText || lastText);
 }
