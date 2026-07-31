@@ -177,7 +177,10 @@ async function insertWebFlowMessages(opts: {
       raw: { channel: "web", kind: "product_ask", productId: opts.productId, source: "flow" },
     });
   }
-  if (rows.length) await supabaseAdmin.from("messages").insert(rows as any);
+  if (rows.length) {
+    const { insertMessagesSafe } = await import("@/lib/message-insert.server");
+    await insertMessagesSafe(rows as Record<string, unknown>[]);
+  }
 }
 
 async function loadProduct(orgId: string, productId: string) {

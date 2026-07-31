@@ -1991,7 +1991,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (messageDirectionInsert === 'out') {
               try {
                 const { resolveOutboundMessageSource } = await import(
-                  '@/lib/product-learning.server'
+                  '@/lib/message-insert.server'
                 )
                 messageSource = await resolveOutboundMessageSource({
                   orgId: session.org_id,
@@ -2004,7 +2004,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
-            await supabaseAdmin.from('messages').insert({
+            const { insertMessagesSafe } = await import('@/lib/message-insert.server')
+            const { error: msgInsErr } = await insertMessagesSafe({
               org_id: session.org_id,
               thread_id: thread.id,
               wa_message_id: e.waMessageId ?? null,
@@ -2016,7 +2017,14 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               raw: null,
               source: messageSource,
               sent_at: e.sentAt ?? new Date().toISOString(),
-            } as any)
+            })
+            if (msgInsErr) {
+              console.error('[ingest] messages.insert failed', msgInsErr.message, {
+                threadId: thread.id,
+                waMessageId: e.waMessageId,
+              })
+              continue
+            }
 
             // Aprendizaje: outbound agent o inbound tras atención humana
             if (

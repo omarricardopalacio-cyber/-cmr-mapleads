@@ -1764,7 +1764,8 @@ async function queueOutgoingMedia(
     `cmd_${Date.now()}_${Math.random()}`) as string;
   // Echo en la conversación para que el operador lo vea en el CRM
   if (finalUrl) {
-    await (supabaseAdmin as any).from("messages").insert({
+    const { insertMessagesSafe } = await import("@/lib/message-insert.server");
+    await insertMessagesSafe({
       org_id: ctx.orgId,
       thread_id: ctx.threadId,
       direction: "out",
@@ -2769,7 +2770,8 @@ async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
   const cmdId = (globalThis.crypto?.randomUUID?.() ??
     `cmd_${Date.now()}_${Math.random()}`) as string;
   try {
-    await (supabaseAdmin as any).from("messages").insert({
+    const { insertMessagesSafe } = await import("@/lib/message-insert.server");
+    await insertMessagesSafe({
       org_id: ctx.orgId,
       thread_id: ctx.threadId,
       direction: "out",

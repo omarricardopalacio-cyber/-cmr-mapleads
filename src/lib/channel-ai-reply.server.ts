@@ -271,7 +271,8 @@ export async function runChannelAiReply(
     }
 
     if (channel === "web") {
-      await supabaseAdmin.from("messages").insert({
+      const { insertMessagesSafe } = await import("@/lib/message-insert.server");
+      await insertMessagesSafe({
         org_id: orgId,
         thread_id: threadId,
         direction: "out",
@@ -280,7 +281,7 @@ export async function runChannelAiReply(
         sent_at: new Date().toISOString(),
         source: "ai",
         raw: { channel: "web", actions, source: "ai" },
-      } as any);
+      });
       await supabaseAdmin
         .from("threads")
         .update({ last_message_at: new Date().toISOString() })

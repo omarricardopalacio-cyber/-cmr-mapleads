@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { convertUrlToBase64, storagePathFromMediaUrl } from "@/lib/media";
 import { sanitizeMessageText } from "@/lib/message-text";
 import { ensureUserOrg } from "@/lib/org-helpers";
+import { insertMessagesSafe } from "@/lib/message-insert.server";
 
 /**
  * Borra del bucket "media" los archivos referenciados por los mensajes indicados.
@@ -270,7 +271,7 @@ export const sendMessage = createServerFn({ method: "POST" })
 
     // Canal WEB: solo DB (Realtime); sin engine_commands
     if (channel === "web") {
-      const { error: insertErr } = await supabaseAdmin.from("messages").insert({
+      const { error: insertErr } = await insertMessagesSafe({
         org_id: orgId,
         thread_id: data.threadId,
         direction: "out",
@@ -280,7 +281,7 @@ export const sendMessage = createServerFn({ method: "POST" })
         sent_at: new Date().toISOString(),
         source: "agent",
         raw: { channel: "web", source: "agent" },
-      } as any);
+      });
       if (insertErr) throw new Error(`Error al guardar mensaje: ${insertErr.message}`);
       await supabaseAdmin
         .from("threads")
@@ -338,7 +339,7 @@ export const sendMessage = createServerFn({ method: "POST" })
 
     payload.source = "agent";
 
-    const { error: insertErr } = await supabaseAdmin.from("messages").insert({
+    const { error: insertErr } = await insertMessagesSafe({
       org_id: orgId,
       thread_id: data.threadId,
       direction: "out",
@@ -347,7 +348,7 @@ export const sendMessage = createServerFn({ method: "POST" })
       wa_message_id: `pending-${cmdId}`,
       sent_at: new Date().toISOString(),
       source: "agent",
-    } as any);
+    });
     
     if (insertErr) {
       console.error("[sendMessage] Error inserting pending message:", insertErr);
