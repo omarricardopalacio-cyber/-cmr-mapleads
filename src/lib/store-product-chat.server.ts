@@ -152,11 +152,13 @@ async function insertWebFlowMessages(opts: {
       media: m.media,
       wa_message_id: `web-flow-${opts.productId}-${m.kind}-${opts.baseMs}-${i}`,
       sent_at: new Date(t).toISOString(),
+      source: "flow",
       raw: {
         channel: "web",
         kind: m.kind,
         productId: opts.productId,
         delayAfterSec: m.delayAfterSec,
+        source: "flow",
       },
     });
     // Espera configurada antes del siguiente mensaje (mín. 30ms)
@@ -171,7 +173,8 @@ async function insertWebFlowMessages(opts: {
       media: null,
       wa_message_id: `web-flow-ask-${opts.productId}-${opts.baseMs}`,
       sent_at: new Date(t).toISOString(),
-      raw: { channel: "web", kind: "product_ask", productId: opts.productId },
+      source: "flow",
+      raw: { channel: "web", kind: "product_ask", productId: opts.productId, source: "flow" },
     });
   }
   if (rows.length) await supabaseAdmin.from("messages").insert(rows as any);
@@ -353,6 +356,16 @@ export async function focusStoreProduct(opts: {
     });
     introSent = true;
   }
+
+  import("@/lib/product-learning.server")
+    .then(({ maybeQualifyProductLearning }) =>
+      maybeQualifyProductLearning({
+        orgId,
+        threadId,
+        contactId: opts.contactId,
+      }),
+    )
+    .catch(() => {});
 
   return {
     productId: String(product.id),

@@ -45,6 +45,7 @@ import { Route as ApiAdminEngineFailedRequestsRouteImport } from './routes/api/a
 import { Route as ApiPublicCronCleanupRouteImport } from './routes/api/public/cron/cleanup'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
 import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
+import { Route as ApiPublicCronProductLearningRouteImport } from './routes/api/public/cron/product-learning'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicEngineImportHistoryRouteImport } from './routes/api/public/engine/import-history'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
@@ -251,6 +252,12 @@ const ApiPublicCronFlowSchedulerRoute =
     path: '/api/public/cron/flow-scheduler',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicCronProductLearningRoute =
+  ApiPublicCronProductLearningRouteImport.update({
+    id: '/api/public/cron/product-learning',
+    path: '/api/public/cron/product-learning',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
   id: '/api/public/engine/commands',
   path: '/api/public/engine/commands',
@@ -359,6 +366,7 @@ export interface FileRoutesByFullPath {
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
+  '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
@@ -407,6 +415,7 @@ export interface FileRoutesByTo {
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
+  '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
@@ -459,6 +468,7 @@ export interface FileRoutesById {
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
+  '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
@@ -511,6 +521,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
+    | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
@@ -559,6 +570,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
+    | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
@@ -610,6 +622,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
+    | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
@@ -638,6 +651,7 @@ export interface RootRouteChildren {
   ApiPublicCronCleanupRoute: typeof ApiPublicCronCleanupRoute
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
+  ApiPublicCronProductLearningRoute: typeof ApiPublicCronProductLearningRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
   ApiPublicEngineImportHistoryRoute: typeof ApiPublicEngineImportHistoryRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
@@ -905,6 +919,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCronFlowSchedulerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/cron/product-learning': {
+      id: '/api/public/cron/product-learning'
+      path: '/api/public/cron/product-learning'
+      fullPath: '/api/public/cron/product-learning'
+      preLoaderRoute: typeof ApiPublicCronProductLearningRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/engine/commands': {
       id: '/api/public/engine/commands'
       path: '/api/public/engine/commands'
@@ -1097,6 +1118,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicCronCleanupRoute: ApiPublicCronCleanupRoute,
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
+  ApiPublicCronProductLearningRoute: ApiPublicCronProductLearningRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
   ApiPublicEngineImportHistoryRoute: ApiPublicEngineImportHistoryRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,

@@ -101,7 +101,8 @@ export default function HistoryImportPanel() {
     const response = await sendPopupRequest("START_HISTORY_IMPORT", {
       maxChats,
       messagesPerChat: 200,
-      pauseMs: maxChats > 300 ? 400 : 600,
+      // Más pausa: cada chat abre WA y puede pedir historial al teléfono
+      pauseMs: maxChats > 300 ? 700 : 1000,
     });
 
     setBusy(false);
@@ -117,7 +118,7 @@ export default function HistoryImportPanel() {
       setStatus({ ...empty, ...response.payload });
       setHint(
         response.payload.running
-          ? "Importación iniciada. Deja WhatsApp Web abierto."
+          ? "Importación iniciada. Deja WhatsApp Web y el teléfono online."
           : null,
       );
     } else {
@@ -145,8 +146,10 @@ export default function HistoryImportPanel() {
           intención, etiquetas y segmentos. <b>No envía mensajes</b> ni inicia flujos.
         </p>
         <p className="text-[10px] text-slate-500">
-          Requiere WhatsApp Web abierto y Backend/Token en Config. Con ~1000 chats puede
-          tardar varios minutos: no cierres la pestaña.
+          Requiere WhatsApp Web abierto, el <b>teléfono encendido y con internet</b>, y
+          Backend/Token en Config. La extensión abre cada chat y pide el historial al
+          teléfono (como el botón “obtener mensajes anteriores”). Puede tardar: no
+          cierres la pestaña.
         </p>
         <label className="flex items-center justify-between gap-2 text-slate-400">
           <span>Máx. chats</span>

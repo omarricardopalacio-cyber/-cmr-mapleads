@@ -234,7 +234,8 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
   // Cuentas grandes (~1000 chats): tope alto pero con pausa para no tumbar WA Web
   const maxChats = Math.max(1, Math.min(opts.maxChats ?? 200, 1000));
   const messagesPerChat = Math.max(1, Math.min(opts.messagesPerChat ?? 200, 220));
-  const pauseMs = Math.max(250, Math.min(opts.pauseMs ?? 600, 5000));
+  // Con warmHistory (sync del teléfono) hace falta más pausa entre chats
+  const pauseMs = Math.max(400, Math.min(opts.pauseMs ?? 900, 8000));
 
   stopRequested = false;
   status = {
@@ -300,9 +301,11 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
         await persistStatus();
 
         try {
+          // warmHistory: abre el chat, pide historial al teléfono (como el clic
+          // "obtener mensajes anteriores") y pagina msgs antes de importar.
           const msgsRaw = await opts.sendWaCommand("GET_CHAT_MESSAGES", {
             chatId,
-            options: { count: messagesPerChat },
+            options: { count: messagesPerChat, warmHistory: true },
           });
           if (msgsRaw?.error) throw new Error(String(msgsRaw.error));
           const msgs = Array.isArray(msgsRaw) ? msgsRaw : [];

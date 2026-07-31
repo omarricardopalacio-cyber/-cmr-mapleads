@@ -74,6 +74,32 @@ export async function assignComproTag(params: {
         .catch((err) => console.warn("[assignComproTag] watcher", err));
     }
 
+    // Aprendizaje: chats con venta → cupo de 50 ventas / producto
+    try {
+      const { data: thread } = await (supabaseAdmin as any)
+        .from("threads")
+        .select("id")
+        .eq("org_id", params.orgId)
+        .eq("contact_id", contactId)
+        .order("last_message_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (thread?.id) {
+        import("@/lib/product-learning.server")
+          .then(({ maybeQualifyProductLearning }) =>
+            maybeQualifyProductLearning({
+              orgId: params.orgId,
+              threadId: String(thread.id),
+              contactId,
+              preferSale: true,
+            }),
+          )
+          .catch((err) => console.warn("[assignComproTag] learning", err));
+      }
+    } catch (err) {
+      console.warn("[assignComproTag] learning lookup", err);
+    }
+
     return { assigned: true, tagId: tagId! };
   } catch (err) {
     console.warn(

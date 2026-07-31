@@ -278,8 +278,9 @@ export async function runChannelAiReply(
         text: finalReply,
         wa_message_id: `web-ai-${Date.now()}`,
         sent_at: new Date().toISOString(),
-        raw: { channel: "web", actions },
-      });
+        source: "ai",
+        raw: { channel: "web", actions, source: "ai" },
+      } as any);
       await supabaseAdmin
         .from("threads")
         .update({ last_message_at: new Date().toISOString() })
@@ -306,7 +307,12 @@ export async function runChannelAiReply(
         org_id: orgId,
         session_id: sessionId,
         type: "SEND_MESSAGE",
-        payload: { chatId, text: finalReply, dedupeKey: aiReplyDedupeKey },
+        payload: {
+          chatId,
+          text: finalReply,
+          dedupeKey: aiReplyDedupeKey,
+          source: "ai",
+        },
         status: "pending",
         scheduled_for: scheduleAt,
       });

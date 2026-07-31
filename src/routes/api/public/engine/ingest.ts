@@ -1985,18 +1985,56 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               continue
             }
 
+            const messageDirectionInsert =
+              e.direction ?? (e.type === 'message-in' ? 'in' : 'out')
+            let messageSource: string | null = null
+            if (messageDirectionInsert === 'out') {
+              try {
+                const { resolveOutboundMessageSource } = await import(
+                  '@/lib/product-learning.server'
+                )
+                messageSource = await resolveOutboundMessageSource({
+                  orgId: session.org_id,
+                  sessionId: session.id,
+                  text: e.text,
+                  commandId: e.commandId ?? null,
+                })
+              } catch {
+                messageSource = 'unknown'
+              }
+            }
+
             await supabaseAdmin.from('messages').insert({
               org_id: session.org_id,
               thread_id: thread.id,
               wa_message_id: e.waMessageId ?? null,
-              direction: e.direction ?? (e.type === 'message-in' ? 'in' : 'out'),
+              direction: messageDirectionInsert,
               text: e.text?.trim() ? e.text : null,
               media: enrichedMedia as any,
               // raw se deja vacio a proposito: el payload crudo ocupa mucho espacio,
               // nunca se lee para features y ya queda auditado en la tabla `events`.
               raw: null,
+              source: messageSource,
               sent_at: e.sentAt ?? new Date().toISOString(),
-            })
+            } as any)
+
+            // Aprendizaje: outbound agent o inbound tras atención humana
+            if (
+              (messageDirectionInsert === 'out' && messageSource === 'agent') ||
+              messageDirectionInsert === 'in'
+            ) {
+              import('@/lib/product-learning.server')
+                .then(async ({ maybeQualifyProductLearning, kickProductLearningWorker }) => {
+                  await maybeQualifyProductLearning({
+                    orgId: session.org_id,
+                    threadId: thread.id,
+                    contactId: contactId || thread.contact_id || null,
+                  })
+                  // Sin cron: drena jobs pending con throttle (~90s)
+                  void kickProductLearningWorker()
+                })
+                .catch(() => {})
+            }
 
             // Import historial: clasificar ficha sin responder ni iniciar flujos
             if (e.historical && e.historicalClassify && contactId) {

@@ -247,12 +247,14 @@ export const sendMessage = createServerFn({ method: "POST" })
     const orgId = await ensureUserOrg(context.userId);
     const { data: thread } = await supabaseAdmin
       .from("threads")
-      .select("id, session_id, channel, contacts(wa_id, phone)")
+      .select("id, session_id, channel, contact_id, contacts(id, wa_id, phone)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
     const contact = Array.isArray(thread.contacts) ? thread.contacts[0] : thread.contacts;
+    const contactIdForLearning =
+      (contact as any)?.id || (thread as any).contact_id || null;
     const channel = (thread as any).channel || "whatsapp";
 
     const displayText = sanitizeMessageText(
@@ -276,14 +278,25 @@ export const sendMessage = createServerFn({ method: "POST" })
         media: messageMedia,
         wa_message_id: `web-agent-${crypto.randomUUID()}`,
         sent_at: new Date().toISOString(),
+        source: "agent",
         raw: { channel: "web", source: "agent" },
-      });
+      } as any);
       if (insertErr) throw new Error(`Error al guardar mensaje: ${insertErr.message}`);
       await supabaseAdmin
         .from("threads")
         .update({ last_message_at: new Date().toISOString() })
         .eq("id", data.threadId)
         .eq("org_id", orgId);
+      // Aprendizaje por producto (fire-and-forget)
+      import("@/lib/product-learning.server")
+        .then(({ maybeQualifyProductLearning }) =>
+          maybeQualifyProductLearning({
+            orgId,
+            threadId: data.threadId,
+            contactId: contactIdForLearning,
+          }),
+        )
+        .catch(() => {});
       return { commandId: null, channel: "web" };
     }
 
@@ -323,6 +336,8 @@ export const sendMessage = createServerFn({ method: "POST" })
     // Generar un ID para el comando para poder usarlo en el wa_message_id
     const cmdId = crypto.randomUUID();
 
+    payload.source = "agent";
+
     const { error: insertErr } = await supabaseAdmin.from("messages").insert({
       org_id: orgId,
       thread_id: data.threadId,
@@ -331,7 +346,8 @@ export const sendMessage = createServerFn({ method: "POST" })
       media: messageMedia,
       wa_message_id: `pending-${cmdId}`,
       sent_at: new Date().toISOString(),
-    });
+      source: "agent",
+    } as any);
     
     if (insertErr) {
       console.error("[sendMessage] Error inserting pending message:", insertErr);
@@ -359,6 +375,16 @@ export const sendMessage = createServerFn({ method: "POST" })
       .update({ last_message_at: new Date().toISOString() })
       .eq("id", data.threadId)
       .eq("org_id", orgId);
+
+    import("@/lib/product-learning.server")
+      .then(({ maybeQualifyProductLearning }) =>
+        maybeQualifyProductLearning({
+          orgId,
+          threadId: data.threadId,
+          contactId: contactIdForLearning,
+        }),
+      )
+      .catch(() => {});
 
     return { commandId: cmd.id, channel: "whatsapp" };
   });

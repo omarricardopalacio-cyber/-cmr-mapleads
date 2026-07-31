@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
 
 const PRODUCT_COLS =
-  "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, chat_ask_text, chat_flow, gallery_images, updated_at";
+  "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, chat_ask_text, chat_flow, gallery_images, learning_inquiry_count, learning_sale_count, learning_inquiry_prompt_at, learning_sale_prompt_at, updated_at";
 
 export const listStoreCatalogProducts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -40,27 +40,64 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
 
     let { data: rows, error, count } = await query;
 
-    if (error?.message?.includes("chat_ask") || error?.message?.includes("ai_observation") || error?.message?.includes("search_keywords") || error?.code === "42703") {
-      const legacyCols =
-        "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, updated_at";
-      let legacy = (supabaseAdmin as any)
+    if (
+      error?.message?.includes("chat_ask") ||
+      error?.message?.includes("ai_observation") ||
+      error?.message?.includes("search_keywords") ||
+      error?.message?.includes("learning_") ||
+      error?.code === "42703"
+    ) {
+      // Reintentar sin columnas de aprendizaje si la migración aún no corre
+      const midCols =
+        "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, chat_ask_text, chat_flow, gallery_images, updated_at";
+      let mid = (supabaseAdmin as any)
         .from("products")
-        .select(legacyCols, { count: "exact" })
+        .select(midCols, { count: "exact" })
         .eq("org_id", orgId)
         .order("name", { ascending: true })
         .range(offset, offset + limit - 1);
-      if (q) legacy = legacy.or(`name.ilike.%${q}%,sku.ilike.%${q}%,category.ilike.%${q}%`);
-      const res = await legacy;
-      rows = (res.data || []).map((r: any) => ({
-        ...r,
-        ai_observation: null,
-        search_keywords: null,
-        chat_ask_text: null,
-        chat_flow: { send_specs: true, send_ask: true },
-        gallery_images: [],
-      }));
-      error = res.error;
-      count = res.count;
+      if (q) {
+        mid = mid.or(
+          `name.ilike.%${q}%,sku.ilike.%${q}%,category.ilike.%${q}%,search_keywords.ilike.%${q}%`,
+        );
+      }
+      const midRes = await mid;
+      if (!midRes.error) {
+        rows = (midRes.data || []).map((r: any) => ({
+          ...r,
+          learning_inquiry_count: 0,
+          learning_sale_count: 0,
+          learning_inquiry_prompt_at: null,
+          learning_sale_prompt_at: null,
+        }));
+        error = null;
+        count = midRes.count;
+      } else {
+        const legacyCols =
+          "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, updated_at";
+        let legacy = (supabaseAdmin as any)
+          .from("products")
+          .select(legacyCols, { count: "exact" })
+          .eq("org_id", orgId)
+          .order("name", { ascending: true })
+          .range(offset, offset + limit - 1);
+        if (q) legacy = legacy.or(`name.ilike.%${q}%,sku.ilike.%${q}%,category.ilike.%${q}%`);
+        const res = await legacy;
+        rows = (res.data || []).map((r: any) => ({
+          ...r,
+          ai_observation: null,
+          search_keywords: null,
+          chat_ask_text: null,
+          chat_flow: { send_specs: true, send_ask: true },
+          gallery_images: [],
+          learning_inquiry_count: 0,
+          learning_sale_count: 0,
+          learning_inquiry_prompt_at: null,
+          learning_sale_prompt_at: null,
+        }));
+        error = res.error;
+        count = res.count;
+      }
     }
 
     if (error) throw new Error(error.message);
@@ -102,6 +139,16 @@ export const updateProductAiObservation = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
+    try {
+      const { backupProductPrompt } = await import("@/lib/product-learning.server");
+      await backupProductPrompt({
+        orgId,
+        productId: data.productId,
+        source: "manual",
+      });
+    } catch {
+      /* migración pendiente */
+    }
     const { error } = await (supabaseAdmin as any)
       .from("products")
       .update({
@@ -205,6 +252,19 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
       patch.search_keywords = String(patch.search_keywords).trim() || null;
     }
 
+    if (patch.ai_observation !== undefined) {
+      try {
+        const { backupProductPrompt } = await import("@/lib/product-learning.server");
+        await backupProductPrompt({
+          orgId,
+          productId: data.productId,
+          source: "manual",
+        });
+      } catch {
+        /* migración pendiente */
+      }
+    }
+
     const { error } = await (supabaseAdmin as any)
       .from("products")
       .update(patch)
@@ -263,4 +323,67 @@ export const uploadProductImage = createServerFn({ method: "POST" })
     const { data: pub } = supabaseAdmin.storage.from("media").getPublicUrl(path);
     if (!pub?.publicUrl) throw new Error("No se pudo obtener URL pública");
     return { url: pub.publicUrl, path };
+  });
+
+/** Estado de aprendizaje (contadores / jobs) para un producto. */
+export const getProductLearningStatusFn = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ productId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const { getProductLearningStatus } = await import("@/lib/product-learning.server");
+    return await getProductLearningStatus({ orgId, productId: data.productId });
+  });
+
+/** Restaura el último backup de ai_observation. */
+export const restoreProductPromptFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ productId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const { restorePreviousProductPrompt } = await import("@/lib/product-learning.server");
+    return await restorePreviousProductPrompt({ orgId, productId: data.productId });
+  });
+
+/**
+ * Procesa jobs de aprendizaje pendientes (sin cron externo).
+ * Si hay job pending/failed del producto, lo ejecuta ahora.
+ */
+export const processProductLearningNowFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ productId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const {
+      processProductLearningJob,
+      kickProductLearningWorker,
+    } = await import("@/lib/product-learning.server");
+
+    const { data: job } = await (supabaseAdmin as any)
+      .from("product_learning_jobs")
+      .select("id, status, phase")
+      .eq("org_id", orgId)
+      .eq("product_id", data.productId)
+      .in("status", ["pending", "failed"])
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (job?.id) {
+      if (job.status === "failed") {
+        await (supabaseAdmin as any)
+          .from("product_learning_jobs")
+          .update({
+            status: "pending",
+            error: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", job.id);
+      }
+      await processProductLearningJob(String(job.id));
+      return { ok: true, processed: 1, jobId: job.id, phase: job.phase };
+    }
+
+    const n = await kickProductLearningWorker({ force: true, limit: 2 });
+    return { ok: true, processed: n, jobId: null, phase: null };
   });

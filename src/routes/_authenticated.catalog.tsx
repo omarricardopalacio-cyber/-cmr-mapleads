@@ -1,11 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   listStoreCatalogProducts,
   updateStoreProduct,
   uploadProductImage,
+  getProductLearningStatusFn,
+  restoreProductPromptFn,
+  processProductLearningNowFn,
 } from "@/lib/catalog-products.functions";
 import {
   DEFAULT_FLOW_FIELD_ORDER,
@@ -61,6 +64,10 @@ type CatalogRow = {
   chat_ask_text?: string | null;
   gallery_images?: string[] | null;
   chat_flow?: ChatFlowFlags | null;
+  learning_inquiry_count?: number | null;
+  learning_sale_count?: number | null;
+  learning_inquiry_prompt_at?: string | null;
+  learning_sale_prompt_at?: string | null;
 };
 
 function formatCop(price: number | null | undefined) {
@@ -94,6 +101,9 @@ function CatalogProductsPage() {
   const listFn = useServerFn(listStoreCatalogProducts);
   const updateFn = useServerFn(updateStoreProduct);
   const uploadFn = useServerFn(uploadProductImage);
+  const learningStatusFn = useServerFn(getProductLearningStatusFn);
+  const restorePromptFn = useServerFn(restoreProductPromptFn);
+  const processLearningFn = useServerFn(processProductLearningNowFn);
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [search, setSearch] = useState("");
@@ -152,6 +162,13 @@ function CatalogProductsPage() {
     () => products.find((p) => p.id === selectedId) || null,
     [products, selectedId],
   );
+
+  const learningQuery = useQuery({
+    queryKey: ["productLearning", selectedId],
+    enabled: !!selectedId,
+    queryFn: () => learningStatusFn({ data: { productId: selectedId! } }),
+    refetchInterval: 30_000,
+  });
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -278,6 +295,41 @@ function CatalogProductsPage() {
       qc.invalidateQueries({ queryKey: ["storeCatalogProducts"] });
       toast.success("Producto actualizado");
       setEditing(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const restoreMut = useMutation({
+    mutationFn: () => restorePromptFn({ data: { productId: selectedId! } }),
+    onSuccess: (res) => {
+      if (!res?.ok) {
+        toast.error("No hay backup para restaurar");
+        return;
+      }
+      qc.invalidateQueries({ queryKey: ["storeCatalogProducts"] });
+      qc.invalidateQueries({ queryKey: ["productLearning", selectedId] });
+      if (typeof res.restored === "string") {
+        setForm((f) => ({ ...f, ai_observation: res.restored || "" }));
+      }
+      toast.success("Prompt restaurado desde backup");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const processLearningMut = useMutation({
+    mutationFn: () => processLearningFn({ data: { productId: selectedId! } }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["storeCatalogProducts"] });
+      qc.invalidateQueries({ queryKey: ["productLearning", selectedId] });
+      if (res?.processed && res.processed > 0) {
+        toast.success(
+          res.phase
+            ? `Aprendizaje procesado (${res.phase})`
+            : `Procesados ${res.processed} job(s)`,
+        );
+      } else {
+        toast.message("No hay jobs pendientes para este producto");
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -527,6 +579,84 @@ function CatalogProductsPage() {
                       <span className="font-semibold">Keywords IA:</span> {selected.search_keywords}
                     </p>
                   ) : null}
+
+                  <div className="rounded-md border border-emerald-500/25 bg-emerald-500/5 p-3 space-y-2 text-xs">
+                    <p className="font-semibold text-emerald-700 dark:text-emerald-400">
+                      Aprendizaje de prompts
+                    </p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Al acumular 50 chats con ≥3 respuestas humanas del mismo producto, el sistema
+                      genera y aplica solo un prompt en Observación (con backup). Luego, con 50
+                      ventas, lo fusiona en un super-prompt. No requiere cron: se procesa al
+                      llegar a 50 o con el botón de abajo (también al recibir mensajes).
+                    </p>
+                    {(() => {
+                      const st = learningQuery.data;
+                      const target = st?.target ?? 50;
+                      const inq = st?.inquiryCount ?? selected.learning_inquiry_count ?? 0;
+                      const sales = st?.saleCount ?? selected.learning_sale_count ?? 0;
+                      const lastJob = st?.jobs?.[0];
+                      const canProcess =
+                        lastJob &&
+                        (lastJob.status === "pending" || lastJob.status === "failed");
+                      return (
+                        <>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded border bg-background/60 px-2 py-1.5">
+                              <p className="text-[10px] text-muted-foreground">Consultas</p>
+                              <p className="font-mono font-semibold">
+                                {inq}/{target}
+                              </p>
+                            </div>
+                            <div className="rounded border bg-background/60 px-2 py-1.5">
+                              <p className="text-[10px] text-muted-foreground">Ventas</p>
+                              <p className="font-mono font-semibold">
+                                {sales}/{target}
+                              </p>
+                            </div>
+                          </div>
+                          {lastJob ? (
+                            <p className="text-[11px] text-muted-foreground">
+                              Último job:{" "}
+                              <span className="font-mono text-foreground">
+                                {lastJob.phase} · {lastJob.status}
+                              </span>
+                              {lastJob.error ? (
+                                <span className="block text-amber-600 mt-0.5">{lastJob.error}</span>
+                              ) : null}
+                            </p>
+                          ) : null}
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="w-full"
+                            disabled={processLearningMut.isPending}
+                            onClick={() => processLearningMut.mutate()}
+                          >
+                            {processLearningMut.isPending
+                              ? "Procesando…"
+                              : canProcess
+                                ? "Procesar aprendizaje ahora"
+                                : "Reintentar / drenar jobs"}
+                          </Button>
+                          {st?.hasBackup ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="w-full"
+                              disabled={restoreMut.isPending}
+                              onClick={() => restoreMut.mutate()}
+                            >
+                              {restoreMut.isPending
+                                ? "Restaurando…"
+                                : "Revertir al backup anterior"}
+                            </Button>
+                          ) : null}
+                        </>
+                      );
+                    })()}
+                  </div>
                 </>
               ) : (
                 <div className="space-y-3">
@@ -616,6 +746,10 @@ function CatalogProductsPage() {
                       onChange={(e) => setForm({ ...form, ai_observation: e.target.value })}
                       placeholder="Cómo debe atender la IA este producto…"
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      Se aplica solo tras 50 chats/ventas aprendidos (con backup). Al guardar
+                      manualmente también se guarda versión previa.
+                    </p>
                   </div>
 
                   <div className="rounded-md border p-3 space-y-3">

@@ -952,7 +952,7 @@ async function handleRequest(message: any): Promise<any> {
       }
       const maxChats = Number(message.payload?.maxChats ?? 200);
       const messagesPerChat = Number(message.payload?.messagesPerChat ?? 200);
-      const pauseMs = Number(message.payload?.pauseMs ?? 600);
+      const pauseMs = Number(message.payload?.pauseMs ?? 900);
       return await startHistoryImport({
         maxChats,
         messagesPerChat,

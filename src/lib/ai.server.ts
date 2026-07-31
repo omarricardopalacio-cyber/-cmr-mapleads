@@ -1772,6 +1772,7 @@ async function queueOutgoingMedia(
       media: { url: finalUrl, mimeType, mime_type: mimeType, type: kind },
       wa_message_id: `pending-${cmdId}`,
       sent_at: new Date().toISOString(),
+      source: "ai",
     });
   }
   const { error } = await (supabaseAdmin as any).from("engine_commands").insert({
@@ -1779,7 +1780,7 @@ async function queueOutgoingMedia(
     org_id: ctx.orgId,
     session_id: ctx.sessionId,
     type: "SEND_MEDIA",
-    payload,
+    payload: { ...payload, source: "ai" },
     status: "pending",
   });
   if (error) {
@@ -1829,6 +1830,17 @@ export async function executeToolCall(
     try {
       const { assignComproTag } = await import("@/lib/purchase-tag.server");
       await assignComproTag({ orgId, contactId });
+    } catch {
+      /* no bloquear pedido */
+    }
+    try {
+      const { maybeQualifyProductLearning } = await import("@/lib/product-learning.server");
+      await maybeQualifyProductLearning({
+        orgId,
+        threadId,
+        contactId,
+        preferSale: true,
+      });
     } catch {
       /* no bloquear pedido */
     }
@@ -2764,13 +2776,14 @@ async function queueOutgoingText(ctx: ToolExecCtx, text: string) {
       text,
       wa_message_id: `pending-${cmdId}`,
       sent_at: new Date().toISOString(),
+      source: "ai",
     });
     await (supabaseAdmin as any).from("engine_commands").insert({
       id: cmdId,
       org_id: ctx.orgId,
       session_id: ctx.sessionId,
       type: "SEND_MESSAGE",
-      payload: { chatId: ctx.chatId, text },
+      payload: { chatId: ctx.chatId, text, source: "ai" },
       status: "pending",
     });
   } catch (err) {
@@ -5074,7 +5087,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
         org_id: orgId,
         session_id: sessionId,
         type: "SEND_MESSAGE",
-        payload: { chatId, text: message },
+        payload: { chatId, text: message, source: "ai" },
         status: "pending",
       });
     }
