@@ -565,63 +565,54 @@ function ThreadPage() {
             <p className="text-muted-foreground text-sm">Cargando mensajes...</p>
           )}
 
-          {/* NIVEL 2: Panel de Diagnóstico cuando no hay mensajes */}
+          {/* Chat vacío: casi siempre no hay filas en messages (no es un fallo de UI) */}
           {!isLoading && !clientLoading && mergedMessages.length === 0 && (
-            <div className="bg-slate-950 border-2 border-red-500 p-6 rounded-xl max-w-2xl mx-auto my-8 space-y-4 text-white shadow-lg">
-              <div className="flex items-center gap-2 text-red-400 font-bold text-lg">
-                <span className="text-2xl">🔴</span>
-                <span>Panel de Diagnóstico Técnico</span>
+            <div className="bg-slate-950 border border-amber-500/60 p-6 rounded-xl max-w-2xl mx-auto my-8 space-y-4 text-white shadow-lg">
+              <div className="flex items-center gap-2 text-amber-300 font-bold text-lg">
+                <span>Sin mensajes en este chat</span>
               </div>
-              <div className="space-y-2 text-sm font-mono">
-                <div className="flex justify-between border-b border-slate-700 pb-1">
-                  <span className="text-slate-400">Estado del chat:</span>
-                  <span className="text-red-400 font-semibold">Sin mensajes visibles</span>
+              <p className="text-sm text-slate-300 leading-relaxed">
+                En la base de datos hay <span className="text-amber-200 font-semibold">0 mensajes</span> para este hilo.
+                Si el chat aparece “activo” en la lista pero vacío aquí, los mensajes no se llegaron a guardar
+                (p. ej. tras un fallo de ingest). La reparación de huérfanos solo corrige{" "}
+                <span className="text-slate-100">org_id</span>; no recupera mensajes perdidos.
+              </p>
+              <p className="text-sm text-slate-300 leading-relaxed">
+                Para recuperar el historial: en la extensión de WhatsApp usa{" "}
+                <span className="text-emerald-300 font-semibold">Importar historial</span> con el teléfono en línea.
+                Los mensajes nuevos deberían volver a entrar solos tras el último deploy.
+              </p>
+              <div className="space-y-2 text-xs font-mono text-slate-400">
+                <div className="flex justify-between border-b border-slate-800 pb-1">
+                  <span>Org</span>
+                  <span className="text-emerald-400">{userOrgId ?? "—"}</span>
                 </div>
-                <div className="flex justify-between border-b border-slate-700 pb-1">
-                  <span className="text-slate-400">🏢 Org ID:</span>
-                  <span className="text-emerald-400">{userOrgId ?? "Desconocido"}</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-700 pb-1">
-                  <span className="text-slate-400">💬 Thread ID:</span>
+                <div className="flex justify-between border-b border-slate-800 pb-1">
+                  <span>Thread</span>
                   <span className="text-yellow-400">{threadId}</span>
                 </div>
-                <div className="flex justify-between border-b border-slate-700 pb-1">
-                  <span className="text-slate-400">📂 Servidor (Loader):</span>
-                  <span className={data?.messages && (data?.messages ?? []).length > 0 ? "text-emerald-400" : "text-red-400"}>
-                    {(data?.messages ?? []).length} mensajes
-                  </span>
-                </div>
-                <div className="flex justify-between border-b border-slate-700 pb-1">
-                  <span className="text-slate-400">🌐 Navegador (Directo):</span>
-                  <span className={clientMessages.length > 0 ? "text-emerald-400" : "text-red-400"}>
-                    {clientMessages.length} mensajes
+                <div className="flex justify-between border-b border-slate-800 pb-1">
+                  <span>Servidor / navegador</span>
+                  <span className="text-red-400">
+                    {(data?.messages ?? []).length} / {clientMessages.length}
                   </span>
                 </div>
                 {error && (
-                  <div className="flex justify-between border-b border-slate-700 pb-1">
-                    <span className="text-slate-400">❌ Error Servidor:</span>
-                    <span className="text-red-400">{(error as Error).message}</span>
-                  </div>
+                  <div className="text-red-400">Error servidor: {(error as Error).message}</div>
                 )}
                 {clientError && (
-                  <div className="flex justify-between border-b border-slate-700 pb-1">
-                    <span className="text-slate-400">❌ Error Navegador:</span>
-                    <span className="text-red-400">{clientError.message}</span>
-                  </div>
+                  <div className="text-red-400">Error navegador: {clientError.message}</div>
                 )}
               </div>
               <Button
-                variant="destructive"
+                variant="secondary"
                 className="w-full mt-2"
                 onClick={() => syncMut.mutate()}
                 disabled={syncMut.isPending}
               >
                 {syncMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                🛠️ Auto-Reparar Mensajes Huérfanos
+                Reasignar mensajes huérfanos (org_id)
               </Button>
-              <p className="text-[10px] text-slate-500 text-center">
-                Este botón asocia todos los mensajes de este chat a la organización actual.
-              </p>
             </div>
           )}
 

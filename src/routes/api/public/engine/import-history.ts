@@ -12,6 +12,7 @@ import { sanitizeMessageText, isWhatsAppSystemText } from "@/lib/message-text";
 import { applyEntrySegmentToContact } from "@/lib/ad-segments.server";
 import { ensureContactTag } from "@/lib/contact-tag.server";
 import { runIntentWatcher } from "@/lib/intent-watcher.server";
+import { insertMessagesSafe } from "@/lib/message-insert.server";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -368,7 +369,7 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
             }
           }
 
-          const { error: insErr } = await supabaseAdmin.from("messages").insert({
+          const { error: insErr } = await insertMessagesSafe({
             org_id: orgId,
             thread_id: threadId,
             wa_message_id: waMessageId,
@@ -392,10 +393,18 @@ export const Route = createFileRoute("/api/public/engine/import-history")({
           if (direction === "in") inboundTexts.push(text);
         }
 
-        await supabaseAdmin
-          .from("threads")
-          .update({ updated_at: new Date().toISOString() } as any)
-          .eq("id", threadId);
+        if (imported > 0) {
+          const lastAt = toIso(
+            [...msgs].reverse().find((m) => m.sentAt != null)?.sentAt ?? Date.now(),
+          );
+          await supabaseAdmin
+            .from("threads")
+            .update({
+              updated_at: new Date().toISOString(),
+              last_message_at: lastAt,
+            } as any)
+            .eq("id", threadId);
+        }
 
         const classification: Record<string, unknown> = {
           intent_key: null,

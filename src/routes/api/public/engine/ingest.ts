@@ -18,6 +18,10 @@ import { storagePathFromMediaUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createDedupTracker, buildInboundDedupKey, buildAiReplyDedupKey } from './-ingest-dedupe'
 import { ensureFlowRunForContact } from '@/lib/flow-trigger.server'
+import {
+  insertMessagesSafe,
+  resolveOutboundMessageSource,
+} from '@/lib/message-insert.server'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
 
@@ -1537,6 +1541,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
             if (!contactId) continue
 
+            // No tocar last_message_at aquí: solo tras insert exitoso del mensaje.
+            // Si no, la lista muestra chats "activos" con 0 mensajes.
             const { data: thread } = await supabaseAdmin
               .from('threads')
               .upsert(
@@ -1544,7 +1550,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   org_id: session.org_id,
                   session_id: session.id,
                   contact_id: contactId,
-                  last_message_at: e.sentAt ?? new Date().toISOString(),
                   assigned_to_user_id: session.default_agent_id ?? null,
                 },
                 { onConflict: 'session_id,contact_id' },
@@ -2059,9 +2064,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             let messageSource: string | null = null
             if (messageDirectionInsert === 'out') {
               try {
-                const { resolveOutboundMessageSource } = await import(
-                  '@/lib/message-insert.server'
-                )
                 messageSource = await resolveOutboundMessageSource({
                   orgId: session.org_id,
                   sessionId: session.id,
@@ -2073,7 +2075,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
-            const { insertMessagesSafe } = await import('@/lib/message-insert.server')
+            const sentAtIso = e.sentAt ?? new Date().toISOString()
             const { error: msgInsErr } = await insertMessagesSafe({
               org_id: session.org_id,
               thread_id: thread.id,
@@ -2085,7 +2087,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               // nunca se lee para features y ya queda auditado en la tabla `events`.
               raw: null,
               source: messageSource,
-              sent_at: e.sentAt ?? new Date().toISOString(),
+              sent_at: sentAtIso,
             })
             if (msgInsErr) {
               console.error('[ingest] messages.insert failed', msgInsErr.message, {
@@ -2094,6 +2096,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               })
               continue
             }
+
+            await supabaseAdmin
+              .from('threads')
+              .update({ last_message_at: sentAtIso })
+              .eq('id', thread.id)
 
             // Aprendizaje: outbound agent o inbound tras atención humana
             if (
