@@ -1,15 +1,30 @@
 import { useState, useEffect } from "react";
 
 const STORAGE_KEYS = ["backendUrl", "sessionToken"] as const;
+const PRODUCTION_BACKEND = "https://cmrmaleads.netlify.app";
+const LEGACY_BACKENDS = new Set([
+  "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app",
+]);
 
 export default function ConfigPanel() {
-  const [backendUrl, setBackendUrl] = useState("");
+  const [backendUrl, setBackendUrl] = useState(PRODUCTION_BACKEND);
   const [sessionToken, setSessionToken] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     chrome.storage.local.get(STORAGE_KEYS).then((stored) => {
-      if (stored.backendUrl) setBackendUrl(stored.backendUrl);
+      const storedUrl =
+        typeof stored.backendUrl === "string"
+          ? stored.backendUrl.trim().replace(/\/$/, "")
+          : "";
+      const backend =
+        !storedUrl || LEGACY_BACKENDS.has(storedUrl)
+          ? PRODUCTION_BACKEND
+          : storedUrl;
+      setBackendUrl(backend);
+      if (backend !== storedUrl) {
+        void chrome.storage.local.set({ backendUrl: backend });
+      }
       if (typeof stored.sessionToken === "string") setSessionToken(stored.sessionToken);
     });
   }, []);

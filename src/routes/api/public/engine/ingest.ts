@@ -168,9 +168,21 @@ function waIdUserDigits(waId?: string | null): string {
  * Tras el update de etiquetas WA, el resolver a veces devolvía el propio LID
  * (14–15 dígitos) y el CRM creaba un contacto “falso” + otro con el número real.
  */
+/**
+ * WhatsApp LID (identidad interna) suele ser 14–15 dígitos y NO es un celular.
+ * Si lo guardamos como phone aparece como "+11875…" / "Cliente XXXX".
+ */
+function looksLikeLidDigits(d?: string | null): boolean {
+  if (!d) return false
+  // Teléfonos reales con país raramente empiezan por 1 y tienen ≥14 dígitos
+  // sin ser NANP corto; los LID de WA Web sí.
+  return d.length >= 14 && d.startsWith('1')
+}
+
 function sanitizeContactPhone(
   phone: string | null | undefined,
   waId?: string | null,
+  ownNumbers?: Array<string | null | undefined>,
 ): string | null {
   if (phone == null || phone === '') return null
   if (String(phone).includes('@lid')) return null
@@ -181,8 +193,46 @@ function sanitizeContactPhone(
     const lidDigits = waIdUserDigits(waId)
     if (lidDigits && d === lidDigits) return null
   }
+  if (looksLikeLidDigits(d)) return null
+
+  const own = (ownNumbers || []).map(digits).filter(Boolean) as string[]
+  if (own.includes(d)) return null
 
   return d
+}
+
+function sessionOwnDigits(session: {
+  me_wa_id?: string | null
+  phone_number?: string | null
+}): string[] {
+  return [digits(session.me_wa_id), digits(session.phone_number)].filter(Boolean) as string[]
+}
+
+function isOwnIdentity(
+  value: string | null | undefined,
+  own: string[],
+): boolean {
+  const d = digits(value)
+  return Boolean(d && own.includes(d))
+}
+
+/** Elige la mejor ficha cuando hay varias con el mismo teléfono (evita maybeSingle crash). */
+function pickBestContactRow<T extends { id: string; wa_id?: string | null; display_name?: string | null }>(
+  rows: T[] | null | undefined,
+): T | null {
+  if (!rows?.length) return null
+  const scored = [...rows].sort((a, b) => {
+    const score = (r: T) => {
+      let s = 0
+      const wa = String(r.wa_id || '')
+      if (wa.endsWith('@c.us') || (/^\d+$/.test(wa) && !looksLikeLidDigits(wa))) s += 3
+      if (wa.endsWith('@lid')) s -= 2
+      if (isUsefulDisplayName(r.display_name, undefined, r.wa_id)) s += 1
+      return s
+    }
+    return score(b) - score(a)
+  })
+  return scored[0] ?? null
 }
 
 /** Saludos / primera línea de chat → NO son nombre de persona (evita 3 fichas "Hola cómo estás"). */
@@ -243,10 +293,9 @@ function canCreateContactRecord({
   const cleanPhone = sanitizeContactPhone(phone, waId)
   if (cleanPhone) return true
   if (!waId) return false
-  // Solo-LID sin celular: no crear registro vacío (Cliente XXXX / LID:…).
-  // Se crea cuando haya teléfono real o nombre útil; CONTACT_INFO puede fusionar después.
-  if (isLidKey(waId)) {
-    return isUsefulDisplayName(displayName, phone ?? undefined, waId)
+  // Solo-LID / dígitos tipo LID sin celular real: NO crear ficha fantasma.
+  if (isLidKey(waId) || looksLikeLidDigits(digits(waId))) {
+    return false
   }
   if (Boolean(digits(waId))) return true
   return isUsefulDisplayName(displayName, phone ?? undefined, waId)
@@ -763,9 +812,8 @@ async function isExactEchoOfRecentOutbound(
 function isSelfChat(chatId: string | undefined, meWaId: string | null | undefined, phoneNumber?: string | null) {
   const chatDigits = digits(chatId)
   if (!chatDigits) return false
-  const me = digits(meWaId) || digits(phoneNumber)
-  if (me && chatDigits === me) return true
-  return false
+  const own = [digits(meWaId), digits(phoneNumber)].filter(Boolean) as string[]
+  return own.includes(chatDigits)
 }
 
 /**
@@ -1359,15 +1407,50 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             const waId = e.contact?.waId ?? normalizeWaKey(e.chatId)
             if (!waId) continue
 
+            const ownDigits = sessionOwnDigits(session)
+
+            // Nunca procesar el chat consigo mismo como si fuera un cliente.
+            if (
+              isOwnIdentity(waId, ownDigits) ||
+              isOwnIdentity(e.chatId, ownDigits) ||
+              isOwnIdentity(e.contact?.phone, ownDigits)
+            ) {
+              console.warn('[ingest] skip self-identity event', {
+                waId,
+                chatId: e.chatId,
+                phone: e.contact?.phone,
+              })
+              continue
+            }
+
+            // Mismo waMessageId ya guardado en OTRO hilo (LID vs teléfono vs self):
+            // no crear otra ficha ni reenviar flujos.
+            if (e.waMessageId && (e.type === 'message-in' || e.type === 'message-out')) {
+              const { data: priorMsg } = await supabaseAdmin
+                .from('messages')
+                .select('id, thread_id')
+                .eq('org_id', session.org_id)
+                .eq('wa_message_id', e.waMessageId)
+                .maybeSingle()
+              if (priorMsg?.id) {
+                console.log('[ingest] skip cross-thread duplicate waMessageId', {
+                  waMessageId: e.waMessageId,
+                  threadId: priorMsg.thread_id,
+                })
+                continue
+              }
+            }
+
             let contactId: string | null = null
-            let phone = sanitizeContactPhone(e.contact?.phone ?? null, waId)
+            let isNewContact = false
+            let phone = sanitizeContactPhone(e.contact?.phone ?? null, waId, ownDigits)
 
             // Extraer número de teléfono del waId (solo JID normal, NUNCA LID)
             const userPart = waId.split('@')[0];
             const cleanPhone = userPart.replace(/\D/g, '');
 
             if (!phone && cleanPhone && !waId.endsWith('@g.us') && !isLidKey(waId)) {
-              phone = sanitizeContactPhone(cleanPhone, waId);
+              phone = sanitizeContactPhone(cleanPhone, waId, ownDigits);
             }
 
             if (!phone && isLidKey(waId)) {
@@ -1379,7 +1462,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 sentAt: e.sentAt,
               })
               contactId = resolved.contactId
-              phone = sanitizeContactPhone(resolved.phone, waId)
+              phone = sanitizeContactPhone(resolved.phone, waId, ownDigits)
             }
 
             // Si el contacto LID ya existe con phone=LID (dato basura), limpiarlo
@@ -1390,7 +1473,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 .eq('org_id', session.org_id)
                 .eq('wa_id', waId)
                 .maybeSingle()
-              if (dirtyLid?.phone && sanitizeContactPhone(dirtyLid.phone, waId) == null) {
+              if (dirtyLid?.phone && sanitizeContactPhone(dirtyLid.phone, waId, ownDigits) == null) {
                 await supabaseAdmin
                   .from('contacts')
                   .update({ phone: null } as any)
@@ -1400,14 +1483,53 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             }
 
             if (phone) {
-              const { data: byPhone } = await supabaseAdmin
+              // .maybeSingle() rompe si ya hay duplicados → crea una 3ª ficha.
+              const { data: phoneRows } = await supabaseAdmin
                 .from('contacts')
-                .select('id, wa_id, display_name')
+                .select('id, wa_id, display_name, updated_at')
                 .eq('org_id', session.org_id)
                 .eq('phone', phone)
-                .maybeSingle()
+                .order('updated_at', { ascending: false })
+                .limit(10)
+              const byPhone = pickBestContactRow(phoneRows)
               if (byPhone) {
                 contactId = byPhone.id
+
+                // Fusionar fichas huérfanas con el mismo teléfono
+                for (const dup of phoneRows || []) {
+                  if (dup.id === byPhone.id) continue
+                  const { data: dupThreads } = await supabaseAdmin
+                    .from('threads')
+                    .select('id, session_id')
+                    .eq('org_id', session.org_id)
+                    .eq('contact_id', dup.id)
+                  for (const t of dupThreads || []) {
+                    const { data: keepThread } = await supabaseAdmin
+                      .from('threads')
+                      .select('id')
+                      .eq('session_id', t.session_id)
+                      .eq('contact_id', byPhone.id)
+                      .maybeSingle()
+                    if (keepThread?.id) {
+                      await supabaseAdmin
+                        .from('messages')
+                        .update({ thread_id: keepThread.id })
+                        .eq('thread_id', t.id)
+                      await supabaseAdmin.from('threads').delete().eq('id', t.id)
+                    } else {
+                      await supabaseAdmin
+                        .from('threads')
+                        .update({ contact_id: byPhone.id })
+                        .eq('id', t.id)
+                    }
+                  }
+                  await supabaseAdmin.from('contacts').delete().eq('id', dup.id)
+                  console.info('[ingest] fusionado contacto duplicado por phone', {
+                    from: dup.id,
+                    to: byPhone.id,
+                    phone,
+                  })
+                }
                 
                 const currentIsAnonymous = !isUsefulDisplayName(
                   byPhone.display_name,
@@ -1420,11 +1542,19 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   waId,
                 )
 
-                if (byPhone.wa_id !== waId || (currentIsAnonymous && hasNewRealName)) {
+                // Preferir wa_id de teléfono real sobre LID cuando ya tenemos phone
+                const nextWaId =
+                  isLidKey(byPhone.wa_id) && !isLidKey(waId)
+                    ? waId
+                    : isLidKey(waId) && byPhone.wa_id && !isLidKey(byPhone.wa_id)
+                      ? byPhone.wa_id
+                      : waId
+
+                if (byPhone.wa_id !== nextWaId || (currentIsAnonymous && hasNewRealName)) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
-                      wa_id: waId,
+                      wa_id: nextWaId,
                       display_name: hasNewRealName
                         ? e.contact!.displayName
                         : (byPhone.display_name ?? phone),
@@ -1499,6 +1629,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .select('id')
                   .single()
                 contactId = newContact?.id ?? null
+                isNewContact = Boolean(newContact?.id)
               }
             }
 
@@ -1562,31 +1693,35 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               .single()
             if (!thread) continue
 
-            // Auto-enroll in default flow for new contacts on this session
-            if (session.default_flow_id) {
+            // Auto-enroll SOLO en contactos nuevos y SOLO si la IA no está ON
+            // (si la IA está activa ella usa activate_flow; si no, evita ×2).
+            if (session.default_flow_id && isNewContact) {
               try {
-                const { data: firstStep } = await dyn()
-                  .from('flow_steps')
-                  .select('id')
-                  .eq('flow_id', session.default_flow_id)
-                  .is('parent_step_id', null)
-                  .order('step_order', { ascending: true })
-                  .limit(1)
+                const { data: aiOn } = await supabaseAdmin
+                  .from('ai_configs')
+                  .select('enabled')
+                  .eq('org_id', session.org_id)
                   .maybeSingle();
-                if (firstStep) {
-                  await dyn()
-                    .from('flow_runs')
-                    .upsert({
-                      org_id: session.org_id,
-                      flow_id: session.default_flow_id,
-                      contact_id: contactId,
-                      current_step_id: firstStep.id,
-                      status: 'active',
-                      next_execution_at: new Date().toISOString(),
-                      last_interaction_at: new Date().toISOString(),
-                    }, { onConflict: 'flow_id,contact_id' })
-                    .select()
-                    .single();
+                if (aiOn?.enabled === true) {
+                  console.log('[ingest] skip default_flow: IA activa', { contactId });
+                } else {
+                  const { data: firstStep } = await dyn()
+                    .from('flow_steps')
+                    .select('id')
+                    .eq('flow_id', session.default_flow_id)
+                    .is('parent_step_id', null)
+                    .order('step_order', { ascending: true })
+                    .limit(1)
+                    .maybeSingle();
+                  if (firstStep) {
+                    await ensureFlowRunForContact({
+                      orgId: session.org_id,
+                      contactId,
+                      flowId: session.default_flow_id,
+                      firstStepId: firstStep.id,
+                      processNow: true,
+                    });
+                  }
                 }
               } catch (flowErr: any) {
                 console.error('[ingest] default flow enrollment error (non-fatal):', flowErr.message);
@@ -2343,69 +2478,27 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 });
               };
 
-              // Keyword flow enrollment (wrapped to avoid breaking bridge on DB errors)
+              // Keyword / wa_* flows: si la IA está ON, ella activa paquetes con
+              // activate_flow. Disparar también aquí = saludo/media ×2 o ×3.
               try {
-                const focusedProductId = (thread as any)?.focused_product_id
-                  ? String((thread as any).focused_product_id)
-                  : null;
-                const { data: keywordFlows } = await dyn()
-                  .from('flows')
-                  .select('id, trigger_value, max_sends_per_contact, product_id')
+                const { data: aiCfgForFlows } = await supabaseAdmin
+                  .from('ai_configs')
+                  .select('enabled')
                   .eq('org_id', session.org_id)
-                  .eq('trigger_type', 'keyword')
-                  .eq('is_active', true);
-                for (const flow of keywordFlows ?? []) {
-                  const flowPid = (flow as any).product_id
-                    ? String((flow as any).product_id)
+                  .maybeSingle();
+                const aiHandlesFlows = aiCfgForFlows?.enabled === true;
+
+                if (!aiHandlesFlows) {
+                  const focusedProductId = (thread as any)?.focused_product_id
+                    ? String((thread as any).focused_product_id)
                     : null;
-                  // Flujos de producto solo con ese producto en foco; generales solo sin foco
-                  if (flowPid) {
-                    if (focusedProductId !== flowPid) continue;
-                  } else if (focusedProductId) {
-                    continue;
-                  }
-                  const { data: firstStep } = await dyn()
-                    .from('flow_steps')
-                    .select('id')
-                    .eq('flow_id', flow.id)
-                    .is('parent_step_id', null)
-                    .order('step_order', { ascending: true })
-                    .limit(1)
-                    .maybeSingle();
-                  if (!firstStep) continue;
-                  const lowerText = e.text.toLowerCase();
-                  const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
-                  if (triggerVal && lowerText.includes(triggerVal)) {
-                    await ensureFlowRun(flow.id, firstStep.id, (flow as any).max_sends_per_contact);
-                  }
-                }
-
-                const { count: inboundCount } = await dyn()
-                  .from('messages')
-                  .select('id', { count: 'exact', head: true })
-                  .eq('thread_id', thread.id)
-                  .eq('direction', 'in');
-                const { count: outboundCount } = await dyn()
-                  .from('messages')
-                  .select('id', { count: 'exact', head: true })
-                  .eq('thread_id', thread.id)
-                  .eq('direction', 'out');
-
-                const whatsappFlowTypes = [
-                  { type: 'wa_new_message', shouldTrigger: true },
-                  { type: 'wa_first_conversation', shouldTrigger: (inboundCount ?? 0) === 1 && (outboundCount ?? 0) === 0 },
-                  { type: 'wa_customer_reply', shouldTrigger: (outboundCount ?? 0) > 0 },
-                ];
-
-                for (const trigger of whatsappFlowTypes) {
-                  if (!trigger.shouldTrigger) continue;
-                  const { data: flows } = await dyn()
+                  const { data: keywordFlows } = await dyn()
                     .from('flows')
-                    .select('id, max_sends_per_contact, product_id')
+                    .select('id, trigger_value, max_sends_per_contact, product_id')
                     .eq('org_id', session.org_id)
-                    .eq('trigger_type', trigger.type)
+                    .eq('trigger_type', 'keyword')
                     .eq('is_active', true);
-                  for (const flow of flows ?? []) {
+                  for (const flow of keywordFlows ?? []) {
                     const flowPid = (flow as any).product_id
                       ? String((flow as any).product_id)
                       : null;
@@ -2423,8 +2516,63 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       .limit(1)
                       .maybeSingle();
                     if (!firstStep) continue;
-                    await ensureFlowRun(flow.id, firstStep.id, (flow as any).max_sends_per_contact);
+                    const lowerText = e.text.toLowerCase();
+                    const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
+                    if (triggerVal && lowerText.includes(triggerVal)) {
+                      await ensureFlowRun(flow.id, firstStep.id, (flow as any).max_sends_per_contact);
+                    }
                   }
+
+                  const { count: inboundCount } = await dyn()
+                    .from('messages')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('thread_id', thread.id)
+                    .eq('direction', 'in');
+                  const { count: outboundCount } = await dyn()
+                    .from('messages')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('thread_id', thread.id)
+                    .eq('direction', 'out');
+
+                  const whatsappFlowTypes = [
+                    { type: 'wa_new_message', shouldTrigger: true },
+                    { type: 'wa_first_conversation', shouldTrigger: (inboundCount ?? 0) === 1 && (outboundCount ?? 0) === 0 },
+                    { type: 'wa_customer_reply', shouldTrigger: (outboundCount ?? 0) > 0 },
+                  ];
+
+                  for (const trigger of whatsappFlowTypes) {
+                    if (!trigger.shouldTrigger) continue;
+                    const { data: flows } = await dyn()
+                      .from('flows')
+                      .select('id, max_sends_per_contact, product_id')
+                      .eq('org_id', session.org_id)
+                      .eq('trigger_type', trigger.type)
+                      .eq('is_active', true);
+                    for (const flow of flows ?? []) {
+                      const flowPid = (flow as any).product_id
+                        ? String((flow as any).product_id)
+                        : null;
+                      if (flowPid) {
+                        if (focusedProductId !== flowPid) continue;
+                      } else if (focusedProductId) {
+                        continue;
+                      }
+                      const { data: firstStep } = await dyn()
+                        .from('flow_steps')
+                        .select('id')
+                        .eq('flow_id', flow.id)
+                        .is('parent_step_id', null)
+                        .order('step_order', { ascending: true })
+                        .limit(1)
+                        .maybeSingle();
+                      if (!firstStep) continue;
+                      await ensureFlowRun(flow.id, firstStep.id, (flow as any).max_sends_per_contact);
+                    }
+                  }
+                } else {
+                  console.log('[ingest] skip keyword/wa_* flows: IA activa (usa activate_flow)', {
+                    threadId: thread.id,
+                  });
                 }
 
                 // Update last_interaction_at for active/wait_node flow runs

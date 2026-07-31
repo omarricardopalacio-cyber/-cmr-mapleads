@@ -192,20 +192,39 @@ export async function processRun(run: any) {
   try {
     result = await execStep(run, step);
   } catch (err: any) {
+    const msg = String(err?.message || "Error enviando paso");
+    const fatal =
+      /número propio|sin teléfono\/WhatsApp válido/i.test(msg);
+    if (fatal) {
+      await supabaseAdmin
+        .from("flow_runs")
+        .update({
+          status: "paused",
+          error: msg,
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", run.id);
+      console.error("[flow-runner] flujo pausado (destino inválido)", {
+        runId: run.id,
+        stepId: step.id,
+        error: msg,
+      });
+      return;
+    }
     const retryAt = new Date(Date.now() + 30_000).toISOString();
     await supabaseAdmin
       .from("flow_runs")
       .update({
         status: "active",
         next_execution_at: retryAt,
-        error: err?.message || "Error enviando paso; se reintentará",
+        error: `${msg}; se reintentará`,
       })
       .eq("id", run.id);
     console.error("[flow-runner] paso no enviado; reintento programado", {
       runId: run.id,
       stepId: step.id,
       retryAt,
-      error: err?.message || err,
+      error: msg,
     });
     return;
   }
@@ -260,21 +279,9 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
   const contactId = run.contact_id;
 
   // Helpers
-  const getContactWaId = async () => {
-    const { data } = await supabaseAdmin.from("contacts").select("wa_id").eq("id", contactId).single();
-    return data?.wa_id;
-  };
-  
-  const getThreadId = async () => {
-    const { data } = await supabaseAdmin
-      .from("threads")
-      .select("id")
-      .eq("contact_id", contactId)
-      .eq("org_id", orgId)
-      .order("last_message_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return data?.id;
+  const jidDigits = (value: unknown): string => {
+    if (typeof value !== "string") return "";
+    return value.split("@")[0].replace(/\D/g, "");
   };
 
   const getSessionId = async () => {
@@ -306,6 +313,66 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       .limit(1)
       .maybeSingle();
     return anySession?.id ?? null;
+  };
+
+  /** Destinatario real: preferir teléfono @c.us; nunca el número de la sesión. */
+  const getContactWaId = async () => {
+    const { data } = await supabaseAdmin
+      .from("contacts")
+      .select("wa_id, phone")
+      .eq("id", contactId)
+      .single();
+    if (!data) return null;
+
+    const phone = jidDigits(data.phone);
+    const wa = String(data.wa_id || "");
+    const waDigits = jidDigits(wa);
+    const looksLid =
+      wa.endsWith("@lid") || (waDigits.length >= 14 && waDigits.startsWith("1"));
+
+    let chatId: string | null = null;
+    if (phone && !(phone.length >= 14 && phone.startsWith("1"))) {
+      chatId = `${phone}@c.us`;
+    } else if (wa && !looksLid) {
+      chatId = wa.includes("@") ? wa : `${waDigits}@c.us`;
+    } else if (wa.endsWith("@lid")) {
+      chatId = wa;
+    }
+
+    if (!chatId) return null;
+
+    const sessionId = await getSessionId();
+    if (sessionId) {
+      const { data: ownSession } = await supabaseAdmin
+        .from("wa_sessions")
+        .select("me_wa_id, phone_number")
+        .eq("id", sessionId)
+        .maybeSingle();
+      const own = new Set(
+        [ownSession?.me_wa_id, ownSession?.phone_number]
+          .map(jidDigits)
+          .filter(Boolean),
+      );
+      if (own.has(jidDigits(chatId))) {
+        throw new Error(
+          `Destino inválido: el flujo apuntaba al número propio de la sesión (${chatId})`,
+        );
+      }
+    }
+
+    return chatId;
+  };
+
+  const getThreadId = async () => {
+    const { data } = await supabaseAdmin
+      .from("threads")
+      .select("id")
+      .eq("contact_id", contactId)
+      .eq("org_id", orgId)
+      .order("last_message_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data?.id;
   };
 
   const normalizeChatId = (value: unknown): unknown => {
@@ -366,7 +433,10 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "send_text":
     case "send_message": {
       const waId = await getContactWaId();
-      if (waId && sd.text) {
+      if (!waId) {
+        throw new Error("Contacto sin teléfono/WhatsApp válido para enviar mensaje");
+      }
+      if (sd.text) {
         await enqueueCommand("send_message", { chatId: waId, text: sd.text });
       }
       return {};
@@ -377,7 +447,10 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
     case "send_catalog":
     case "send_media": {
       const waId = await getContactWaId();
-      if (waId && sd.media_url) {
+      if (!waId) {
+        throw new Error("Contacto sin teléfono/WhatsApp válido para enviar media");
+      }
+      if (sd.media_url) {
         const mediaUrl = String(sd.media_url);
         const caption = sd.caption;
         const mimeType = sd.mime_type;
