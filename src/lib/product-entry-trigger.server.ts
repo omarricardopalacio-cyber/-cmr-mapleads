@@ -1,6 +1,12 @@
 /**
  * Activador determinista por frase (primer mensaje del chat).
  * Si coincide → enfoca el producto y arranca su flujo inicial (sin búsqueda IA).
+ *
+ * Matching:
+ * - Sin variables → "contiene" (el mensaje incluye la frase; no exige igualdad exacta).
+ * - Con variables → patrón: `{nombre}`, `{{nombre}}` o `*` = cualquier texto.
+ *   Ej: "deseo informacion de {producto}" coincide con
+ *       "hola deseo informacion de AB VERTICAL por favor".
  */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
@@ -13,6 +19,58 @@ export function normalizeTriggerText(raw: string): string {
     .trim();
 }
 
+/** True si la frase usa comodines / variables. */
+export function phraseHasVariables(phrase: string): boolean {
+  return /\{\{?[^{}]+\}?\}|\*/.test(String(phrase || ""));
+}
+
+/**
+ * Convierte frase con variables a RegExp sobre texto ya normalizado.
+ * Literales se escapan; `{x}`, `{{x}}` y `*` → [\s\S]*?
+ */
+export function triggerPhraseToRegExp(normalizedPhrase: string): RegExp | null {
+  const src = String(normalizedPhrase || "");
+  if (!src) return null;
+
+  // Partes: {{var}} | {var} | * | texto literal
+  const parts = src.split(/(\{\{[^{}]+\}\}|\{[^{}]+\}|\*)/g).filter((p) => p.length > 0);
+  let pattern = "";
+  let hasLiteral = false;
+  for (const part of parts) {
+    if (part === "*" || /^\{\{[^{}]+\}\}$/.test(part) || /^\{[^{}]+\}$/.test(part)) {
+      pattern += "[\\s\\S]*?";
+    } else {
+      hasLiteral = true;
+      pattern += part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  // Evitar frases solo-variable (matchearían todo)
+  if (!hasLiteral || pattern.replace(/\[\\s\\S\]\*\?/g, "").trim().length < 3) {
+    return null;
+  }
+  try {
+    return new RegExp(pattern, "i");
+  } catch {
+    return null;
+  }
+}
+
+/** ¿El mensaje activa esta frase? (contiene o patrón con variables). */
+export function messageMatchesEntryTrigger(messageNorm: string, phraseRaw: string): boolean {
+  const phraseNorm = normalizeTriggerText(phraseRaw);
+  if (!messageNorm || phraseNorm.length < 3) return false;
+
+  if (phraseHasVariables(phraseRaw) || phraseHasVariables(phraseNorm)) {
+    // Normalizar variables conservando marcadores (tras NFD/lower siguen {x})
+    const re = triggerPhraseToRegExp(phraseNorm);
+    if (!re) return false;
+    return re.test(messageNorm);
+  }
+
+  // Sin variables: contiene (no igualdad exacta)
+  return messageNorm.includes(phraseNorm);
+}
+
 export type ProductEntryTriggerMatch = {
   productId: string;
   productName: string;
@@ -20,8 +78,8 @@ export type ProductEntryTriggerMatch = {
 };
 
 /**
- * Busca el producto activo cuya frase activadora está contenida en el texto.
- * Si hay varias, gana la frase más larga (más específica).
+ * Busca el producto activo cuya frase activadora coincide con el texto.
+ * Si hay varias, gana la frase más larga / más específica (más literales).
  */
 export async function findProductByEntryTrigger(params: {
   orgId: string;
@@ -55,15 +113,22 @@ export async function findProductByEntryTrigger(params: {
   let best: ProductEntryTriggerMatch | null = null;
   let bestLen = 0;
   for (const p of rows || []) {
-    const phrase = normalizeTriggerText(String(p.entry_trigger_phrase || ""));
+    const rawPhrase = String(p.entry_trigger_phrase || "").trim();
+    const phrase = normalizeTriggerText(rawPhrase);
     if (phrase.length < 3) continue;
-    if (!hay.includes(phrase)) continue;
-    if (phrase.length > bestLen) {
-      bestLen = phrase.length;
+    if (!messageMatchesEntryTrigger(hay, rawPhrase)) continue;
+    // Especificidad: longitud de la parte literal (sin variables)
+    const literalLen = phrase
+      .replace(/\{\{?[^{}]+\}?\}/g, "")
+      .replace(/\*/g, "")
+      .trim().length;
+    const score = literalLen > 0 ? literalLen : phrase.length;
+    if (score > bestLen) {
+      bestLen = score;
       best = {
         productId: String(p.id),
         productName: String(p.name || ""),
-        phrase: String(p.entry_trigger_phrase || "").trim(),
+        phrase: rawPhrase,
       };
     }
   }

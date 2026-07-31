@@ -759,13 +759,20 @@ function CatalogProductsPage() {
                       onChange={(e) =>
                         setForm({ ...form, entry_trigger_phrase: e.target.value })
                       }
-                      placeholder='Ej: deseo informacion de AB VERTICAL'
+                      placeholder="Ej: deseo informacion de {producto}"
                     />
                     <p className="text-[11px] text-muted-foreground">
                       Si el <span className="font-medium text-foreground">primer mensaje</span> del
-                      chat contiene esta frase, se enfoca este producto y se envía su flujo
-                      automáticamente (sin búsqueda IA). Ideal para textos de publicidad. Déjalo
-                      vacío para no usar activador.
+                      chat <span className="font-medium text-foreground">contiene</span> esta frase
+                      (no tiene que ser igual al 100%), se enfoca este producto y se envía su flujo
+                      (sin búsqueda IA). Puedes usar variables:{" "}
+                      <code className="text-[10px]">{"{producto}"}</code>,{" "}
+                      <code className="text-[10px]">{"{{nombre}}"}</code> o{" "}
+                      <code className="text-[10px]">*</code> para lo que cambie. Ej:{" "}
+                      <code className="text-[10px]">
+                        deseo informacion de {"{producto}"}
+                      </code>
+                      . Vacío = sin activador.
                     </p>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
