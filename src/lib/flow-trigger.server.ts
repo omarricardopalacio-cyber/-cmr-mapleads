@@ -454,7 +454,8 @@ export async function startProductEntryFlow(params: {
     });
 
     const instructions = String(flow.ai_instructions || "").trim();
-    if (result.started && instructions) {
+    // Flujo de entrada de producto: la IA usa Observación del producto, no ai_instructions del flujo
+    if (result.started && instructions && !flow.is_product_entry) {
       return {
         ...result,
         flowId: flow.id,

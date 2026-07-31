@@ -188,8 +188,8 @@ export function FlowEditor({
           id: isNew ? undefined : flowId,
           name,
           description,
-          ai_selectable: aiSelectable,
-          ai_instructions: aiInstructions.trim() || null,
+          ai_selectable: lockedProductId ? false : aiSelectable,
+          ai_instructions: lockedProductId ? null : aiInstructions.trim() || null,
           max_sends_per_contact: parsedMax,
           trigger_type: triggerType,
           trigger_value: triggerValue || null,
@@ -458,6 +458,17 @@ export function FlowEditor({
               )}
             </div>
 
+            {lockedProductId ? (
+              <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                <Label className="text-sm">Observación para la IA</Label>
+                <p className="text-xs text-muted-foreground">
+                  En este flujo de producto la IA usa siempre la{" "}
+                  <span className="font-medium text-foreground">Observación para la IA</span> del
+                  producto (campo en Observaciones / prompts), no instrucciones del flujo. Edítala
+                  en la ficha del producto al cerrar este editor.
+                </p>
+              </div>
+            ) : (
             <div className="space-y-3 rounded-md border p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-0.5">
@@ -491,6 +502,7 @@ export function FlowEditor({
                 </div>
               )}
             </div>
+            )}
 
             <div className="space-y-2 rounded-md border p-3">
               <Label htmlFor="max-sends-per-contact" className="text-sm">

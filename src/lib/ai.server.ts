@@ -3189,11 +3189,14 @@ async function presentCrmProductFocusReply(params: {
           `\n\n=== FLUJOS DE ESTE PRODUCTO ===\n` +
           pFlows
             .map((f: any) => {
-              const note = String(f.ai_instructions || f.description || "")
-                .replace(/\s+/g, " ")
-                .trim()
-                .slice(0, 180);
-              return `- ${f.name}${f.is_product_entry ? " [inicial]" : ""}${note ? `: ${note}` : ""} (id: ${f.id})`;
+              // Flujo inicial: la observación vive en el producto, no en ai_instructions
+              const note = f.is_product_entry
+                ? ""
+                : String(f.ai_instructions || f.description || "")
+                    .replace(/\s+/g, " ")
+                    .trim()
+                    .slice(0, 180);
+              return `- ${f.name}${f.is_product_entry ? " [inicial — usa Observación del producto]" : ""}${note ? `: ${note}` : ""} (id: ${f.id})`;
             })
             .join("\n");
       }
@@ -3350,7 +3353,9 @@ export async function runAiAgent({
     try {
       const { data: recentRun } = await (supabaseAdmin as any)
         .from("flow_runs")
-        .select("id, status, updated_at, flow_id, flows(id, name, ai_instructions, description)")
+        .select(
+          "id, status, updated_at, flow_id, flows(id, name, ai_instructions, description, is_product_entry, product_id)",
+        )
         .eq("org_id", orgId)
         .eq("contact_id", contactId)
         .in("status", ["active", "running", "wait_node", "paused", "completed"])
@@ -3362,7 +3367,11 @@ export async function runAiAgent({
         ? recentRun.flows[0]
         : recentRun?.flows;
       activePackageName = String(flowMeta?.name || "").trim();
-      const instructions = String(flowMeta?.ai_instructions || "").trim();
+      // Solo flujo de entrada de producto: prompt = Observación del producto (no ai_instructions)
+      const isProductEntryFlow = !!flowMeta?.is_product_entry;
+      const instructions = isProductEntryFlow
+        ? ""
+        : String(flowMeta?.ai_instructions || "").trim();
       if (activePackageName || instructions) {
         const clipped = instructions
           ? instructions.length > 2500
