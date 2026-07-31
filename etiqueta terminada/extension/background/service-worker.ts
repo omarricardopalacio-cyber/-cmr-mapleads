@@ -843,6 +843,34 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
     console.warn(
       "[MAPLE MULTIMEDIA] Upload audio falló tras reintentos; enviando localOnly (sin base64 en cola)"
     );
+
+    // Respaldo seguro para notas cortas: si caben dentro del límite de la
+    // cola, dejar que /ingest haga el upload/transcripción. No se aplica a
+    // audios grandes para evitar superar la cuota de chrome.storage.
+    if (b64.length <= CONSTANTS.MEDIA_INLINE_MAX_LEN) {
+      console.warn(
+        "[MAPLE MULTIMEDIA] Audio corto: fallback inline hacia ingest",
+        b64.length,
+        "chars",
+      );
+      return {
+        ...event,
+        payload: {
+          ...p,
+          media: {
+            ...media,
+            base64: b64,
+            localRef,
+            storedLocally: true,
+            localOnly: false,
+            missing_media: false,
+            mimeType: mime,
+            mime_type: mime,
+            type: msgType || media.type,
+          },
+        },
+      };
+    }
   }
 
   const localOnlyMedia: Record<string, unknown> = {

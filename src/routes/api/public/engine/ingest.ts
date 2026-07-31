@@ -1456,7 +1456,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             }
 
             // Mismo waMessageId ya guardado en OTRO hilo (LID vs teléfono vs self):
-            // no crear otra ficha ni reenviar flujos.
+            // no crear otra ficha ni reenviar flujos. EXCEPCIÓN: mediaRecovery es
+            // el segundo evento del mismo audio (ya con bytes/URL) y debe llegar
+            // hasta la rama que actualiza/transcribe el mensaje existente.
             if (e.waMessageId && (e.type === 'message-in' || e.type === 'message-out')) {
               const { data: priorMsg } = await supabaseAdmin
                 .from('messages')
@@ -1464,12 +1466,17 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 .eq('org_id', session.org_id)
                 .eq('wa_message_id', e.waMessageId)
                 .maybeSingle()
-              if (priorMsg?.id) {
+              if (priorMsg?.id && !e.mediaRecovery) {
                 console.log('[ingest] skip cross-thread duplicate waMessageId', {
                   waMessageId: e.waMessageId,
                   threadId: priorMsg.thread_id,
                 })
                 continue
+              } else if (priorMsg?.id && e.mediaRecovery) {
+                console.info('[ingest] permitiendo mediaRecovery para mensaje existente', {
+                  waMessageId: e.waMessageId,
+                  threadId: priorMsg.thread_id,
+                })
               }
             }
 
@@ -2035,6 +2042,29 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   })
                   .eq('id', existingMessage.id);
 
+                // Clasificar únicamente la transcripción real. Nunca enviar el
+                // texto sintético de fallback al Vigilante/etiquetas.
+                if (gotNewTranscript && e.text?.trim()) {
+                  try {
+                    const { data: aiCfg } = await supabaseAdmin
+                      .from('ai_configs')
+                      .select('enabled')
+                      .eq('org_id', session.org_id)
+                      .maybeSingle()
+                    const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
+                    void runIntentWatcher({
+                      orgId: session.org_id,
+                      contactId,
+                      threadId: thread.id,
+                      text: e.text.trim(),
+                      trigger: 'message',
+                      skipFlowStart: aiCfg?.enabled === true,
+                    }).catch((err) => {
+                      console.warn('[ingest] watcher audio transcrito:', (err as Error)?.message)
+                    })
+                  } catch (_) { /* no bloquear audio/IA */ }
+                }
+
                 // Audio transcrito (o fallback) tarde: disparar IA
                 if (shouldFireAudioAi) {
                   const sendChatId = e.contact?.phone
@@ -2064,14 +2094,18 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       .is('cancelled_at', null)
                   } catch (_) { /* ignore */ }
 
-                  const { aiDisabled, totalDelaySec } = await maybeAutoReply(
-                    session.org_id,
-                    session.id,
-                    sendChatId,
-                    textForAi,
-                    thread.id,
-                    contactId,
-                  )
+                  // Auto-respuestas/etiquetas solo reciben texto realmente
+                  // transcrito. El fallback queda reservado a la respuesta IA.
+                  const { aiDisabled, totalDelaySec } = gotNewTranscript && e.text?.trim()
+                    ? await maybeAutoReply(
+                        session.org_id,
+                        session.id,
+                        sendChatId,
+                        e.text.trim(),
+                        thread.id,
+                        contactId,
+                      )
+                    : { aiDisabled: false, totalDelaySec: 0 }
                   if (!aiDisabled) {
                     const autoRepliesWereSent = totalDelaySec > 0
                     const aiReplyDedupKey = buildAiReplyDedupKey({
@@ -2134,6 +2168,25 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       ...(enrichedMedia ? { media: enrichedMedia as any } : {}),
                     })
                     .eq('id', existingMessage.id);
+
+                  try {
+                    const { data: aiCfg } = await supabaseAdmin
+                      .from('ai_configs')
+                      .select('enabled')
+                      .eq('org_id', session.org_id)
+                      .maybeSingle()
+                    const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
+                    void runIntentWatcher({
+                      orgId: session.org_id,
+                      contactId,
+                      threadId: thread.id,
+                      text: e.text!.trim(),
+                      trigger: 'message',
+                      skipFlowStart: aiCfg?.enabled === true,
+                    }).catch((err) => {
+                      console.warn('[ingest] watcher audio transcrito:', (err as Error)?.message)
+                    })
+                  } catch (_) { /* no bloquear audio/IA */ }
                 }
 
                 if (shouldFireAudioAi) {
@@ -2155,14 +2208,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   if (audioGuard2.skip) {
                     console.warn('[ingest] skip audio automation', { reason: audioGuard2.reason, threadId: thread.id })
                   } else {
-                  const { aiDisabled, totalDelaySec } = await maybeAutoReply(
-                    session.org_id,
-                    session.id,
-                    sendChatId,
-                    textForAi,
-                    thread.id,
-                    contactId,
-                  )
+                  const { aiDisabled, totalDelaySec } = gotNewTranscript && e.text?.trim()
+                    ? await maybeAutoReply(
+                        session.org_id,
+                        session.id,
+                        sendChatId,
+                        e.text.trim(),
+                        thread.id,
+                        contactId,
+                      )
+                    : { aiDisabled: false, totalDelaySec: 0 }
                   if (!aiDisabled) {
                     const aiReplyDedupKey = buildAiReplyDedupKey({
                       sessionId: session.id,
@@ -2352,7 +2407,8 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
-            const textForAiInsert = (e.text?.trim() || audioAiFallbackText || '').trim()
+            const realInboundText = (e.text?.trim() || '').trim()
+            const textForAiInsert = (realInboundText || audioAiFallbackText || '').trim()
             const inboundDir = (e.direction ?? (e.type === 'message-in' ? 'in' : 'out'))
             if (inboundDir === 'in' && textForAiInsert && !e.historical) {
               // Use phone@c.us when we have a real phone (avoids @lid issues)
@@ -2407,7 +2463,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               // (sin búsqueda IA). La IA queda activa pero NO responde a ESTE mensaje:
               // espera la siguiente consulta del cliente (ej. cantidad de sillas).
               let skipAiAfterProductEntry = false
-              try {
+              if (realInboundText) try {
+                // El fallback de audio ("no pude escucharlo") jamás debe enfocar
+                // un producto. Solo una transcripción real puede activar frase.
                 const { tryProductEntryTriggerOnFirstMessage } = await import(
                   '@/lib/product-entry-trigger.server'
                 )
@@ -2417,7 +2475,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   contactId,
                   sessionId: session.id,
                   chatId: sendChatId || e.chatId || null,
-                  text: textForAiInsert,
+                  text: realInboundText,
                 })
                 if (trig.activated) {
                   skipAiAfterProductEntry = true
@@ -2435,7 +2493,18 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 )
               }
 
-              const { aiDisabled, totalDelaySec } = await maybeAutoReply(session.org_id, session.id, sendChatId, textForAiInsert, thread.id, contactId)
+              // Reglas/etiquetas solo reciben texto real. El fallback sigue
+              // disponible para que la IA pida al cliente escribir el mensaje.
+              const { aiDisabled, totalDelaySec } = realInboundText
+                ? await maybeAutoReply(
+                    session.org_id,
+                    session.id,
+                    sendChatId,
+                    realInboundText,
+                    thread.id,
+                    contactId,
+                  )
+                : { aiDisabled: false, totalDelaySec: 0 }
               if (!aiDisabled && !skipAiAfterProductEntry) {
                 // auto-replies already ran synchronously above, so AI enters right after.
                 // Pass autoRepliesWereSent so the AI uses contextual-entry mode.
@@ -2473,7 +2542,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
               // Vigilante: clasifica/etiqueta, pero NO arranca flujos si la IA está
               // activa (evita doble menú: IA activate_flow + vigilante a la vez).
-              try {
+              if (realInboundText) try {
                 const { data: aiCfg } = await supabaseAdmin
                   .from('ai_configs')
                   .select('enabled')
@@ -2484,13 +2553,13 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   orgId: session.org_id,
                   contactId,
                   threadId: thread.id,
-                  text: e.text || textForAiInsert,
+                  text: realInboundText,
                   trigger: 'message',
                   skipFlowStart: aiCfg?.enabled === true,
                 }).catch((err) => {
                   console.warn('[ingest] watcher:', (err as Error)?.message)
                 })
-              } catch (_) { /* ignore */ }
+              } catch (_) { /* no bloquear ingest por clasificación */ }
 
               // Schedule no-response pending entries for active no_response rules
               try {

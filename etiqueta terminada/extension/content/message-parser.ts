@@ -181,10 +181,18 @@ export async function parseMessageNodeAsync(node: HTMLElement): Promise<any> {
 
   // Intentar obtener la blob URL del DOM como alternativa
   const img = node.querySelector('img[src^="blob:"], img[src^="data:"]') as HTMLImageElement | null;
+  const audio = node.querySelector(
+    'audio[src^="blob:"], audio[src^="data:"], audio source[src^="blob:"], audio source[src^="data:"]',
+  ) as HTMLAudioElement | HTMLSourceElement | null;
   const video = node.querySelector('video[src^="blob:"], video[src^="data:"], video[poster^="blob:"], video[poster^="data:"]') as HTMLVideoElement | null;
   let blobUrl: string | null = null;
   if (hasImage) {
     blobUrl = img?.src || null;
+  } else if (hasAudio) {
+    blobUrl =
+      (audio instanceof HTMLMediaElement ? audio.currentSrc : "") ||
+      audio?.getAttribute("src") ||
+      null;
   } else if (hasVideo) {
     blobUrl = video?.currentSrc || video?.getAttribute("src") || video?.poster || null;
   }

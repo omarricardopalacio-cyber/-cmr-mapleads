@@ -377,7 +377,7 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
   const isAudio = isAudioMessage(msg);
   // Audios entrantes: WhatsApp tarda más en desencriptar la nota de voz
   const waitMs =
-    fromMe && hasMedia ? 3500 : isAudio && !fromMe ? 3500 : fromMe ? 1500 : 800;
+    fromMe && hasMedia ? 3500 : isAudio && !fromMe ? 5000 : fromMe ? 1500 : 800;
   await new Promise((r) => setTimeout(r, waitMs));
 
   if (WPP) {
@@ -670,6 +670,26 @@ async function downloadMessageMedia(
         continue;
       }
 
+      // Builds recientes de WA Web pueden exponer el Blob ya desencriptado
+      // dentro de mediaData/_data aunque clientUrl todavía no exista.
+      if (!base64Data) {
+        const embeddedMedia = [
+          msg.mediaData?.mediaBlob,
+          msg.mediaData?.blob,
+          msg._data?.mediaBlob,
+          msg._data?.blob,
+        ];
+        for (const candidate of embeddedMedia) {
+          if (!candidate) continue;
+          try {
+            base64Data = await resolveToBase64(candidate, msg.mimetype);
+            if (base64Data) break;
+          } catch {
+            /* probar siguiente fuente */
+          }
+        }
+      }
+
       if (!base64Data && typeof msg.downloadMediaCrypted === "function") {
         try {
           const res = await msg.downloadMediaCrypted();
@@ -735,6 +755,17 @@ async function downloadMessageMedia(
     console.warn("[MAPLE MULTIMEDIA] Error descargando media en background:", err);
   }
 
+  if (isAudio) {
+    console.warn("[MAPLE MULTIMEDIA] Audio no recuperado tras reintentos", {
+      messageId: msg.id?._serialized || msg.id,
+      type: msg.type,
+      mimetype: msg.mimetype,
+      hasClientUrl: !!msg.clientUrl,
+      hasMediaData: !!msg.mediaData,
+      hasDownloadMedia: typeof msg.downloadMedia === "function",
+      hasDownloadMediaCrypted: typeof msg.downloadMediaCrypted === "function",
+    });
+  }
   return null;
 }
 
