@@ -171,10 +171,12 @@ function CatalogIntegrationsPage() {
     setSyncingId(id);
     try {
       const r: any = await syncFn({ data: { id } });
+      const pinnedNote =
+        r.skippedPinned > 0 ? ` · ${r.skippedPinned} fijados sin tocar` : "";
       if (r.failed > 0) {
-        toast.warning(`Sincronizado: ${r.synced} productos (${r.failed} fallos)`);
+        toast.warning(`Sincronizado: ${r.synced} productos (${r.failed} fallos)${pinnedNote}`);
       } else {
-        toast.success(`Sincronizado: ${r.synced} productos`);
+        toast.success(`Sincronizado: ${r.synced} productos${pinnedNote}`);
       }
       qc.invalidateQueries({ queryKey: ["catalog-integrations"] });
       qc.invalidateQueries({ queryKey: ["catalog-diag"] });

@@ -289,9 +289,38 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
 
     let synced = 0;
     let failed = 0;
+    let skippedPinned = 0;
     let page = 0;
     const PAGE_SIZE = 200;
     let hasMore = true;
+
+    // Productos fijados en el CRM: no sobrescribir con el catálogo externo
+    const pinnedExternalIds = new Set<string>();
+    try {
+      const { data: pinnedRows, error: pinnedErr } = await (supabaseAdmin as any)
+        .from("products")
+        .select("external_id")
+        .eq("org_id", orgId)
+        .eq("integration_id", data.id)
+        .eq("catalog_pinned", true);
+      if (
+        pinnedErr &&
+        (String(pinnedErr.message || "").includes("catalog_pinned") ||
+          pinnedErr.code === "42703")
+      ) {
+        console.warn(
+          "[SYNC] columna catalog_pinned ausente — ejecuta migración 20260731140000_products_catalog_pinned.sql",
+        );
+      } else if (!pinnedErr && Array.isArray(pinnedRows)) {
+        for (const r of pinnedRows) {
+          if (r?.external_id != null && String(r.external_id).trim()) {
+            pinnedExternalIds.add(String(r.external_id));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[SYNC] no se pudo cargar productos fijados:", (e as Error)?.message);
+    }
 
     // Mapa category_id → nombre (Sincro categories)
     const categoryById = new Map<string, string>();
@@ -357,7 +386,16 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
           );
         }
 
-        const upsertRows = validRows.map((mapped) => ({
+        const toUpsert = validRows.filter((mapped) => {
+          const ext = String(mapped.external_id || "");
+          if (ext && pinnedExternalIds.has(ext)) {
+            skippedPinned += 1;
+            return false;
+          }
+          return true;
+        });
+
+        const upsertRows = toUpsert.map((mapped) => ({
           ...mapped,
           org_id: orgId,
           integration_id: data.id,
@@ -365,7 +403,9 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
         }));
 
         if (upsertRows.length === 0) {
-          console.warn(`[SYNC] página ${page}: ninguna fila válida para upsert, saltando página`);
+          console.warn(
+            `[SYNC] página ${page}: nada que upsert (fijados o inválidos), saltando página`,
+          );
           hasMore = rows.length === PAGE_SIZE;
           page++;
           continue;
@@ -411,7 +451,7 @@ export const syncCatalogIntegration = createServerFn({ method: "POST" })
           .eq("id", data.id),
       ]);
 
-      return { ok: true, synced, failed };
+      return { ok: true, synced, failed, skippedPinned };
     } catch (err: any) {
       const msg = (err as Error).message;
       await Promise.all([

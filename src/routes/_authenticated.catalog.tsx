@@ -25,7 +25,18 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Search, Package, Pencil, Plus, Trash2, Upload, ChevronUp, ChevronDown } from "lucide-react";
+import {
+  Search,
+  Package,
+  Pencil,
+  Plus,
+  Trash2,
+  Upload,
+  ChevronUp,
+  ChevronDown,
+  Pin,
+  PinOff,
+} from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/catalog")({
   component: CatalogProductsPage,
@@ -62,6 +73,7 @@ type CatalogRow = {
   ai_observation?: string | null;
   search_keywords?: string | null;
   entry_trigger_phrase?: string | null;
+  catalog_pinned?: boolean | null;
   chat_ask_text?: string | null;
   gallery_images?: string[] | null;
   chat_flow?: ChatFlowFlags | null;
@@ -258,6 +270,25 @@ function CatalogProductsPage() {
       if (galleryFileRef.current) galleryFileRef.current.value = "";
     }
   }
+
+  const pinMut = useMutation({
+    mutationFn: (pinned: boolean) =>
+      updateFn({
+        data: {
+          productId: selectedId!,
+          catalog_pinned: pinned,
+        },
+      }),
+    onSuccess: (_res, pinned) => {
+      qc.invalidateQueries({ queryKey: ["storeCatalogProducts"] });
+      toast.success(
+        pinned
+          ? "Producto fijado: el sync no reemplazará sus datos"
+          : "Producto desfijado: el sync podrá actualizarlo",
+      );
+    },
+    onError: (e: Error) => toast.error(e.message || "No se pudo fijar"),
+  });
 
   const mut = useMutation({
     mutationFn: () =>
@@ -458,11 +489,17 @@ function CatalogProductsPage() {
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{p.name}</p>
+                        <p className="truncate text-sm font-medium">
+                          {p.catalog_pinned ? (
+                            <Pin className="mr-1 inline h-3 w-3 text-amber-500" aria-hidden />
+                          ) : null}
+                          {p.name}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {formatCop(p.price)}
                           {p.sku ? ` · ${p.sku}` : ""}
                           {p.category ? ` · ${p.category}` : ""}
+                          {p.catalog_pinned ? " · Fijado" : ""}
                         </p>
                       </div>
                     </button>
@@ -493,17 +530,44 @@ function CatalogProductsPage() {
                 <div>
                   <h2 className="text-lg font-semibold leading-snug">{selected.name}</h2>
                   <p className="text-sm text-muted-foreground">{formatCop(selected.price)}</p>
+                  {selected.catalog_pinned ? (
+                    <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                      Fijado: el sync de catálogo no reemplaza este producto.
+                    </p>
+                  ) : null}
                 </div>
-                <Button
-                  type="button"
-                  variant={editing ? "secondary" : "default"}
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => setEditing((v) => !v)}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  {editing ? "Cancelar" : "Editar todo"}
-                </Button>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                  <Button
+                    type="button"
+                    variant={selected.catalog_pinned ? "default" : "outline"}
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={pinMut.isPending || !selectedId}
+                    title={
+                      selected.catalog_pinned
+                        ? "Quitar fijado: el sync podrá actualizar este producto"
+                        : "Fijar: el sync traerá productos nuevos pero no pisa esta ficha"
+                    }
+                    onClick={() => pinMut.mutate(!selected.catalog_pinned)}
+                  >
+                    {selected.catalog_pinned ? (
+                      <PinOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Pin className="h-3.5 w-3.5" />
+                    )}
+                    {selected.catalog_pinned ? "Desfijar" : "Fijar"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={editing ? "secondary" : "default"}
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setEditing((v) => !v)}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    {editing ? "Cancelar" : "Editar todo"}
+                  </Button>
+                </div>
               </div>
 
               {!editing ? (

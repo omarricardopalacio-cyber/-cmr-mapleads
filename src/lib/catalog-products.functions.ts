@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { ensureUserOrg } from "@/lib/org-helpers";
 
 const PRODUCT_COLS =
-  "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, entry_trigger_phrase, chat_ask_text, chat_flow, gallery_images, learning_inquiry_count, learning_sale_count, learning_inquiry_prompt_at, learning_sale_prompt_at, updated_at";
+  "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, entry_trigger_phrase, chat_ask_text, chat_flow, gallery_images, catalog_pinned, learning_inquiry_count, learning_sale_count, learning_inquiry_prompt_at, learning_sale_prompt_at, updated_at";
 
 export const listStoreCatalogProducts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -45,12 +45,13 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
       error?.message?.includes("ai_observation") ||
       error?.message?.includes("search_keywords") ||
       error?.message?.includes("entry_trigger_phrase") ||
+      error?.message?.includes("catalog_pinned") ||
       error?.message?.includes("learning_") ||
       error?.code === "42703"
     ) {
-      // Reintentar sin columnas de aprendizaje si la migración aún no corre
+      // Reintentar sin columnas nuevas si la migración aún no corre
       const midCols =
-        "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, chat_ask_text, chat_flow, gallery_images, updated_at";
+        "id, name, description, price, stock, image_url, video_url, sku, badge, category, is_active, ai_observation, search_keywords, entry_trigger_phrase, chat_ask_text, chat_flow, gallery_images, updated_at";
       let mid = (supabaseAdmin as any)
         .from("products")
         .select(midCols, { count: "exact" })
@@ -67,6 +68,7 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
         rows = (midRes.data || []).map((r: any) => ({
           ...r,
           entry_trigger_phrase: r.entry_trigger_phrase ?? null,
+          catalog_pinned: false,
           learning_inquiry_count: 0,
           learning_sale_count: 0,
           learning_inquiry_prompt_at: null,
@@ -90,6 +92,7 @@ export const listStoreCatalogProducts = createServerFn({ method: "GET" })
           ai_observation: null,
           search_keywords: null,
           entry_trigger_phrase: null,
+          catalog_pinned: false,
           chat_ask_text: null,
           chat_flow: { send_specs: true, send_ask: true },
           gallery_images: [],
@@ -226,6 +229,7 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
           })
           .optional(),
         is_active: z.boolean().optional(),
+        catalog_pinned: z.boolean().optional(),
       })
       .parse(d),
   )
@@ -249,6 +253,7 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
       "gallery_images",
       "chat_flow",
       "is_active",
+      "catalog_pinned",
     ] as const;
     for (const k of keys) {
       if ((data as any)[k] !== undefined) (patch as any)[k] = (data as any)[k];
@@ -283,10 +288,11 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
       error?.message?.includes("chat_ask") ||
       error?.message?.includes("search_keywords") ||
       error?.message?.includes("entry_trigger_phrase") ||
+      error?.message?.includes("catalog_pinned") ||
       error?.code === "42703"
     ) {
       throw new Error(
-        "Faltan columnas de edición. Ejecuta en Supabase las migraciones de productos (chat_flow / search_keywords / entry_trigger_phrase).",
+        "Faltan columnas de edición. Ejecuta en Supabase las migraciones de productos (chat_flow / search_keywords / entry_trigger_phrase / catalog_pinned).",
       );
     }
     if (error) throw new Error(error.message);
