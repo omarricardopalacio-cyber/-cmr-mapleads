@@ -207,24 +207,23 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
             send_description: z.boolean().optional(),
             send_gallery: z.boolean().optional(),
             field_order: z
-              .array(
-                z.enum([
-                  "name",
-                  "badge",
-                  "category",
-                  "price",
-                  "sku",
-                  "stock",
-                  "image",
-                  "video",
-                  "description",
-                  "gallery",
-                ]),
-              )
-              .max(20)
+              .array(z.string().min(1).max(80))
+              .max(40)
               .optional(),
             field_delays: z
               .record(z.string(), z.number().min(0).max(600))
+              .optional(),
+            custom_blocks: z
+              .array(
+                z.object({
+                  id: z.string().min(1).max(40),
+                  type: z.enum(["text", "image"]),
+                  text: z.string().max(4000).optional(),
+                  url: z.string().max(2000).optional(),
+                  enabled: z.boolean().optional(),
+                }),
+              )
+              .max(20)
               .optional(),
           })
           .optional(),

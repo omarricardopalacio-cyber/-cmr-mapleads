@@ -480,3 +480,136 @@ export const createFromTemplate = createServerFn({ method: "POST" })
     
     return { flow };
   });
+
+/**
+ * Busca o crea el flujo inicial (is_product_entry) ligado a un producto.
+ * Usado desde Observaciones para editar pasos con todas las opciones de Flujos Automatizados.
+ */
+export const ensureProductEntryFlow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        productId: z.string().uuid(),
+        productName: z.string().max(200).optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+
+    const { data: product } = await (supabaseAdmin as any)
+      .from("products")
+      .select("id, name")
+      .eq("org_id", orgId)
+      .eq("id", data.productId)
+      .maybeSingle();
+    if (!product) throw new Error("Producto no encontrado");
+
+    const nameHint =
+      String(data.productName || product.name || "Producto").trim().slice(0, 120) || "Producto";
+
+    let { data: flow, error } = await supabaseAdmin
+      .from("flows")
+      .select("id, name, is_active, is_product_entry, product_id, description")
+      .eq("org_id", orgId)
+      .eq("product_id", data.productId)
+      .eq("is_product_entry", true)
+      .maybeSingle();
+
+    if (error && (String(error.message || "").includes("product_id") || error.code === "42703")) {
+      throw new Error(
+        "Falta migración de flujos por producto (product_id / is_product_entry).",
+      );
+    }
+    if (error) throw new Error(error.message);
+
+    if (!flow) {
+      const { data: linked } = await supabaseAdmin
+        .from("flows")
+        .select("id, name, is_active, is_product_entry, product_id, description")
+        .eq("org_id", orgId)
+        .eq("product_id", data.productId)
+        .eq("is_active", true)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (linked) {
+        const { data: promoted, error: pe } = await supabaseAdmin
+          .from("flows")
+          .update({
+            is_product_entry: true,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", linked.id)
+          .eq("org_id", orgId)
+          .select("id, name, is_active, is_product_entry, product_id, description")
+          .single();
+        if (pe) throw new Error(pe.message);
+        flow = promoted;
+      }
+    }
+
+    if (!flow) {
+      const { data: created, error: ce } = await supabaseAdmin
+        .from("flows")
+        .insert({
+          org_id: orgId,
+          name: `Entrada: ${nameHint}`,
+          description:
+            "Flujo especializado al entrar a este producto (mensajes, etiquetas, media, esperas, IA…). Se arranca junto con la ficha.",
+          trigger_type: "manual",
+          trigger_value: null,
+          is_active: true,
+          ai_selectable: false,
+          product_id: data.productId,
+          is_product_entry: true,
+        } as any)
+        .select("id, name, is_active, is_product_entry, product_id, description")
+        .single();
+      if (ce) throw new Error(ce.message);
+      flow = created;
+    }
+
+    const { count } = await supabaseAdmin
+      .from("flow_steps")
+      .select("id", { count: "exact", head: true })
+      .eq("flow_id", flow!.id);
+
+    return {
+      flow: {
+        ...flow,
+        steps_count: count ?? 0,
+      },
+    };
+  });
+
+/** Info del flujo de entrada de un producto (sin crear). */
+export const getProductEntryFlow = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ productId: z.string().uuid() }).parse(d))
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const { data: flow, error } = await supabaseAdmin
+      .from("flows")
+      .select("id, name, is_active, is_product_entry, product_id")
+      .eq("org_id", orgId)
+      .eq("product_id", data.productId)
+      .eq("is_product_entry", true)
+      .maybeSingle();
+
+    if (error && (String(error.message || "").includes("product_id") || error.code === "42703")) {
+      return { flow: null };
+    }
+    if (error) throw new Error(error.message);
+    if (!flow) return { flow: null };
+
+    const { count } = await supabaseAdmin
+      .from("flow_steps")
+      .select("id", { count: "exact", head: true })
+      .eq("flow_id", flow.id);
+
+    return { flow: { ...flow, steps_count: count ?? 0 } };
+  });

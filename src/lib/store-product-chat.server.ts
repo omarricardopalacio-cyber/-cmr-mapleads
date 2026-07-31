@@ -3,7 +3,10 @@ import {
   isFlowFieldEnabled,
   normalizeFlowFieldDelays,
   normalizeFlowFieldOrder,
+  normalizeCustomBlocks,
   getFlowFieldDelay,
+  isCustomOrderItem,
+  customIdFromOrderItem,
   type FlowFieldId,
 } from "@/lib/product-chat-flow";
 
@@ -77,13 +80,40 @@ function textForField(product: any, id: FlowFieldId): string | null {
 /** Mensajes individuales del flujo (textos + media real, sin URLs en texto). */
 function buildFlowMessages(product: any): FlowOutMessage[] {
   const flow = (product.chat_flow as Record<string, unknown>) || {};
-  const order = normalizeFlowFieldOrder(flow.field_order);
+  const customBlocks = normalizeCustomBlocks(flow.custom_blocks);
+  const order = normalizeFlowFieldOrder(flow.field_order, customBlocks);
   const delays = normalizeFlowFieldDelays(flow.field_delays);
   const out: FlowOutMessage[] = [];
 
   for (const id of order) {
     if (!isFlowFieldEnabled(flow, id)) continue;
     const delayAfterSec = getFlowFieldDelay(delays, id);
+
+    if (isCustomOrderItem(id)) {
+      const block = customBlocks.find((b) => b.id === customIdFromOrderItem(id));
+      if (!block) continue;
+      if (block.type === "image") {
+        const url = String(block.url || "").trim();
+        if (!url) continue;
+        const caption = String(block.text || "").trim() || null;
+        out.push({
+          text: caption,
+          media: { url, type: "image", mimeType: "image/jpeg" },
+          kind: `custom_image_${block.id}`,
+          delayAfterSec,
+        });
+      } else {
+        const text = String(block.text || "").trim();
+        if (!text) continue;
+        out.push({
+          text,
+          media: null,
+          kind: `custom_text_${block.id}`,
+          delayAfterSec,
+        });
+      }
+      continue;
+    }
 
     if (id === "image") {
       const url = product.image_url ? String(product.image_url).trim() : "";
@@ -117,7 +147,6 @@ function buildFlowMessages(product: any): FlowOutMessage[] {
           text: null,
           media: { url, type: "image", mimeType: "image/jpeg" },
           kind: `product_gallery_${i}`,
-          // Entre fotos de galería y después de la última usa el mismo delay del campo
           delayAfterSec: isLast || gallery.length === 1 ? delayAfterSec : delayAfterSec,
         });
       });

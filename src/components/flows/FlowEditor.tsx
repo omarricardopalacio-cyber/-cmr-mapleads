@@ -25,7 +25,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () => void }) {
+export function FlowEditor({
+  flowId,
+  onClose,
+  lockedProductId,
+  lockedProductName,
+}: {
+  flowId: string;
+  onClose: () => void;
+  /** Si se pasa, el flujo queda ligado a este producto como flujo de entrada. */
+  lockedProductId?: string;
+  lockedProductName?: string;
+}) {
   const qc = useQueryClient();
   const getFlowFn = useServerFn(getFlow);
   const upsertFlowFn = useServerFn(upsertFlow);
@@ -115,10 +126,20 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
   const [maxSendsPerContact, setMaxSendsPerContact] = useState<string>("");
   const [triggerType, setTriggerType] = useState("manual");
   const [triggerValue, setTriggerValue] = useState("");
-  const [productId, setProductId] = useState<string>("");
-  const [isProductEntry, setIsProductEntry] = useState(false);
+  const [productId, setProductId] = useState<string>(lockedProductId || "");
+  const [isProductEntry, setIsProductEntry] = useState(!!lockedProductId);
   const [steps, setSteps] = useState<any[]>([]);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (lockedProductId) {
+      setProductId(lockedProductId);
+      setIsProductEntry(true);
+      if (isNew && lockedProductName) {
+        setName((prev) => prev || `Entrada: ${lockedProductName}`);
+      }
+    }
+  }, [lockedProductId, lockedProductName, isNew]);
 
   // Sync state when data loads
   useEffect(() => {
@@ -135,10 +156,10 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
       );
       setTriggerType(f.trigger_type || "manual");
       setTriggerValue(f.trigger_value || "");
-      setProductId(f.product_id || "");
-      setIsProductEntry(!!f.is_product_entry);
+      setProductId(lockedProductId || f.product_id || "");
+      setIsProductEntry(lockedProductId ? true : !!f.is_product_entry);
     }
-  }, [flowData]);
+  }, [flowData, lockedProductId]);
 
   useEffect(() => {
     if (stepsData && (stepsData as any).steps) {
@@ -172,8 +193,8 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
           max_sends_per_contact: parsedMax,
           trigger_type: triggerType,
           trigger_value: triggerValue || null,
-          product_id: productId || null,
-          is_product_entry: !!productId && isProductEntry,
+          product_id: lockedProductId || productId || null,
+          is_product_entry: !!(lockedProductId || productId) && (lockedProductId ? true : isProductEntry),
         }
       });
       
@@ -200,10 +221,12 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
 
       toast.success("Flujo guardado exitosamente");
       qc.invalidateQueries({ queryKey: ["flows"] });
+      qc.invalidateQueries({ queryKey: ["productEntryFlow"] });
       if (isNew) {
         onClose(); // Volver al listado para refrescar
       } else {
         qc.invalidateQueries({ queryKey: ["flowSteps", savedFlowId] });
+        qc.invalidateQueries({ queryKey: ["flow", savedFlowId] });
       }
     } catch (err: any) {
       toast.error(err.message || "Error al guardar el flujo");
@@ -264,7 +287,7 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)] bg-background rounded-lg border shadow-sm overflow-hidden">
+    <div className={`flex flex-col ${lockedProductId ? "h-full" : "h-[calc(100vh-8rem)]"} bg-background rounded-lg border shadow-sm overflow-hidden`}>
       {/* Header */}
       <header className="flex items-center justify-between p-4 border-b shrink-0 bg-muted/20">
         <div className="flex items-center gap-4">
@@ -363,6 +386,19 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
             </div>
 
             <div className="space-y-3 rounded-md border p-3">
+              {lockedProductId ? (
+                <div className="space-y-1">
+                  <Label className="text-sm">Producto</Label>
+                  <p className="text-sm font-medium">
+                    {lockedProductName || "Producto ligado"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Flujo inicial al entrar a este producto. Aquí puedes usar todas las
+                    opciones: texto, imagen, video, etiqueta CRM, espera, IA, condicionales…
+                  </p>
+                </div>
+              ) : (
+              <>
               <div className="space-y-2">
                 <Label className="text-sm">Producto del catálogo (opcional)</Label>
                 <Input
@@ -417,6 +453,8 @@ export function FlowEditor({ flowId, onClose }: { flowId: string; onClose: () =>
                   </div>
                   <Switch checked={isProductEntry} onCheckedChange={setIsProductEntry} />
                 </div>
+              )}
+              </>
               )}
             </div>
 

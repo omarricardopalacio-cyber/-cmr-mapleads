@@ -17,13 +17,31 @@ import {
   isFlowFieldEnabled,
   normalizeFlowFieldDelays,
   normalizeFlowFieldOrder,
+  normalizeCustomBlocks,
+  isCustomOrderItem,
+  customIdFromOrderItem,
+  toCustomOrderItem,
+  labelForFlowOrderItem,
   type FlowFieldId,
+  type FlowOrderItem,
+  type CustomFlowBlock,
 } from "@/lib/product-chat-flow";
+import {
+  ensureProductEntryFlow,
+  getProductEntryFlow,
+} from "@/lib/flows.functions";
+import { FlowEditor } from "@/components/flows/FlowEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Search,
@@ -36,6 +54,9 @@ import {
   ChevronDown,
   Pin,
   PinOff,
+  Workflow,
+  MessageSquarePlus,
+  ImagePlus,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/catalog")({
@@ -54,8 +75,9 @@ type ChatFlowFlags = {
   send_video?: boolean;
   send_description?: boolean;
   send_gallery?: boolean;
-  field_order?: FlowFieldId[];
+  field_order?: FlowOrderItem[];
   field_delays?: Record<string, number>;
+  custom_blocks?: CustomFlowBlock[];
 };
 
 type CatalogRow = {
@@ -123,8 +145,13 @@ function CatalogProductsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
+  const [entryFlowEditorId, setEntryFlowEditorId] = useState<string | null>(null);
+  const [openingEntryFlow, setOpeningEntryFlow] = useState(false);
   const galleryFileRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const ensureEntryFlowFn = useServerFn(ensureProductEntryFlow);
+  const getEntryFlowFn = useServerFn(getProductEntryFlow);
 
   const [form, setForm] = useState({
     name: "",
@@ -152,8 +179,9 @@ function CatalogProductsPage() {
     send_video: false,
     send_description: false,
     send_gallery: false,
-    field_order: [...DEFAULT_FLOW_FIELD_ORDER] as FlowFieldId[],
+    field_order: [...DEFAULT_FLOW_FIELD_ORDER] as FlowOrderItem[],
     field_delays: {} as Record<string, number>,
+    custom_blocks: [] as CustomFlowBlock[],
     newGalleryUrl: "",
   });
 
@@ -203,6 +231,7 @@ function CatalogProductsPage() {
     setSelectedId(p.id);
     setEditing(false);
     const flow = p.chat_flow || {};
+    const custom_blocks = normalizeCustomBlocks((flow as any).custom_blocks);
     setForm({
       name: p.name || "",
       description: p.description || "",
@@ -229,8 +258,9 @@ function CatalogProductsPage() {
       send_video: flow.send_video === true,
       send_description: flow.send_description === true,
       send_gallery: flow.send_gallery === true,
-      field_order: normalizeFlowFieldOrder(flow.field_order),
+      field_order: normalizeFlowFieldOrder(flow.field_order, custom_blocks),
       field_delays: normalizeFlowFieldDelays(flow.field_delays),
+      custom_blocks,
       newGalleryUrl: "",
     });
   }
@@ -323,6 +353,7 @@ function CatalogProductsPage() {
             send_gallery: form.send_gallery,
             field_order: form.field_order,
             field_delays: form.field_delays,
+            custom_blocks: form.custom_blocks,
           },
         },
       }),
@@ -382,9 +413,20 @@ function CatalogProductsPage() {
     send_video: form.send_video,
     send_description: form.send_description,
     send_gallery: form.send_gallery,
+    custom_blocks: form.custom_blocks,
   };
 
-  function setFlowFieldEnabled(id: FlowFieldId, enabled: boolean) {
+  function setFlowFieldEnabled(id: FlowOrderItem, enabled: boolean) {
+    if (isCustomOrderItem(id)) {
+      const cid = customIdFromOrderItem(id);
+      setForm({
+        ...form,
+        custom_blocks: form.custom_blocks.map((b) =>
+          b.id === cid ? { ...b, enabled } : b,
+        ),
+      });
+      return;
+    }
     if (id === "name") return;
     const map: Record<Exclude<FlowFieldId, "name">, keyof typeof form> = {
       badge: "send_badge",
@@ -407,8 +449,79 @@ function CatalogProductsPage() {
     const [item] = next.splice(from, 1);
     if (!item) return;
     next.splice(to, 0, item);
-    setForm({ ...form, field_order: normalizeFlowFieldOrder(next) });
+    setForm({
+      ...form,
+      field_order: normalizeFlowFieldOrder(next, form.custom_blocks),
+    });
   }
+
+  function addCustomBlock(type: "text" | "image") {
+    if (form.custom_blocks.length >= 20) {
+      toast.error("Máximo 20 mensajes personalizados en la ficha");
+      return;
+    }
+    const id = `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const block: CustomFlowBlock = {
+      id,
+      type,
+      text: "",
+      url: "",
+      enabled: true,
+    };
+    const custom_blocks = [...form.custom_blocks, block];
+    const field_order = normalizeFlowFieldOrder(
+      [...form.field_order, toCustomOrderItem(id)],
+      custom_blocks,
+    );
+    setForm({ ...form, custom_blocks, field_order });
+  }
+
+  function updateCustomBlock(blockId: string, patch: Partial<CustomFlowBlock>) {
+    setForm({
+      ...form,
+      custom_blocks: form.custom_blocks.map((b) =>
+        b.id === blockId ? { ...b, ...patch } : b,
+      ),
+    });
+  }
+
+  function removeCustomBlock(blockId: string) {
+    const custom_blocks = form.custom_blocks.filter((b) => b.id !== blockId);
+    const field_order = form.field_order.filter(
+      (item) => !(isCustomOrderItem(item) && customIdFromOrderItem(item) === blockId),
+    );
+    const field_delays = { ...form.field_delays };
+    delete field_delays[toCustomOrderItem(blockId)];
+    setForm({
+      ...form,
+      custom_blocks,
+      field_order: normalizeFlowFieldOrder(field_order, custom_blocks),
+      field_delays,
+    });
+  }
+
+  async function openProductEntryFlowEditor() {
+    if (!selectedId || !selected) return;
+    setOpeningEntryFlow(true);
+    try {
+      const res = (await ensureEntryFlowFn({
+        data: { productId: selectedId, productName: selected.name },
+      })) as { flow?: { id: string } };
+      if (!res?.flow?.id) throw new Error("No se pudo abrir el flujo");
+      setEntryFlowEditorId(res.flow.id);
+      qc.invalidateQueries({ queryKey: ["productEntryFlow", selectedId] });
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo abrir el flujo especializado");
+    } finally {
+      setOpeningEntryFlow(false);
+    }
+  }
+
+  const entryFlowQuery = useQuery({
+    queryKey: ["productEntryFlow", selectedId],
+    queryFn: () => getEntryFlowFn({ data: { productId: selectedId! } }),
+    enabled: !!selectedId,
+  });
 
   function moveGallery(from: number, to: number) {
     if (to < 0 || to >= form.gallery_images.length) return;
@@ -420,10 +533,11 @@ function CatalogProductsPage() {
   }
 
   const orderedPreviewLabels = form.field_order
-    .filter((id) => isFlowFieldEnabled(flowFlags, id))
+    .filter((id) => isFlowFieldEnabled(flowFlags as any, id))
     .map((id) => {
       const d = form.field_delays[id] ?? 0;
-      return d > 0 ? `${FLOW_FIELD_LABELS[id]} (+${d}s)` : FLOW_FIELD_LABELS[id];
+      const label = labelForFlowOrderItem(id, form.custom_blocks);
+      return d > 0 ? `${label} (+${d}s)` : label;
     });
 
   return (
@@ -537,6 +651,18 @@ function CatalogProductsPage() {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={openingEntryFlow || !selectedId}
+                    title="Mensajes, etiquetas CRM, media, esperas, IA…"
+                    onClick={() => void openProductEntryFlowEditor()}
+                  >
+                    <Workflow className="h-3.5 w-3.5" />
+                    {openingEntryFlow ? "…" : "Flujo especial"}
+                  </Button>
                   <Button
                     type="button"
                     variant={selected.catalog_pinned ? "default" : "outline"}
@@ -857,7 +983,8 @@ function CatalogProductsPage() {
                       Activa cada dato y usa ↑↓ para definir el{" "}
                       <span className="font-semibold text-foreground">orden de envío</span>. Cada
                       campo se envía como mensaje aparte; imagen/video/galería van como media (no
-                      como URL de texto).
+                      como URL de texto). Puedes añadir mensajes o fotos sueltas con los botones
+                      de abajo.
                     </p>
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="send-specs">Enviar ficha</Label>
@@ -868,22 +995,29 @@ function CatalogProductsPage() {
                       />
                     </div>
                     {form.send_specs ? (
+                      <>
                       <ul className="space-y-1.5 rounded border bg-muted/20 p-2">
                         <li className="px-1 pb-1 text-[10px] text-muted-foreground">
                           Columna “Espera (s)” = segundos a esperar <span className="font-medium">después</span>{" "}
-                          de ese mensaje antes del siguiente (ej. Nombre 30 → Descripción). Máx. 600.
+                          de ese mensaje antes del siguiente. Máx. 600.
                         </li>
                         {form.field_order.map((id, i) => {
-                          const enabled = isFlowFieldEnabled(flowFlags, id);
+                          const enabled = isFlowFieldEnabled(flowFlags as any, id);
                           const locked = id === "name";
                           const delayVal = form.field_delays[id] ?? 0;
+                          const custom = isCustomOrderItem(id)
+                            ? form.custom_blocks.find(
+                                (b) => b.id === customIdFromOrderItem(id),
+                              )
+                            : null;
                           return (
                             <li
                               key={id}
-                              className={`flex flex-wrap items-center gap-2 rounded border bg-background/60 px-2 py-1.5 ${
+                              className={`space-y-1.5 rounded border bg-background/60 px-2 py-1.5 ${
                                 enabled ? "" : "opacity-55"
                               }`}
                             >
+                              <div className="flex flex-wrap items-center gap-2">
                               <span className="w-5 shrink-0 text-center text-[11px] font-semibold text-muted-foreground">
                                 {i + 1}
                               </span>
@@ -911,7 +1045,7 @@ function CatalogProductsPage() {
                                 htmlFor={`flow-field-${id}`}
                                 className="min-w-0 flex-1 text-sm leading-tight"
                               >
-                                {FLOW_FIELD_LABELS[id]}
+                                {labelForFlowOrderItem(id, form.custom_blocks)}
                               </Label>
                               <div className="flex items-center gap-1">
                                 <Input
@@ -935,16 +1069,84 @@ function CatalogProductsPage() {
                                 />
                                 <span className="text-[10px] text-muted-foreground">s</span>
                               </div>
+                              {custom ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-destructive"
+                                  title="Quitar mensaje"
+                                  onClick={() => removeCustomBlock(custom.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              ) : null}
                               <Switch
                                 id={`flow-field-${id}`}
                                 checked={enabled}
                                 disabled={locked}
                                 onCheckedChange={(v) => setFlowFieldEnabled(id, v)}
                               />
+                              </div>
+                              {custom?.type === "text" ? (
+                                <Textarea
+                                  rows={2}
+                                  className="text-sm"
+                                  placeholder="Escribe el mensaje a enviar…"
+                                  value={custom.text || ""}
+                                  disabled={!enabled}
+                                  onChange={(e) =>
+                                    updateCustomBlock(custom.id, { text: e.target.value })
+                                  }
+                                />
+                              ) : null}
+                              {custom?.type === "image" ? (
+                                <div className="space-y-1">
+                                  <Input
+                                    placeholder="URL de la imagen https://…"
+                                    value={custom.url || ""}
+                                    disabled={!enabled}
+                                    onChange={(e) =>
+                                      updateCustomBlock(custom.id, { url: e.target.value })
+                                    }
+                                  />
+                                  <Input
+                                    placeholder="Pie de foto (opcional)"
+                                    value={custom.text || ""}
+                                    disabled={!enabled}
+                                    onChange={(e) =>
+                                      updateCustomBlock(custom.id, { text: e.target.value })
+                                    }
+                                  />
+                                </div>
+                              ) : null}
                             </li>
                           );
                         })}
                       </ul>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={() => addCustomBlock("text")}
+                        >
+                          <MessageSquarePlus className="h-3.5 w-3.5" />
+                          Mensaje de texto
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={() => addCustomBlock("image")}
+                        >
+                          <ImagePlus className="h-3.5 w-3.5" />
+                          Foto / imagen
+                        </Button>
+                      </div>
+                      </>
                     ) : null}
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="send-ask">Enviar pregunta</Label>
@@ -971,6 +1173,43 @@ function CatalogProductsPage() {
                       </span>
                       {form.send_ask ? ` → “${askPreview}”` : ""}
                     </div>
+                  </div>
+
+                  <div className="rounded-md border border-primary/20 bg-primary/5 p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold flex items-center gap-1.5">
+                          <Workflow className="h-4 w-4" />
+                          Flujo especializado (como Flujos Automatizados)
+                        </p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          Etiquetas CRM, esperas, texto/imagen/video/documento, activar IA,
+                          transferir a humano, condicionales, etc. Se ejecuta al entrar a este
+                          producto (frase activadora o presentación).
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {(entryFlowQuery.data as any)?.flow
+                        ? `Flujo: ${(entryFlowQuery.data as any).flow.name} · ${
+                            (entryFlowQuery.data as any).flow.steps_count ?? 0
+                          } paso(s)`
+                        : "Aún no hay flujo de entrada para este producto (se crea al abrir el editor)."}
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={openingEntryFlow || !selectedId}
+                      onClick={() => void openProductEntryFlowEditor()}
+                    >
+                      <Workflow className="h-3.5 w-3.5" />
+                      {openingEntryFlow
+                        ? "Abriendo…"
+                        : (entryFlowQuery.data as any)?.flow
+                          ? "Editar flujo especializado"
+                          : "Crear / editar flujo especializado"}
+                    </Button>
                   </div>
 
                   <div className="space-y-2 rounded-md border p-3">
@@ -1125,6 +1364,37 @@ function CatalogProductsPage() {
           )}
         </div>
       </div>
+
+      <Dialog
+        open={!!entryFlowEditorId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEntryFlowEditorId(null);
+            if (selectedId) {
+              qc.invalidateQueries({ queryKey: ["productEntryFlow", selectedId] });
+            }
+          }
+        }}
+      >
+        <DialogContent className="flex h-[92vh] max-h-[92vh] w-[96vw] max-w-6xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Flujo especializado del producto</DialogTitle>
+          </DialogHeader>
+          {entryFlowEditorId && selected ? (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <FlowEditor
+                flowId={entryFlowEditorId}
+                lockedProductId={selected.id}
+                lockedProductName={selected.name}
+                onClose={() => {
+                  setEntryFlowEditorId(null);
+                  qc.invalidateQueries({ queryKey: ["productEntryFlow", selected.id] });
+                }}
+              />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
