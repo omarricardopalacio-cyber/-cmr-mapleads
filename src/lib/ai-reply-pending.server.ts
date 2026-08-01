@@ -156,6 +156,37 @@ export async function scheduleDebouncedAiReply(params: {
   const respondAfter = isoIn(debounceMs() + extraMs);
   const now = new Date().toISOString();
 
+  // En Serverless (Netlify), si no hay flujos en ejecución, ni comandos pendientes, ni retardo de auto-respuestas,
+  // ejecutamos la IA de forma inmediata y síncrona para garantizar la respuesta instantánea en 1-2s.
+  let isBusy = false;
+  if (waitForFlow !== false && contactId) {
+    isBusy = await contactHasExecutingFlow(contactId);
+  }
+  const hasPendingCmds = await hasPendingEngineCommandsForChat(sessionId, chatId);
+  const shouldExecuteImmediately = !isBusy && !hasPendingCmds && extraMs === 0;
+
+  if (shouldExecuteImmediately) {
+    const runner = await ensureRunner();
+    if (runner) {
+      console.info("[ai-reply-pending] ejecución inmediata (sin flujos ni retardo en serverless)", {
+        threadId,
+        contactId,
+      });
+      await runner({
+        orgId,
+        sessionId,
+        chatId,
+        contactId,
+        threadId,
+        text,
+        delayAfterAutoReplies,
+        autoRepliesWereSent,
+        aiReplyDedupeKey,
+      });
+      return;
+    }
+  }
+
   const { data: existing } = await dyn()
     .from("ai_reply_pending")
     .select("id, generation, auto_replies_were_sent")
