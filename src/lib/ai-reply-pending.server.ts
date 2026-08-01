@@ -29,13 +29,13 @@ export function attachAiReplyRunner(fn: AiReplyRunner) {
 }
 
 function debounceMs() {
-  const n = Number(process.env.AI_REPLY_DEBOUNCE_MS || 5000);
-  return Number.isFinite(n) && n >= 1000 ? n : 5000;
+  const n = Number(process.env.AI_REPLY_DEBOUNCE_MS || 0);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
 function flowWaitMs() {
-  const n = Number(process.env.AI_REPLY_FLOW_WAIT_MS || 5000);
-  return Number.isFinite(n) && n >= 1000 ? n : 5000;
+  const n = Number(process.env.AI_REPLY_FLOW_WAIT_MS || 0);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
 }
 
 function isoIn(ms: number) {
@@ -158,14 +158,8 @@ export async function scheduleDebouncedAiReply(params: {
   const respondAfter = isoIn(debounceMs() + extraMs);
   const now = new Date().toISOString();
 
-  // En Serverless (Netlify), si no hay flujos en ejecución, ni comandos pendientes, ni retardo de auto-respuestas,
-  // ejecutamos la IA de forma inmediata y síncrona para garantizar la respuesta instantánea en 1-2s.
-  let isBusy = false;
-  if (waitForFlow !== false && contactId) {
-    isBusy = await contactHasExecutingFlow(contactId);
-  }
-  const hasPendingCmds = await hasPendingEngineCommandsForChat(sessionId, chatId);
-  const shouldExecuteImmediately = !isBusy && !hasPendingCmds && extraMs === 0;
+  // Ejecutar IA inmediatamente siempre que no haya retardo de auto-respuestas.
+  const shouldExecuteImmediately = extraMs === 0;
 
   if (shouldExecuteImmediately) {
     const runner = await ensureRunner();
@@ -444,36 +438,9 @@ export async function processDueAiReplies(opts?: {
         continue;
       }
 
-      if (row.wait_for_flow !== false) {
-        const busy = await contactHasExecutingFlow(row.contact_id);
-        const hasPendingCommands = await hasPendingEngineCommandsForChat(row.session_id, row.chat_id);
-        if (busy || hasPendingCommands) {
-          const nextAt = isoIn(flowWaitMs());
-          await dyn()
-            .from("ai_reply_pending")
-            .update({
-              respond_after: nextAt,
-              processing_at: null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", row.id);
-          console.info("[ai-reply-pending] flujo o comandos aún ejecutando/pendientes; reprograma", {
-            threadId: row.thread_id,
-            busy,
-            hasPendingCommands,
-            nextAt,
-          });
-          deferred++;
-          continue;
-        }
-      }
-
-      // Historial completo: agrupar ráfaga de mensajes partidos del cliente
       let text = String(row.latest_text || "").trim();
-      try {
-        const burst = await collectBurstInboundText(row.thread_id);
-        if (burst) text = burst;
-        else {
+      if (!text) {
+        try {
           const { data: lastIn } = await dyn()
             .from("messages")
             .select("text")
@@ -485,9 +452,9 @@ export async function processDueAiReplies(opts?: {
           if (lastIn?.text && String(lastIn.text).trim()) {
             text = String(lastIn.text).trim();
           }
+        } catch (_) {
+          /* keep latest_text */
         }
-      } catch (_) {
-        /* keep latest_text */
       }
 
       await runner({
