@@ -6,6 +6,7 @@
  * - Al terminar el flujo (o quedar en wait_node) se libera la cola.
  */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { normalizeOutboundChatId } from "@/lib/utils";
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
 
@@ -113,11 +114,12 @@ export async function hasPendingEngineCommandsForChat(
 
     if (error || !commands) return false;
 
-    const target = chatId.trim().toLowerCase();
+    const target = normalizeOutboundChatId(chatId) || chatId.trim().toLowerCase();
     for (const cmd of commands) {
       const p = (cmd.payload as any) || {};
-      const c1 = String(p.chatId || p.chat_id || "").trim().toLowerCase();
-      if (c1 === target || c1.replace("@c.us", "") === target.replace("@c.us", "")) {
+      const payloadChat = String(p.chatId ?? p.chat_id ?? "").trim();
+      const normalizedPayloadChat = normalizeOutboundChatId(payloadChat) || payloadChat.toLowerCase();
+      if (normalizedPayloadChat === target) {
         return true;
       }
     }

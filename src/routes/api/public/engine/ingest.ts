@@ -19,6 +19,7 @@ import {
   insertMessagesSafe,
   resolveOutboundMessageSource,
 } from '@/lib/message-insert.server'
+import { normalizeOutboundChatId } from '@/lib/utils'
 import {
   scheduleDebouncedAiReply,
   processDueAiReplies,
@@ -570,9 +571,10 @@ async function maybeAutoReply(
           await new Promise((r) => setTimeout(r, waitTime * 1000));
         }
 
+        const normalizedChatId = normalizeOutboundChatId(chatId) || chatId;
         if (step.media_url) {
           console.log('[auto-reply] enqueuing send_media command', {
-            chatId,
+            chatId: normalizedChatId,
             mediaUrl: step.media_url,
             mimeType: step.mime_type,
             caption: step.text_content,
@@ -582,16 +584,16 @@ async function maybeAutoReply(
             org_id: orgId,
             session_id: sessionId,
             type: 'send_media',
-            payload: { chatId, mediaUrl: step.media_url, mimeType: step.mime_type, caption: step.text_content },
+            payload: { chatId: normalizedChatId, mediaUrl: step.media_url, mimeType: step.mime_type, caption: step.text_content },
             status: 'pending',
           });
         } else if (step.text_content) {
-          console.log('[auto-reply] enqueuing send_message command', { chatId, text: step.text_content, stepId: step.id });
+          console.log('[auto-reply] enqueuing send_message command', { chatId: normalizedChatId, text: step.text_content, stepId: step.id });
           await supabaseAdmin.from('engine_commands').insert({
             org_id: orgId,
             session_id: sessionId,
             type: 'send_message',
-            payload: { chatId, text: step.text_content },
+            payload: { chatId: normalizedChatId, text: step.text_content },
             status: 'pending',
           });
         } else {
@@ -679,8 +681,9 @@ async function resolvePhoneForLidMessage(args: {
     const targetTs = sentAt ? new Date(sentAt).getTime() : Date.now()
     for (const cmd of commands ?? []) {
       const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-      if (String(payload.text ?? '').trim() !== text.trim()) continue
-      const chatId = String(payload.chatId ?? '')
+      const commandText = String(payload.text ?? payload.caption ?? '').trim()
+      if (commandText !== text.trim()) continue
+      const chatId = String(payload.chatId ?? payload.chat_id ?? '')
       const phone = digits(chatId)
       if (!phone) continue
       const createdTs = new Date(cmd.created_at).getTime()
@@ -705,7 +708,7 @@ async function resolvePhoneForLidMessage(args: {
       const createdTs = new Date(cmd.created_at).getTime()
       if (now - createdTs > 1000 * 60 * 5) continue
       const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-      const phone = digits(String(payload.chatId ?? ''))
+      const phone = digits(String(payload.chatId ?? payload.chat_id ?? ''))
       if (phone) return { contactId: existing?.id ?? null, phone }
     }
   }
@@ -2015,11 +2018,12 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
                 // Audio transcrito (o fallback) tarde: disparar IA
                 if (shouldFireAudioAi) {
-                  const sendChatId = e.contact?.phone
-                    ? `${e.contact.phone}@c.us`
+                  const rawSendChatId = phone
+                    ? `${phone}@c.us`
                     : /^\d+$/.test(waId)
                       ? `${waId}@c.us`
                       : e.chatId
+                  const sendChatId = normalizeOutboundChatId(rawSendChatId) || e.chatId
                   const audioGuard = await shouldSkipAutomation({
                     orgId: session.org_id,
                     sessionId: session.id,
@@ -2078,7 +2082,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       await scheduleAiReplyFromIngest({
                         orgId: session.org_id,
                         sessionId: session.id,
-                        chatId: sendChatId,
+                        chatId: normalizeOutboundChatId(sendChatId) || sendChatId,
                         contactId,
                         threadId: thread.id,
                         text: textForAi,
@@ -2122,11 +2126,12 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
 
                 if (shouldFireAudioAi) {
-                  const sendChatId = e.contact?.phone
-                    ? `${e.contact.phone}@c.us`
+                  const rawSendChatId = phone
+                    ? `${phone}@c.us`
                     : /^\d+$/.test(waId)
                       ? `${waId}@c.us`
                       : e.chatId
+                  const sendChatId = normalizeOutboundChatId(rawSendChatId) || e.chatId
                   const audioGuard2 = await shouldSkipAutomation({
                     orgId: session.org_id,
                     sessionId: session.id,
@@ -2166,7 +2171,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       await scheduleAiReplyFromIngest({
                         orgId: session.org_id,
                         sessionId: session.id,
-                        chatId: sendChatId,
+                        chatId: normalizeOutboundChatId(sendChatId) || sendChatId,
                         contactId,
                         threadId: thread.id,
                         text: textForAi,
@@ -2346,12 +2351,13 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             const textForAiInsert = (realInboundText || audioAiFallbackText || '').trim()
             const inboundDir = (e.direction ?? (e.type === 'message-in' ? 'in' : 'out'))
             if (inboundDir === 'in' && textForAiInsert && !e.historical) {
-              // Use phone@c.us when we have a real phone (avoids @lid issues)
-              const sendChatId = e.contact?.phone
-                ? `${e.contact.phone}@c.us`
+              // Use phone@c.us when we have a real phone (avoids @lid/issues)
+              const rawSendChatId = phone
+                ? `${phone}@c.us`
                 : /^\d+$/.test(waId)
                   ? `${waId}@c.us`
                   : e.chatId
+              const sendChatId = normalizeOutboundChatId(rawSendChatId) || e.chatId
 
               const guard = await shouldSkipAutomation({
                 orgId: session.org_id,
@@ -2915,15 +2921,22 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
               continue
             }
-            // CASO D: no existe — sólo creamos si tenemos al menos phone o nombre útil
-            if (!byWa && !byPhone && (phone || displayName)) {
-              await supabaseAdmin.from('contacts').insert({
-                org_id: session.org_id,
-                wa_id: waId,
-                phone,
-                display_name: displayName ?? phone ?? waId.replace(/@lid$/, ''),
-                profile_picture_url: picUrl,
-              } as any)
+            // CASO D: no existe — sólo creamos si tenemos al menos phone o un nombre útil,
+            // y nunca creamos un contacto LID sin teléfono real.
+            if (!byWa && !byPhone) {
+              const shouldCreateName =
+                !!displayName &&
+                !isLidKey(waId) &&
+                isUsefulDisplayName(displayName, phone ?? undefined, waId);
+              if (phone || shouldCreateName) {
+                await supabaseAdmin.from('contacts').insert({
+                  org_id: session.org_id,
+                  wa_id: waId,
+                  phone,
+                  display_name: shouldCreateName ? displayName : phone ?? undefined,
+                  profile_picture_url: picUrl,
+                } as any)
+              }
             }
           } catch (err) {
             console.warn('[ingest] CONTACT_INFO handler error:', (err as Error)?.message)

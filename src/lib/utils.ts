@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function normalizeOutboundChatId(rawChatId: unknown): string | undefined {
+  const chatId = String(rawChatId || "").trim().toLowerCase();
+  if (!chatId) return undefined;
+  if (chatId.includes("@")) return chatId;
+  const digitsOnly = chatId.replace(/\D/g, "");
+  return digitsOnly ? `${digitsOnly}@c.us` : undefined;
+}
+
 interface ContactLike {
   display_name?: string | null;
   displayName?: string | null;
