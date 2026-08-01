@@ -2252,10 +2252,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               continue
             }
 
-            await supabaseAdmin
+            const { error: threadUpdateErr } = await supabaseAdmin
               .from('threads')
               .update({ last_message_at: sentAtIso })
               .eq('id', thread.id)
+            if (threadUpdateErr) {
+              console.warn('[ingest] failed to update last_message_at', threadUpdateErr.message, {
+                threadId: thread.id,
+                sentAtIso,
+              })
+            }
 
             // Aprendizaje: outbound agent o inbound tras atención humana
             if (

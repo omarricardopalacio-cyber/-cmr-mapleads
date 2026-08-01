@@ -171,6 +171,8 @@ export async function scheduleDebouncedAiReply(params: {
       console.info("[ai-reply-pending] ejecución inmediata (sin flujos ni retardo en serverless)", {
         threadId,
         contactId,
+        sessionId,
+        chatId,
       });
       await runner({
         orgId,
@@ -185,6 +187,12 @@ export async function scheduleDebouncedAiReply(params: {
       });
       return;
     }
+    console.warn("[ai-reply-pending] runner inmediato no disponible; cayendo a programación pendient", {
+      threadId,
+      contactId,
+      sessionId,
+      chatId,
+    });
   }
 
   const { data: existing } = await dyn()
@@ -214,13 +222,17 @@ export async function scheduleDebouncedAiReply(params: {
       })
       .eq("id", existing.id);
     if (error) {
-      console.error("[ai-reply-pending] update failed:", error.message);
+      console.error("[ai-reply-pending] update failed:", error.message, {
+        threadId,
+        existingId: existing.id,
+      });
       return;
     }
     console.info("[ai-reply-pending] reprogramado (debounce)", {
       threadId,
       respondAfter,
       generation: (existing.generation || 1) + 1,
+      existingId: existing.id,
     });
   } else {
     const { error } = await dyn().from("ai_reply_pending").insert({
@@ -349,16 +361,31 @@ export async function processDueAiReplies(opts?: {
 
   if (opts?.threadId) q = q.eq("thread_id", opts.threadId);
 
+  console.info("[ai-reply-pending] buscando respuestas IA pendientes", {
+    threadId: opts?.threadId,
+    limit,
+    now,
+  });
   const { data: due, error } = await q;
   if (error) {
-    console.error("[ai-reply-pending] fetch due failed:", error.message);
+    console.error("[ai-reply-pending] fetch due failed:", error.message, {
+      threadId: opts?.threadId,
+    });
     return { processed, deferred, skipped };
   }
-  if (!due?.length) return { processed, deferred, skipped };
+  if (!due?.length) {
+    console.info("[ai-reply-pending] no hay respuestas IA pendientes debidas", {
+      threadId: opts?.threadId,
+    });
+    return { processed, deferred, skipped };
+  }
 
   const runner = await ensureRunner();
   if (!runner) {
-    console.warn("[ai-reply-pending] sin runner; se reintentará luego");
+    console.warn("[ai-reply-pending] sin runner; se reintentará luego", {
+      threadId: opts?.threadId,
+      pendingCount: due.length,
+    });
     return { processed, deferred, skipped: due.length };
   }
 
@@ -378,6 +405,11 @@ export async function processDueAiReplies(opts?: {
         .maybeSingle();
 
       if (claimErr || !claimed) {
+        console.info("[ai-reply-pending] claim falló; otro proceso se adelantó", {
+          threadId: row.thread_id,
+          pendingId: row.id,
+          generation: row.generation,
+        });
         skipped++;
         continue;
       }
@@ -401,6 +433,11 @@ export async function processDueAiReplies(opts?: {
           .from("ai_reply_pending")
           .update({ processing_at: null })
           .eq("id", row.id);
+        console.info("[ai-reply-pending] respuesta IA reprogramada por responder después", {
+          threadId: row.thread_id,
+          pendingId: row.id,
+          respondAfter: fresh.respond_after,
+        });
         deferred++;
         continue;
       }
