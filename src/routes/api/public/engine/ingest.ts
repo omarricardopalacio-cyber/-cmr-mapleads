@@ -1693,35 +1693,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
-            if (!contactId) {
-              if (
-                isLidKey(waId) &&
-                !phone &&
-                (e.direction === 'in' || e.type === 'message-in') &&
-                (e.text?.trim() || e.waMessageId)
-              ) {
-                // Fallback: LID entrante sin nombre ni teléfono → crear contacto anónimo
-                // temporal para que el mensaje no se pierda. Se fusionará cuando llegue
-                // el evento enriquecido con teléfono/nombre real de la extensión.
-                console.info('[ingest] LID sin nombre — creando contacto anónimo temporal', { waId })
-                const { data: anonContact } = await supabaseAdmin
-                  .from('contacts')
-                  .upsert(
-                    {
-                      org_id: session.org_id,
-                      wa_id: waId,
-                      display_name: null,
-                      phone: null,
-                    },
-                    { onConflict: 'org_id,wa_id' },
-                  )
-                  .select('id')
-                  .single()
-                contactId = anonContact?.id ?? null
-                isNewContact = Boolean(anonContact?.id)
-              }
-            }
-
             if (!contactId) continue
 
             // No tocar last_message_at aquí: solo tras insert exitoso del mensaje.
