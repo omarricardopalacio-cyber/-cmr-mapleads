@@ -333,11 +333,9 @@ function canCreateContactRecord({
   const cleanPhone = sanitizeContactPhone(phone, waId)
   if (cleanPhone) return true
   if (!waId) return false
-  // LID con nombre útil: permitir crear ficha temporal (se fusionará cuando llegue
-  // el evento enriquecido con el teléfono real)
+  // Nunca crear un contacto solo por un LID sin teléfono real.
   if (isLidKey(waId) || looksLikeLidDigits(digits(waId))) {
-    // Solo crear ficha LID si tiene un nombre real (no solo dígitos/LID)
-    return isUsefulDisplayName(displayName, undefined, waId)
+    return false
   }
   if (Boolean(digits(waId))) return true
   return isUsefulDisplayName(displayName, phone ?? undefined, waId)
@@ -1651,31 +1649,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .single()
                 contactId = newContact?.id ?? null
                 isNewContact = Boolean(newContact?.id)
-              } else if (
-                isLidKey(waId) &&
-                !phone &&
-                (e.direction === 'in' || e.type === 'message-in') &&
-                (e.text?.trim() || e.waMessageId)
-              ) {
-                // Fallback: LID entrante sin nombre ni teléfono → crear contacto anónimo
-                // temporal para que el mensaje no se pierda. Se fusionará cuando llegue
-                // el evento enriquecido con teléfono/nombre real de la extensión.
-                console.info('[ingest] LID sin nombre — creando contacto anónimo temporal', { waId })
-                const { data: anonContact } = await supabaseAdmin
-                  .from('contacts')
-                  .upsert(
-                    {
-                      org_id: session.org_id,
-                      wa_id: waId,
-                      display_name: null,
-                      phone: null,
-                    },
-                    { onConflict: 'org_id,wa_id' },
-                  )
-                  .select('id')
-                  .single()
-                contactId = anonContact?.id ?? null
-                isNewContact = Boolean(anonContact?.id)
               }
             }
 
