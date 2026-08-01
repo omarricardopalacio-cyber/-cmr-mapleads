@@ -333,9 +333,11 @@ function canCreateContactRecord({
   const cleanPhone = sanitizeContactPhone(phone, waId)
   if (cleanPhone) return true
   if (!waId) return false
-  // Solo-LID / dígitos tipo LID sin celular real: NO crear ficha fantasma.
+  // LID con nombre útil: permitir crear ficha temporal (se fusionará cuando llegue
+  // el evento enriquecido con el teléfono real)
   if (isLidKey(waId) || looksLikeLidDigits(digits(waId))) {
-    return false
+    // Solo crear ficha LID si tiene un nombre real (no solo dígitos/LID)
+    return isUsefulDisplayName(displayName, undefined, waId)
   }
   if (Boolean(digits(waId))) return true
   return isUsefulDisplayName(displayName, phone ?? undefined, waId)
@@ -666,12 +668,13 @@ async function resolvePhoneForLidMessage(args: {
   // Buscar por LID en observations no aplica; mirar comandos recientes.
 
   if (text?.trim()) {
+    // Buscar en ambas variantes de tipo: 'SEND_MESSAGE' (agente/IA) y 'send_message' (flujos)
     const { data: commands } = await supabaseAdmin
       .from('engine_commands')
       .select('payload, created_at')
       .eq('org_id', orgId)
       .eq('session_id', sessionId)
-      .eq('type', 'send_message')
+      .in('type', ['SEND_MESSAGE', 'send_message', 'send_media'])
       .order('created_at', { ascending: false })
       .limit(20)
 
@@ -695,7 +698,7 @@ async function resolvePhoneForLidMessage(args: {
       .select('payload, created_at')
       .eq('org_id', orgId)
       .eq('session_id', sessionId)
-      .eq('type', 'send_message')
+      .in('type', ['SEND_MESSAGE', 'send_message', 'send_media'])
       .order('created_at', { ascending: false })
       .limit(5)
 
@@ -1648,6 +1651,31 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .single()
                 contactId = newContact?.id ?? null
                 isNewContact = Boolean(newContact?.id)
+              } else if (
+                isLidKey(waId) &&
+                !phone &&
+                (e.direction === 'in' || e.type === 'message-in') &&
+                (e.text?.trim() || e.waMessageId)
+              ) {
+                // Fallback: LID entrante sin nombre ni teléfono → crear contacto anónimo
+                // temporal para que el mensaje no se pierda. Se fusionará cuando llegue
+                // el evento enriquecido con teléfono/nombre real de la extensión.
+                console.info('[ingest] LID sin nombre — creando contacto anónimo temporal', { waId })
+                const { data: anonContact } = await supabaseAdmin
+                  .from('contacts')
+                  .upsert(
+                    {
+                      org_id: session.org_id,
+                      wa_id: waId,
+                      display_name: null,
+                      phone: null,
+                    },
+                    { onConflict: 'org_id,wa_id' },
+                  )
+                  .select('id')
+                  .single()
+                contactId = anonContact?.id ?? null
+                isNewContact = Boolean(anonContact?.id)
               }
             }
 
