@@ -23,6 +23,7 @@ import { Route as AuthenticatedQuickRepliesRouteImport } from './routes/_authent
 import { Route as AuthenticatedPlatformUsersRouteImport } from './routes/_authenticated.platform-users'
 import { Route as AuthenticatedPipelinesRouteImport } from './routes/_authenticated.pipelines'
 import { Route as AuthenticatedOrdersRouteImport } from './routes/_authenticated.orders'
+import { Route as AuthenticatedNotificationSettingsRouteImport } from './routes/_authenticated.notification-settings'
 import { Route as AuthenticatedMapleadsRouteImport } from './routes/_authenticated.mapleads'
 import { Route as AuthenticatedKnowledgeRouteImport } from './routes/_authenticated.knowledge'
 import { Route as AuthenticatedIntentWatcherRouteImport } from './routes/_authenticated.intent-watcher'
@@ -132,6 +133,12 @@ const AuthenticatedOrdersRoute = AuthenticatedOrdersRouteImport.update({
   path: '/orders',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedNotificationSettingsRoute =
+  AuthenticatedNotificationSettingsRouteImport.update({
+    id: '/notification-settings',
+    path: '/notification-settings',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedMapleadsRoute = AuthenticatedMapleadsRouteImport.update({
   id: '/mapleads',
   path: '/mapleads',
@@ -347,6 +354,7 @@ export interface FileRoutesByFullPath {
   '/intent-watcher': typeof AuthenticatedIntentWatcherRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/mapleads': typeof AuthenticatedMapleadsRoute
+  '/notification-settings': typeof AuthenticatedNotificationSettingsRoute
   '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/platform-users': typeof AuthenticatedPlatformUsersRoute
@@ -397,6 +405,7 @@ export interface FileRoutesByTo {
   '/intent-watcher': typeof AuthenticatedIntentWatcherRoute
   '/knowledge': typeof AuthenticatedKnowledgeRoute
   '/mapleads': typeof AuthenticatedMapleadsRoute
+  '/notification-settings': typeof AuthenticatedNotificationSettingsRoute
   '/orders': typeof AuthenticatedOrdersRoute
   '/pipelines': typeof AuthenticatedPipelinesRoute
   '/platform-users': typeof AuthenticatedPlatformUsersRoute
@@ -449,6 +458,7 @@ export interface FileRoutesById {
   '/_authenticated/intent-watcher': typeof AuthenticatedIntentWatcherRoute
   '/_authenticated/knowledge': typeof AuthenticatedKnowledgeRoute
   '/_authenticated/mapleads': typeof AuthenticatedMapleadsRoute
+  '/_authenticated/notification-settings': typeof AuthenticatedNotificationSettingsRoute
   '/_authenticated/orders': typeof AuthenticatedOrdersRoute
   '/_authenticated/pipelines': typeof AuthenticatedPipelinesRoute
   '/_authenticated/platform-users': typeof AuthenticatedPlatformUsersRoute
@@ -502,6 +512,7 @@ export interface FileRouteTypes {
     | '/intent-watcher'
     | '/knowledge'
     | '/mapleads'
+    | '/notification-settings'
     | '/orders'
     | '/pipelines'
     | '/platform-users'
@@ -552,6 +563,7 @@ export interface FileRouteTypes {
     | '/intent-watcher'
     | '/knowledge'
     | '/mapleads'
+    | '/notification-settings'
     | '/orders'
     | '/pipelines'
     | '/platform-users'
@@ -603,6 +615,7 @@ export interface FileRouteTypes {
     | '/_authenticated/intent-watcher'
     | '/_authenticated/knowledge'
     | '/_authenticated/mapleads'
+    | '/_authenticated/notification-settings'
     | '/_authenticated/orders'
     | '/_authenticated/pipelines'
     | '/_authenticated/platform-users'
@@ -763,6 +776,13 @@ declare module '@tanstack/react-router' {
       path: '/orders'
       fullPath: '/orders'
       preLoaderRoute: typeof AuthenticatedOrdersRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/notification-settings': {
+      id: '/_authenticated/notification-settings'
+      path: '/notification-settings'
+      fullPath: '/notification-settings'
+      preLoaderRoute: typeof AuthenticatedNotificationSettingsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/mapleads': {
@@ -1050,6 +1070,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedIntentWatcherRoute: typeof AuthenticatedIntentWatcherRoute
   AuthenticatedKnowledgeRoute: typeof AuthenticatedKnowledgeRoute
   AuthenticatedMapleadsRoute: typeof AuthenticatedMapleadsRoute
+  AuthenticatedNotificationSettingsRoute: typeof AuthenticatedNotificationSettingsRoute
   AuthenticatedOrdersRoute: typeof AuthenticatedOrdersRoute
   AuthenticatedPipelinesRoute: typeof AuthenticatedPipelinesRoute
   AuthenticatedPlatformUsersRoute: typeof AuthenticatedPlatformUsersRoute
@@ -1073,6 +1094,8 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIntentWatcherRoute: AuthenticatedIntentWatcherRoute,
   AuthenticatedKnowledgeRoute: AuthenticatedKnowledgeRoute,
   AuthenticatedMapleadsRoute: AuthenticatedMapleadsRoute,
+  AuthenticatedNotificationSettingsRoute:
+    AuthenticatedNotificationSettingsRoute,
   AuthenticatedOrdersRoute: AuthenticatedOrdersRoute,
   AuthenticatedPipelinesRoute: AuthenticatedPipelinesRoute,
   AuthenticatedPlatformUsersRoute: AuthenticatedPlatformUsersRoute,
