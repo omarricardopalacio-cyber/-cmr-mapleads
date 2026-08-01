@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { waitMs } from "./flow-blocks";
+import { releaseAiReplyPendingForContact } from "./ai-reply-pending.server";
 
 /** ¿Este flujo espera que la IA siga atendiendo (menú, dudas, siguiente paquete)? */
 function flowWantsAiAttendance(flow: any): boolean {
@@ -97,6 +98,12 @@ async function markFlowRunCompleted(
     flowId: run.flow_id,
     skipAiReenable: opts?.skipAiReenable,
   });
+
+  if (run.contact_id) {
+    void releaseAiReplyPendingForContact(run.contact_id).catch((err) => {
+      console.warn("[flow-runner] releaseAiReplyPending failed:", (err as Error)?.message);
+    });
+  }
 }
 
 export async function processDueRuns(limit = 100) {
@@ -136,14 +143,34 @@ export async function processDueRuns(limit = 100) {
   }
 }
 
-export async function processRunUntilWaitOrCompleted(run: any, maxIterations = 50) {
+export type FlowRunEffects = {
+  sentContent: boolean;
+  enabledAi: boolean;
+  deferAiReply: boolean;
+};
+
+export async function processRunUntilWaitOrCompleted(
+  run: any,
+  maxIterations = 50,
+): Promise<FlowRunEffects> {
+  const effects: FlowRunEffects = {
+    sentContent: false,
+    enabledAi: false,
+    deferAiReply: false,
+  };
   let currentRun = run;
   for (let i = 0; i < maxIterations; i++) {
     if (["completed", "paused"].includes(currentRun.status)) {
       break;
     }
 
-    await processRun(currentRun);
+    const stepEffects = await processRun(currentRun);
+    if (stepEffects?.sentContent) effects.sentContent = true;
+    if (stepEffects?.enabledAi) {
+      effects.enabledAi = true;
+      effects.deferAiReply = true;
+    }
+    if (stepEffects?.deferAiReply) effects.deferAiReply = true;
 
     const { data: refreshedRun, error } = await supabaseAdmin
       .from("flow_runs")
@@ -165,12 +192,37 @@ export async function processRunUntilWaitOrCompleted(run: any, maxIterations = 5
 
     currentRun = refreshedRun;
   }
+  return effects;
 }
 
-export async function processRun(run: any) {
+function effectsFromStep(step: any): FlowRunEffects {
+  const type = String(step?.step_type || "");
+  const sd = step?.step_data || {};
+  const sentContent = [
+    "send_text",
+    "send_message",
+    "send_image",
+    "send_video",
+    "send_audio",
+    "send_document",
+    "send_media",
+    "send_product",
+  ].includes(type);
+  const enabledAi =
+    type === "ai_enable" || (type === "toggle_ai" && sd.ai_enabled !== false);
+  return {
+    sentContent,
+    enabledAi,
+    // Activar IA en este turno: habilita el toggle, pero la respuesta LLM espera
+    // el siguiente mensaje del cliente (no el que disparó el flujo).
+    deferAiReply: enabledAi || sentContent,
+  };
+}
+
+export async function processRun(run: any): Promise<FlowRunEffects | undefined> {
   if (!run.current_step_id) {
     await markFlowRunCompleted(run);
-    return;
+    return undefined;
   }
 
   // Marcar como corriendo si no lo estaba (por ejemplo si viene de wait_node o active)
@@ -187,6 +239,8 @@ export async function processRun(run: any) {
   if (!step) {
     throw new Error("Paso actual no encontrado");
   }
+
+  const effects = effectsFromStep(step);
 
   let result: { branch?: string; wait?: number; end?: boolean };
   try {
@@ -209,7 +263,7 @@ export async function processRun(run: any) {
         stepId: step.id,
         error: msg,
       });
-      return;
+      return effects;
     }
     const retryAt = new Date(Date.now() + 30_000).toISOString();
     await supabaseAdmin
@@ -226,7 +280,7 @@ export async function processRun(run: any) {
       retryAt,
       error: msg,
     });
-    return;
+    return effects;
   }
   const skipAiReenable = isAiDisableStep(step);
 
@@ -246,13 +300,21 @@ export async function processRun(run: any) {
         flowId: run.flow_id,
         reason: "flow_wait_node",
       });
+      // Política del flujo encendió IA al llegar a wait: diferir respuesta este turno.
+      effects.enabledAi = true;
+      effects.deferAiReply = true;
+      if (run.contact_id) {
+        void releaseAiReplyPendingForContact(run.contact_id).catch((err) => {
+          console.warn("[flow-runner] releaseAiReplyPending wait_node failed:", (err as Error)?.message);
+        });
+      }
     }
-    return;
+    return effects;
   }
 
   if (result.end) {
     await markFlowRunCompleted(run, { skipAiReenable });
-    return;
+    return effects;
   }
 
   // Calcular siguiente paso
@@ -271,6 +333,7 @@ export async function processRun(run: any) {
     // No hay más pasos
     await markFlowRunCompleted(run, { clearCurrentStep: true, skipAiReenable });
   }
+  return effects;
 }
 
 async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: number; end?: boolean }> {

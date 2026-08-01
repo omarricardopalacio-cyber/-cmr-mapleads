@@ -619,6 +619,24 @@ function ThreadPage() {
           {mergedMessages.map((m) => {
             const displayText = sanitizeMessageText(m.text);
             
+            const isSystemMessage =
+              (m as any).source === "system" ||
+              (m as any).direction === "system" ||
+              displayText?.includes("transferido a un agente") ||
+              displayText?.includes("agente humano") ||
+              displayText?.includes("pausado las respuestas automáticas");
+
+            if (isSystemMessage) {
+              return (
+                <div key={m.id} className="my-3 flex justify-center w-full">
+                  <div className="flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-4 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 shadow-sm">
+                    <span className="flex h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                    <span>{displayText || "Conversación transferida a agente humano"}</span>
+                  </div>
+                </div>
+              );
+            }
+
             // Detectar si es un mensaje de widget de apoyo
             const isSupportWidget = m.text?.startsWith('[SUPPORT_WIDGET:');
             let supportRequestId = '';

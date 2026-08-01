@@ -70,6 +70,7 @@ function AppSidebar() {
   const aiConfig = [
     { title: "Observaciones productos", url: "/catalog", icon: Tags },
     { title: "Base de Conocimiento", url: "/knowledge", icon: BookOpen },
+    { title: "Alertas WhatsApp", url: "/notification-settings", icon: Bell },
     // { title: "Reglas de Transferencia", url: "/transfer-rules", icon: UserCheck },
   ];
 

@@ -3,6 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { convertUrlToBase64 } from "@/lib/media";
 import { processDueRuns } from "@/lib/flow-runner.server";
+import { processDueAiReplies } from "@/lib/ai-reply.server";
+import { processDueAiReplies } from "@/lib/ai-reply.server";
 
 // For broadcast media: try base64 first, fall back to URL-only if too large
 async function resolveMediaForBroadcast(mediaUrl: string): Promise<{ base64?: string; mimeType?: string; mediaUrl?: string }> {
@@ -50,7 +52,7 @@ async function handler({ request }: { request: Request }) {
   }
 
 
-  const result = { scheduled: 0, broadcast: 0 };
+  const result = { scheduled: 0, broadcast: 0, aiReplyPending: { processed: 0, deferred: 0, skipped: 0 } };
   const now = new Date().toISOString();
 
   // 1) Scheduled messages due
@@ -214,6 +216,14 @@ async function handler({ request }: { request: Request }) {
 
   // 3) Flow steps
   await processDueRuns();
+
+  // 4) Respuestas IA pendientes (debounce + post-flujo)
+  try {
+    const aiPending = await processDueAiReplies({ limit: 40 });
+    result.aiReplyPending = aiPending;
+  } catch (err) {
+    console.warn("[dispatch] processDueAiReplies failed:", (err as Error)?.message);
+  }
 
   return json(200, { ok: true, ...result });
 }

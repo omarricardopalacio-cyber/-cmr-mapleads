@@ -208,13 +208,31 @@ function parseKeywords(raw: string | null | undefined): string[] {
   return String(raw || "")
     .split(/\r?\n|,/)
     .map((k) => normalize(k))
-    .filter((k) => k.length >= 2);
+    // Mínimo 3: evita "si"/"la" y coincidencias accidentales en saludos.
+    .filter((k) => k.length >= 3);
+}
+
+function isGreetingOnlyText(text: string): boolean {
+  const n = normalize(text)
+    .replace(/[!?¡¿.,]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^(hola|buenas|buen dia|buenos dias|buenas tardes|buenas noches|hey|hi|hello|saludos)$/.test(
+    n,
+  );
 }
 
 function matchesKeywords(text: string, keywords: string[]): boolean {
   if (!keywords.length) return false;
   const hay = normalize(text);
-  return keywords.some((k) => hay.includes(k));
+  return keywords.some((k) => {
+    // Palabra completa para keywords cortas (≤5); contains para frases largas.
+    if (k.length <= 5) {
+      const re = new RegExp(`(?:^|\\s)${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`);
+      return re.test(hay);
+    }
+    return hay.includes(k);
+  });
 }
 
 async function loadWatcherConfig(orgId: string): Promise<WatcherConfig> {
@@ -533,6 +551,9 @@ export async function runIntentWatcher(params: {
           .sort((a, b) => b.priority - a.priority)[0] ??
         null;
     } else if (text) {
+      // Saludo puro: extraer perfil si aplica, pero NO clasificar intención ni flujo.
+      const greetingOnly = isGreetingOnlyText(text);
+
       // 0) Agendó / confirmó compra → intención compro si existe regla
       if (scheduled) {
         chosen =
@@ -541,17 +562,21 @@ export async function runIntentWatcher(params: {
           null;
       }
 
-      // 1) Keywords primero (barato y determinista)
-      if (!chosen) chosen = pickByKeywords(text, rules);
+      // 1) Keywords primero (barato y determinista) — no en saludos
+      if (!chosen && !greetingOnly) chosen = pickByKeywords(text, rules);
 
       // 2) IA vigilante (Groq propio) si hace falta
       const needsAi =
         !chosen &&
+        !greetingOnly &&
         config.enabled &&
         !!config.grok_api_key &&
         rules.some((r) => r.match_type === "ai" || r.match_type === "both");
 
-      if (needsAi || (config.enabled && config.extract_profile && config.grok_api_key)) {
+      if (
+        (needsAi || (config.enabled && config.extract_profile && config.grok_api_key)) &&
+        !greetingOnly
+      ) {
         const aiRules = rules.filter(
           (r) => r.match_type === "ai" || r.match_type === "both",
         );
@@ -572,6 +597,9 @@ export async function runIntentWatcher(params: {
             console.warn("[watcher] classify:", (err as Error)?.message);
           }
         }
+      } else if (greetingOnly && config.extract_profile) {
+        // Perfil heurístico sin intención/flujo
+        profile = mergeProfile(profile, extractProfileHeuristics(text));
       }
     }
 

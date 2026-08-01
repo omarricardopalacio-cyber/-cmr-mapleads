@@ -125,7 +125,16 @@ export async function ensureFlowRunForContact(params: {
   maxSends?: number | null;
   flowName?: string;
   processNow?: boolean;
-}): Promise<{ started: boolean; message: string; run?: any }> {
+}): Promise<{
+  started: boolean;
+  message: string;
+  run?: any;
+  alreadyActive?: boolean;
+  alreadyRecent?: boolean;
+  deferAiReply?: boolean;
+  sentContent?: boolean;
+  enabledAi?: boolean;
+}> {
   const {
     orgId,
     contactId,
@@ -221,9 +230,14 @@ export async function ensureFlowRunForContact(params: {
     run = data;
   }
 
+  let effects: {
+    sentContent?: boolean;
+    enabledAi?: boolean;
+    deferAiReply?: boolean;
+  } = {};
   if (run && processNow) {
     try {
-      await processRunUntilWaitOrCompleted(run);
+      effects = (await processRunUntilWaitOrCompleted(run)) || {};
     } catch (err: any) {
       console.error("[ensureFlowRunForContact] Error procesando run", err?.message, { flowId, contactId });
     }
@@ -235,6 +249,10 @@ export async function ensureFlowRunForContact(params: {
       ? `El paquete "${flowName}" se está enviando al cliente en orden. NO reenvíes ni describas ese contenido; el sistema ya lo envía. Quédate atento para responder dudas después.`
       : "Flujo iniciado.",
     run,
+    // Si el flujo envió contenido o activó IA, ingest NO debe responder con LLM este turno.
+    deferAiReply: !!(effects.deferAiReply || effects.sentContent || effects.enabledAi),
+    sentContent: !!effects.sentContent,
+    enabledAi: !!effects.enabledAi,
   };
 }
 

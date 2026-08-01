@@ -124,7 +124,9 @@ function extensionFromMime(mime: string, type?: string): string {
 function base64ToBlob(base64OrDataUri: string, mimeType: string): Blob {
   let b64 = base64OrDataUri;
   let mime = mimeType;
-  const dataUriMatch = base64OrDataUri.match(/^data:([^;]+);base64,(.+)$/i);
+  const dataUriMatch = base64OrDataUri.match(
+    /^data:([^;,]+)(?:;[^,]*)?;base64,([\s\S]+)$/i,
+  );
   if (dataUriMatch) {
     mime = dataUriMatch[1] || mime;
     b64 = dataUriMatch[2];

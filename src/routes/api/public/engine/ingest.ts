@@ -4,15 +4,12 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server'
 import {
   sanitizeMessageText,
   isWhatsAppSystemText,
-  stripLeakedToolMarkup,
 } from '@/lib/message-text'
 import {
   enrichMediaForMessage,
   stripHeavyFieldsForDb,
   toLocalOnlyMediaMeta,
 } from '@/lib/engine-media.server'
-import { registerFailedAiRequest, sendSupportMessage } from '@/lib/retry-manager.server'
-import { loadCustomerMemory, extractAndSaveMemory } from '@/lib/ai/customer-memory.server'
 import { transcribeInboundAudio } from '@/lib/ai/transcribe.server'
 import { storagePathFromMediaUrl } from '@/lib/media'
 import { z } from 'zod'
@@ -22,8 +19,51 @@ import {
   insertMessagesSafe,
   resolveOutboundMessageSource,
 } from '@/lib/message-insert.server'
+import {
+  scheduleDebouncedAiReply,
+  processDueAiReplies,
+  hasExistingAiReplyCommand,
+} from '@/lib/ai-reply.server'
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any }
+
+function isGreetingOnly(text: string): boolean {
+  const normalized = String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[!?¡¿.,]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return /^(hola|buenas|buen dia|buenos dias|buenas tardes|buenas noches|hey|hi|hello|saludos)$/.test(normalized)
+}
+
+async function claimInboundAutomation(params: {
+  orgId: string
+  sessionId: string
+  threadId: string
+  eventKey: string
+  waMessageId?: string
+}): Promise<boolean> {
+  const { error } = await (supabaseAdmin as any)
+    .from('inbound_automation_claims')
+    .insert({
+      org_id: params.orgId,
+      session_id: params.sessionId,
+      thread_id: params.threadId,
+      event_key: params.eventKey,
+      wa_message_id: params.waMessageId || null,
+    })
+  if (!error) return true
+  if (error.code === '23505') return false
+  // Compatibilidad durante despliegue antes de aplicar la migración.
+  if (error.code === '42P01' || String(error.message || '').includes('inbound_automation_claims')) {
+    console.warn('[ingest] automation claim table no disponible; usando dedupe local')
+    return true
+  }
+  console.warn('[ingest] automation claim falló; fail-open', error.message)
+  return true
+}
 
 /** Borra el archivo de Storage tras usar el audio (p. ej. Whisper). No falla el ingest. */
 async function deleteCloudMediaFile(media: Record<string, unknown> | null | undefined): Promise<void> {
@@ -440,7 +480,7 @@ async function maybeAutoReply(
   text: string,
   threadId: string,
   contactId: string,
-): Promise<{ aiDisabled: boolean; totalDelaySec: number }> {
+): Promise<{ aiDisabled: boolean; totalDelaySec: number; matched: boolean; deferAiReply: boolean }> {
   const { data: rules } = await supabaseAdmin
     .from('auto_replies')
     .select(
@@ -448,7 +488,7 @@ async function maybeAutoReply(
     )
     .eq('org_id', orgId)
     .eq('is_active', true);
-  if (!rules?.length) return { aiDisabled: false };
+  if (!rules?.length) return { aiDisabled: false, totalDelaySec: 0, matched: false, deferAiReply: false };
 
   const lower = text.toLowerCase();
   for (const raw of rules as unknown[] as AutoReplyRule[]) {
@@ -478,12 +518,20 @@ async function maybeAutoReply(
       hit = (count ?? 0) <= 1;
     } else {
       const v = (raw.match_value || '').toLowerCase().trim();
+      // Valor vacío haría includes('') === true (match universal) → rechazar.
+      if (!v || v.length < 2) continue;
       try {
         const cleanText = lower.trim();
         if (raw.match_type === 'equals') hit = cleanText === v;
         else if (raw.match_type === 'starts') hit = cleanText.startsWith(v);
-        else if (raw.match_type === 'regex') hit = new RegExp(raw.match_value, 'i').test(text);
-        else hit = cleanText.includes(v);
+        else if (raw.match_type === 'regex') {
+          if (!String(raw.match_value || '').trim()) continue;
+          hit = new RegExp(raw.match_value, 'i').test(text);
+        } else {
+          // contains: exigir al menos 3 caracteres para evitar "la"/"si" accidentales
+          if (v.length < 3) continue;
+          hit = cleanText.includes(v);
+        }
       } catch {
         hit = false;
       }
@@ -571,11 +619,14 @@ async function maybeAutoReply(
 
     // AI behavior action
     let aiDisabled = false;
+    let deferAiReply = true; // auto-respuesta ya tomó el turno
     if (raw.action_ai_behavior === 'disable_ai') {
       await supabaseAdmin.from('threads').update({ ai_enabled: false } as unknown as Record<string, never>).eq('id', threadId);
       aiDisabled = true;
     } else if (raw.action_ai_behavior === 'enable_ai') {
+      // Enciende IA para el SIGUIENTE mensaje; no responder en este turno.
       await supabaseAdmin.from('threads').update({ ai_enabled: true } as unknown as Record<string, never>).eq('id', threadId);
+      deferAiReply = true;
     }
 
     await supabaseAdmin
@@ -589,9 +640,9 @@ async function maybeAutoReply(
       contact_id: contactId,
     });
 
-    return { aiDisabled, totalDelaySec };
+    return { aiDisabled, totalDelaySec, matched: true, deferAiReply };
   }
-  return { aiDisabled: false, totalDelaySec: 0 };
+  return { aiDisabled: false, totalDelaySec: 0, matched: false, deferAiReply: false };
 }
 
 async function resolvePhoneForLidMessage(args: {
@@ -694,94 +745,14 @@ async function enrollContactInFlow(contactId: string, orgId: string, sessionId: 
   }
 }
 
-// Ventana amplia: el pitch del flujo + preguntas de cantidad/ciudad no deben
-// empujar fuera del prompt el contexto del producto cuando el cliente cotiza.
-const HISTORY_WINDOW = 30;
-const MAX_MSG_CHARS = 2000;
 const inboundEventDedupe = createDedupTracker(45_000);
 const aiReplyDedupe = createDedupTracker(60_000);
-
-async function loadThreadHistory(orgId: string, threadId: string, userText: string) {
-  const { data: prior } = await supabaseAdmin
-    .from('messages')
-    .select('direction, text, sent_at')
-    .eq('thread_id', threadId)
-    .not('text', 'is', null)
-    .order('sent_at', { ascending: false })
-    .limit(HISTORY_WINDOW)
-
-  const priorMsgs = ((prior ?? []) as any[])
-    .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
-    .reverse()
-    .map((m: any) => ({
-      role: (m.direction === 'out' ? 'assistant' : 'user') as 'assistant' | 'user',
-      content: String(m.text).trim().slice(0, MAX_MSG_CHARS),
-    }))
-
-  const lastPrior = priorMsgs[priorMsgs.length - 1]
-  return lastPrior && lastPrior.role === 'user' && lastPrior.content === userText.trim()
-    ? priorMsgs
-    : [...priorMsgs, { role: 'user' as const, content: userText }]
-}
-
-async function hasRecentPendingReply(sessionId: string, threadId: string, chatId: string, text: string, windowMs: number = 45_000) {
-  if (!sessionId || !threadId || !chatId) return false
-  const since = new Date(Date.now() - windowMs).toISOString()
-  const { data } = await supabaseAdmin
-    .from('engine_commands')
-    .select('id, payload, created_at')
-    .eq('org_id', (await supabaseAdmin.from('threads').select('org_id').eq('id', threadId).maybeSingle()).data?.org_id ?? '')
-    .eq('session_id', sessionId)
-    .eq('type', 'SEND_MESSAGE')
-    .gte('created_at', since)
-    .order('created_at', { ascending: false })
-    .limit(20)
-
-  const targetText = String(text ?? '').trim().toLowerCase()
-  return (data ?? []).some((cmd: any) => {
-    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-    const payloadText = String(payload.text ?? '').trim().toLowerCase()
-    const sameChat = String(payload.chatId ?? '').trim() === String(chatId).trim()
-    const sameText = payloadText && targetText && payloadText.includes(targetText)
-    return sameChat && (sameText || payloadText === targetText)
-  })
-}
 
 function normalizeForReplyDedup(text: string) {
   return String(text ?? '')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ')
-}
-
-async function hasRecentQueuedReply(
-  orgId: string,
-  sessionId: string,
-  chatId: string,
-  text: string,
-  windowMs = 120_000,
-) {
-  if (!orgId || !sessionId || !chatId || !text?.trim()) return false
-  const since = new Date(Date.now() - windowMs).toISOString()
-  const normalizedText = normalizeForReplyDedup(text)
-
-  const { data } = await supabaseAdmin
-    .from('engine_commands')
-    .select('id, type, payload, status, scheduled_for, created_at')
-    .eq('org_id', orgId)
-    .eq('session_id', sessionId)
-    .in('type', ['SEND_MESSAGE', 'send_message'])
-    .in('status', ['pending', 'delivered'])
-    .gte('created_at', since)
-    .order('created_at', { ascending: false })
-    .limit(40)
-
-  return (data ?? []).some((cmd: any) => {
-    const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-    const payloadText = normalizeForReplyDedup(String(payload.text ?? ''))
-    const payloadChat = String(payload.chatId ?? '').trim()
-    return payloadChat === String(chatId).trim() && payloadText === normalizedText
-  })
 }
 
 /** Eco real: solo si el cliente reenvía EXACTO un bloque largo que acabamos de mandar. */
@@ -844,33 +815,57 @@ async function shouldSkipAutomation(opts: {
   return { skip: false }
 }
 
-async function hasExistingAiReplyCommand(
-  orgId: string,
-  sessionId: string,
-  dedupeKey: string,
-) {
-  if (!orgId || !sessionId || !dedupeKey) return false
+/** Programa respuesta IA con debounce (agrupa mensajes partidos) y espera flujo activo. */
+async function scheduleAiReplyFromIngest(params: {
+  orgId: string
+  sessionId: string
+  chatId: string
+  contactId: string
+  threadId: string
+  text: string
+  delayAfterAutoReplies?: number
+  autoRepliesWereSent?: boolean
+  aiReplyDedupeKey?: string
+}) {
+  const {
+    orgId,
+    sessionId,
+    chatId,
+    contactId,
+    threadId,
+    text,
+    delayAfterAutoReplies = 0,
+    autoRepliesWereSent = false,
+    aiReplyDedupeKey,
+  } = params
 
-  const { data, error } = await supabaseAdmin
-    .from('engine_commands')
-    .select('id')
-    .eq('org_id', orgId)
-    .eq('session_id', sessionId)
-    .contains('payload', { dedupeKey })
-    .in('status', ['pending', 'delivered', 'acked'])
-    .limit(1)
-
-  if (error) {
-    console.warn('[ai-reply] failed to query existing AI reply command', {
-      orgId,
-      sessionId,
-      dedupeKey,
-      error,
-    })
-    return false
+  if (aiReplyDedupeKey) {
+    const alreadyQueued = await hasExistingAiReplyCommand(orgId, sessionId, aiReplyDedupeKey)
+    if (alreadyQueued) {
+      console.log('[ingest] skip duplicate AI reply by persisted command', {
+        aiReplyDedupeKey,
+        threadId,
+      })
+      return
+    }
+    if (!aiReplyDedupe.shouldProcess(aiReplyDedupeKey)) {
+      console.log('[ingest] skip duplicate AI reply', { aiReplyDedupeKey, threadId })
+      return
+    }
   }
 
-  return Array.isArray(data) && data.length > 0
+  await scheduleDebouncedAiReply({
+    orgId,
+    sessionId,
+    chatId,
+    contactId,
+    threadId,
+    text,
+    delayAfterAutoReplies,
+    autoRepliesWereSent,
+    aiReplyDedupeKey,
+    waitForFlow: true,
+  })
 }
 
 async function hasDuplicateIncomingMessage(
@@ -969,29 +964,11 @@ async function maybeAiReply(
     .eq('id', threadId)
     .maybeSingle();
 
-  // Si el cliente vuelve a escribir y no hay humano asignado, reactivar IA.
-  // Borrar el chat en WhatsApp NO limpia el CRM: el hilo quedaba ai_enabled=false.
+  // Respetar ai_enabled=false (flujo/humano lo apagó). NO reactivar aquí:
+  // un paso "Activar IA" del mismo turno no debe disparar LLM sobre este mensaje.
   if ((thread as unknown as { ai_enabled?: boolean })?.ai_enabled === false) {
-    const assigned = (thread as unknown as { assigned_to_user_id?: string | null })?.assigned_to_user_id
-    if (assigned) {
-      console.info('[ai-reply] skip: IA off y hay humano asignado', { threadId, assigned })
-      return
-    }
-    try {
-      await supabaseAdmin
-        .from('threads')
-        .update({ ai_enabled: true } as unknown as Record<string, never>)
-        .eq('id', threadId)
-        .eq('org_id', orgId)
-      console.info('[ai-reply] IA reactivada: cliente escribió de nuevo sin asesor asignado', {
-        orgId,
-        threadId,
-        chatId,
-      })
-    } catch (reErr) {
-      console.warn('[ai-reply] no se pudo reactivar IA:', (reErr as Error)?.message)
-      return
-    }
+    console.info('[ai-reply] skip: IA desactivada en el hilo', { threadId })
+    return
   }
 
   // Wait for all auto-reply steps to finish sending before AI enters
@@ -1118,7 +1095,9 @@ async function maybeAiReply(
     // Si la IA activó un PAQUETE (flujo), el propio flujo envía el contenido en
     // orden. No mandamos una respuesta de texto de la IA para no duplicar ni
     // pisar ese contenido; la IA queda igual atendiendo dudas en los siguientes turnos.
-    const activatedFlow = actions?.includes('activate_flow')
+    // activate_flow / present_product ya enviaron contenido: no añadir texto IA.
+    const activatedFlow =
+      actions?.includes('activate_flow') || actions?.includes('present_product')
 
     if (!activatedFlow) {
       if (!finalReply) {
@@ -1728,44 +1707,12 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 },
                 { onConflict: 'session_id,contact_id' },
               )
-              .select('id, focused_product_id')
+              .select('id, focused_product_id, ai_enabled')
               .single()
             if (!thread) continue
 
-            // Auto-enroll SOLO en contactos nuevos y SOLO si la IA no está ON
-            // (si la IA está activa ella usa activate_flow; si no, evita ×2).
-            if (session.default_flow_id && isNewContact) {
-              try {
-                const { data: aiOn } = await supabaseAdmin
-                  .from('ai_configs')
-                  .select('enabled')
-                  .eq('org_id', session.org_id)
-                  .maybeSingle();
-                if (aiOn?.enabled === true) {
-                  console.log('[ingest] skip default_flow: IA activa', { contactId });
-                } else {
-                  const { data: firstStep } = await dyn()
-                    .from('flow_steps')
-                    .select('id')
-                    .eq('flow_id', session.default_flow_id)
-                    .is('parent_step_id', null)
-                    .order('step_order', { ascending: true })
-                    .limit(1)
-                    .maybeSingle();
-                  if (firstStep) {
-                    await ensureFlowRunForContact({
-                      orgId: session.org_id,
-                      contactId,
-                      flowId: session.default_flow_id,
-                      firstStepId: firstStep.id,
-                      processNow: true,
-                    });
-                  }
-                }
-              } catch (flowErr: any) {
-                console.error('[ingest] default flow enrollment error (non-fatal):', flowErr.message);
-              }
-            }
+            // default_flow se decide más abajo con el texto (solo saludo / nuevo contacto)
+            // para no apilar con producto/IA/Vigilante.
             // DIAGNÓSTICO: Loguear estructura completa del media para mensajes entrantes
             if (e.media && (e.direction === 'in' || e.type === 'message-in')) {
               const mediaKeys = Object.keys(e.media as object);
@@ -2127,33 +2074,17 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         threadId: thread.id,
                         transcribed: gotNewTranscript,
                       })
-                      if (process.env.ASYNC_AI_REPLY === 'true') {
-                        maybeAiReply(
-                          session.org_id,
-                          session.id,
-                          sendChatId,
-                          contactId,
-                          thread.id,
-                          textForAi,
-                          totalDelaySec,
-                          autoRepliesWereSent,
-                          aiReplyDedupKey,
-                        ).catch((err) => {
-                          console.error('[ingest] Error en maybeAiReply post-transcripción:', err)
-                        })
-                      } else {
-                        await maybeAiReply(
-                          session.org_id,
-                          session.id,
-                          sendChatId,
-                          contactId,
-                          thread.id,
-                          textForAi,
-                          totalDelaySec,
-                          autoRepliesWereSent,
-                          aiReplyDedupKey,
-                        )
-                      }
+                      await scheduleAiReplyFromIngest({
+                        orgId: session.org_id,
+                        sessionId: session.id,
+                        chatId: sendChatId,
+                        contactId,
+                        threadId: thread.id,
+                        text: textForAi,
+                        delayAfterAutoReplies: totalDelaySec,
+                        autoRepliesWereSent,
+                        aiReplyDedupeKey,
+                      })
                     }
                   }
                   }
@@ -2231,20 +2162,17 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       !(await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey)) &&
                       aiReplyDedupe.shouldProcess(aiReplyDedupKey)
                     ) {
-                      const run = () =>
-                        maybeAiReply(
-                          session.org_id,
-                          session.id,
-                          sendChatId,
-                          contactId,
-                          thread.id,
-                          textForAi,
-                          totalDelaySec,
-                          totalDelaySec > 0,
-                          aiReplyDedupKey,
-                        )
-                      if (process.env.ASYNC_AI_REPLY === 'true') run().catch(console.error)
-                      else await run()
+                      await scheduleAiReplyFromIngest({
+                        orgId: session.org_id,
+                        sessionId: session.id,
+                        chatId: sendChatId,
+                        contactId,
+                        threadId: thread.id,
+                        text: textForAi,
+                        delayAfterAutoReplies: totalDelaySec,
+                        autoRepliesWereSent: totalDelaySec > 0,
+                        aiReplyDedupeKey,
+                      })
                     }
                   }
                   }
@@ -2438,6 +2366,52 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 continue
               }
 
+              // Orquestación única: un solo "dueño" por inbound.
+              // Prioridad: producto en foco > activador producto > auto-respuesta >
+              // flujo genérico > IA. Saludo "hola" → solo bienvenida.
+              const eventKey = buildInboundDedupKey({
+                sessionId: session.id,
+                chatId: sendChatId || e.chatId,
+                waMessageId: e.waMessageId,
+                direction: 'in',
+                text: textForAiInsert,
+                sentAt: e.sentAt,
+                waId,
+              })
+              const claimed = await claimInboundAutomation({
+                orgId: session.org_id,
+                sessionId: session.id,
+                threadId: thread.id,
+                eventKey,
+                waMessageId: e.waMessageId,
+              })
+              if (!claimed) {
+                console.info('[ingest] skip automation: claim perdido (duplicado concurrente)', {
+                  eventKey,
+                  threadId: thread.id,
+                  waMessageId: e.waMessageId,
+                })
+                continue
+              }
+
+              const aiEnabledAtStart = (thread as any)?.ai_enabled !== false
+              let focusedProductId = (thread as any)?.focused_product_id
+                ? String((thread as any).focused_product_id)
+                : null
+              const greetingOnly = !!(realInboundText && isGreetingOnly(realInboundText))
+              type Responder =
+                | 'none'
+                | 'product_focus'
+                | 'product_entry'
+                | 'welcome_flow'
+                | 'auto_reply'
+                | 'generic_flow'
+                | 'ai'
+              let responder: Responder = focusedProductId ? 'product_focus' : 'none'
+              let skipAiThisInbound = false
+              let totalDelaySec = 0
+              let autoRepliesWereSent = false
+
               if (e.text?.trim()) {
                 try {
                   const { appendContactAskedQuestion } = await import('@/lib/contact-inquiry.server')
@@ -2449,7 +2423,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 } catch (_) { /* ignore */ }
               }
 
-              // Cancel any pending no-response timers for this thread (client responded)
               try {
                 await supabaseAdmin
                   .from('no_response_pending')
@@ -2459,56 +2432,163 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .is('cancelled_at', null)
               } catch (_) { /* ignore */ }
 
-              // Frase activadora (Observaciones): solo 1er mensaje → foco + flujo producto
-              // (sin búsqueda IA). La IA queda activa pero NO responde a ESTE mensaje:
-              // espera la siguiente consulta del cliente (ej. cantidad de sillas).
-              let skipAiAfterProductEntry = false
-              if (realInboundText) try {
-                // El fallback de audio ("no pude escucharlo") jamás debe enfocar
-                // un producto. Solo una transcripción real puede activar frase.
-                const { tryProductEntryTriggerOnFirstMessage } = await import(
-                  '@/lib/product-entry-trigger.server'
-                )
-                const trig = await tryProductEntryTriggerOnFirstMessage({
-                  orgId: session.org_id,
-                  threadId: thread.id,
-                  contactId,
-                  sessionId: session.id,
-                  chatId: sendChatId || e.chatId || null,
-                  text: realInboundText,
-                })
-                if (trig.activated) {
-                  skipAiAfterProductEntry = true
-                  console.info('[ingest] entry_trigger_phrase activó producto', {
-                    threadId: thread.id,
-                    productId: trig.productId,
-                    productName: trig.productName,
-                    skipAiThisInbound: true,
-                  })
+              // 1) Bienvenida: saludo puro + nuevo contacto → solo default_flow
+              if (greetingOnly && isNewContact && session.default_flow_id && !focusedProductId) {
+                try {
+                  const { data: firstStep } = await dyn()
+                    .from('flow_steps')
+                    .select('id')
+                    .eq('flow_id', session.default_flow_id)
+                    .is('parent_step_id', null)
+                    .order('step_order', { ascending: true })
+                    .limit(1)
+                    .maybeSingle()
+                  if (firstStep) {
+                    const welcome = await ensureFlowRunForContact({
+                      orgId: session.org_id,
+                      contactId,
+                      flowId: session.default_flow_id,
+                      firstStepId: firstStep.id,
+                      processNow: true,
+                    })
+                    if (welcome.started || welcome.alreadyActive || welcome.alreadyRecent) {
+                      responder = 'welcome_flow'
+                      skipAiThisInbound = true
+                      console.info('[ingest] bienvenida (hola): solo default_flow', {
+                        threadId: thread.id,
+                        flowId: session.default_flow_id,
+                        deferAi: !!welcome.deferAiReply,
+                      })
+                    }
+                  }
+                } catch (flowErr: any) {
+                  console.error('[ingest] welcome flow error:', flowErr.message)
                 }
-              } catch (trigErr) {
-                console.warn(
-                  '[ingest] entry trigger:',
-                  trigErr instanceof Error ? trigErr.message : trigErr,
-                )
               }
 
-              // Reglas/etiquetas solo reciben texto real. El fallback sigue
-              // disponible para que la IA pida al cliente escribir el mensaje.
-              const { aiDisabled, totalDelaySec } = realInboundText
-                ? await maybeAutoReply(
-                    session.org_id,
-                    session.id,
-                    sendChatId,
-                    realInboundText,
-                    thread.id,
-                    contactId,
+              // 2) Activador de producto (solo si no hay foco y no es bienvenida)
+              if (responder === 'none' && realInboundText && !greetingOnly) {
+                try {
+                  const { tryProductEntryTriggerOnFirstMessage } = await import(
+                    '@/lib/product-entry-trigger.server'
                   )
-                : { aiDisabled: false, totalDelaySec: 0 }
-              if (!aiDisabled && !skipAiAfterProductEntry) {
-                // auto-replies already ran synchronously above, so AI enters right after.
-                // Pass autoRepliesWereSent so the AI uses contextual-entry mode.
-                const autoRepliesWereSent = totalDelaySec > 0;
+                  const trig = await tryProductEntryTriggerOnFirstMessage({
+                    orgId: session.org_id,
+                    threadId: thread.id,
+                    contactId,
+                    sessionId: session.id,
+                    chatId: sendChatId || e.chatId || null,
+                    text: realInboundText,
+                  })
+                  if (trig.activated) {
+                    responder = 'product_entry'
+                    skipAiThisInbound = true
+                    focusedProductId = trig.productId || focusedProductId
+                    console.info('[ingest] entry_trigger_phrase activó producto', {
+                      threadId: thread.id,
+                      productId: trig.productId,
+                      productName: trig.productName,
+                    })
+                  }
+                } catch (trigErr) {
+                  console.warn(
+                    '[ingest] entry trigger:',
+                    trigErr instanceof Error ? trigErr.message : trigErr,
+                  )
+                }
+              }
+
+              // 3) Auto-respuesta (bloqueada con producto en foco o bienvenida)
+              if (responder === 'none' && realInboundText && !greetingOnly) {
+                const ar = await maybeAutoReply(
+                  session.org_id,
+                  session.id,
+                  sendChatId,
+                  realInboundText,
+                  thread.id,
+                  contactId,
+                )
+                if (ar.matched) {
+                  responder = 'auto_reply'
+                  skipAiThisInbound = true
+                  totalDelaySec = ar.totalDelaySec || 0
+                  autoRepliesWereSent = totalDelaySec > 0
+                  if (ar.aiDisabled) skipAiThisInbound = true
+                }
+              }
+
+              // 4) Flujos keyword (solo producto ligado si hay foco; no en saludo)
+              if (
+                (responder === 'none' || responder === 'product_focus') &&
+                realInboundText &&
+                !greetingOnly
+              ) {
+                try {
+                  const { data: aiCfgForFlows } = await supabaseAdmin
+                    .from('ai_configs')
+                    .select('enabled')
+                    .eq('org_id', session.org_id)
+                    .maybeSingle()
+                  const aiHandlesFlows = aiCfgForFlows?.enabled === true && !focusedProductId
+
+                  if (!aiHandlesFlows) {
+                    const { data: keywordFlows } = await dyn()
+                      .from('flows')
+                      .select('id, trigger_value, max_sends_per_contact, product_id')
+                      .eq('org_id', session.org_id)
+                      .eq('trigger_type', 'keyword')
+                      .eq('is_active', true)
+                    for (const flow of keywordFlows ?? []) {
+                      const flowPid = (flow as any).product_id
+                        ? String((flow as any).product_id)
+                        : null
+                      if (focusedProductId) {
+                        if (!flowPid || flowPid !== focusedProductId) continue
+                      } else if (flowPid) {
+                        continue
+                      }
+                      const triggerVal = String((flow as any).trigger_value || '')
+                        .toLowerCase()
+                        .trim()
+                      if (!triggerVal || triggerVal.length < 3) continue
+                      if (!realInboundText.toLowerCase().includes(triggerVal)) continue
+                      const { data: firstStep } = await dyn()
+                        .from('flow_steps')
+                        .select('id')
+                        .eq('flow_id', flow.id)
+                        .is('parent_step_id', null)
+                        .order('step_order', { ascending: true })
+                        .limit(1)
+                        .maybeSingle()
+                      if (!firstStep) continue
+                      const fr = await ensureFlowRunForContact({
+                        orgId: session.org_id,
+                        contactId,
+                        flowId: flow.id,
+                        firstStepId: firstStep.id,
+                        maxSends: (flow as any).max_sends_per_contact ?? null,
+                        processNow: true,
+                      })
+                      if (fr.started) {
+                        if (responder === 'none') responder = 'generic_flow'
+                        skipAiThisInbound = true
+                        break
+                      }
+                    }
+                  }
+                } catch (flowErr: any) {
+                  console.error('[ingest] keyword flow error:', flowErr.message)
+                }
+              }
+
+              // 5) IA general — solo si nadie tomó el turno y estaba ON al inicio
+              const canAi =
+                !skipAiThisInbound &&
+                aiEnabledAtStart &&
+                (responder === 'none' || responder === 'product_focus') &&
+                !(greetingOnly && responder === 'welcome_flow')
+
+              if (canAi) {
                 const aiReplyDedupKey = buildAiReplyDedupKey({
                   sessionId: session.id,
                   threadId: thread.id,
@@ -2517,49 +2597,69 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   sentAt: e.sentAt,
                   chatId: sendChatId,
                 })
-                const alreadyQueued = await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey)
+                const alreadyQueued = await hasExistingAiReplyCommand(
+                  session.org_id,
+                  session.id,
+                  aiReplyDedupKey,
+                )
                 if (alreadyQueued) {
-                  console.log('[ingest] skip duplicate AI reply by persisted command', { aiReplyDedupKey, threadId: thread.id, chatId: sendChatId })
+                  console.log('[ingest] skip duplicate AI reply by persisted command', {
+                    aiReplyDedupKey,
+                    threadId: thread.id,
+                  })
                 } else if (!aiReplyDedupe.shouldProcess(aiReplyDedupKey)) {
-                  console.log('[ingest] skip duplicate AI reply', { aiReplyDedupKey, threadId: thread.id, chatId: sendChatId })
-                } else if (process.env.ASYNC_AI_REPLY === 'true') {
-                  // Asynchronous ejecución (optimizado)
-                  console.log('[ingest] Despachando maybeAiReply en segundo plano (asíncrono)');
-                  maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, textForAiInsert, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey).catch((err) => {
-                    console.error('[ingest] Error en maybeAiReply asíncrono:', err);
-                  });
+                  console.log('[ingest] skip duplicate AI reply', {
+                    aiReplyDedupKey,
+                    threadId: thread.id,
+                  })
                 } else {
-                  // Fallback síncrono (reversión a comportamiento anterior)
-                  console.log('[ingest] Ejecutando maybeAiReply de forma síncrona (rollback/legacy)');
-                  await maybeAiReply(session.org_id, session.id, sendChatId, contactId, thread.id, textForAiInsert, totalDelaySec, autoRepliesWereSent, aiReplyDedupKey);
+                  await scheduleAiReplyFromIngest({
+                    orgId: session.org_id,
+                    sessionId: session.id,
+                    chatId: sendChatId,
+                    contactId,
+                    threadId: thread.id,
+                    text: textForAiInsert,
+                    delayAfterAutoReplies: totalDelaySec,
+                    autoRepliesWereSent,
+                    aiReplyDedupeKey,
+                  })
                 }
-              } else if (skipAiAfterProductEntry) {
-                console.info('[ingest] IA omitida este turno: flujo/ficha de producto ya preguntó; espera respuesta del cliente', {
+                if (responder === 'none') responder = 'ai'
+              } else if (skipAiThisInbound) {
+                console.info('[ingest] IA omitida este turno (orquestación)', {
                   threadId: thread.id,
-                  chatId: sendChatId,
+                  responder,
+                  aiEnabledAtStart,
                 })
               }
 
-              // Vigilante: clasifica/etiqueta, pero NO arranca flujos si la IA está
-              // activa (evita doble menú: IA activate_flow + vigilante a la vez).
-              if (realInboundText) try {
-                const { data: aiCfg } = await supabaseAdmin
-                  .from('ai_configs')
-                  .select('enabled')
-                  .eq('org_id', session.org_id)
-                  .maybeSingle()
-                const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
-                void runIntentWatcher({
-                  orgId: session.org_id,
-                  contactId,
-                  threadId: thread.id,
-                  text: realInboundText,
-                  trigger: 'message',
-                  skipFlowStart: aiCfg?.enabled === true,
-                }).catch((err) => {
-                  console.warn('[ingest] watcher:', (err as Error)?.message)
-                })
-              } catch (_) { /* no bloquear ingest por clasificación */ }
+              // Vigilante: clasifica/etiqueta. Nunca arranca flujos con saludo,
+              // producto en foco, bienvenida, o si ya hubo dueño de respuesta.
+              if (realInboundText) {
+                try {
+                  const skipWatcherFlows =
+                    greetingOnly ||
+                    !!focusedProductId ||
+                    responder === 'welcome_flow' ||
+                    responder === 'product_entry' ||
+                    responder === 'auto_reply' ||
+                    responder === 'generic_flow' ||
+                    responder === 'ai' ||
+                    aiEnabledAtStart
+                  const { runIntentWatcher } = await import('@/lib/intent-watcher.server')
+                  void runIntentWatcher({
+                    orgId: session.org_id,
+                    contactId,
+                    threadId: thread.id,
+                    text: realInboundText,
+                    trigger: 'message',
+                    skipFlowStart: skipWatcherFlows,
+                  }).catch((err) => {
+                    console.warn('[ingest] watcher:', (err as Error)?.message)
+                  })
+                } catch (_) { /* ignore */ }
+              }
 
               // Schedule no-response pending entries for active no_response rules
               try {
@@ -2572,7 +2672,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 for (const rule of noRespRules ?? []) {
                   const delaySeconds = rule.no_response_delay_seconds ?? 900
                   const firesAt = new Date(Date.now() + delaySeconds * 1000).toISOString()
-                  // Check limit_per_contact
                   if (rule.limit_per_contact && rule.limit_per_contact > 0) {
                     const { count } = await supabaseAdmin
                       .from('no_response_pending')
@@ -2582,7 +2681,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       .not('fired_at', 'is', null)
                     if ((count ?? 0) >= rule.limit_per_contact) continue
                   }
-                  // Only insert if there isn't already a pending entry for this rule+thread
                   const { count: existing } = await supabaseAdmin
                     .from('no_response_pending')
                     .select('id', { count: 'exact', head: true })
@@ -2602,126 +2700,49 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     })
                   }
                 }
-              } catch (_) { /* ignore — don't break main flow */ }
+              } catch (_) { /* ignore */ }
 
-              // Helper to start or restart a flow, respetando max_sends_per_contact.
-              const ensureFlowRun = async (flowId: string, firstStepId: string, maxSends?: number | null) => {
-                await ensureFlowRunForContact({
-                  orgId: session.org_id,
-                  contactId,
-                  flowId,
-                  firstStepId,
-                  maxSends: maxSends ?? null,
-                  processNow: true,
-                });
-              };
-
-              // Keyword / wa_* flows: si la IA está ON, ella activa paquetes con
-              // activate_flow. Disparar también aquí = saludo/media ×2 o ×3.
               try {
-                const { data: aiCfgForFlows } = await supabaseAdmin
-                  .from('ai_configs')
-                  .select('enabled')
-                  .eq('org_id', session.org_id)
-                  .maybeSingle();
-                const aiHandlesFlows = aiCfgForFlows?.enabled === true;
-
-                if (!aiHandlesFlows) {
-                  const focusedProductId = (thread as any)?.focused_product_id
-                    ? String((thread as any).focused_product_id)
-                    : null;
-                  const { data: keywordFlows } = await dyn()
-                    .from('flows')
-                    .select('id, trigger_value, max_sends_per_contact, product_id')
-                    .eq('org_id', session.org_id)
-                    .eq('trigger_type', 'keyword')
-                    .eq('is_active', true);
-                  for (const flow of keywordFlows ?? []) {
-                    const flowPid = (flow as any).product_id
-                      ? String((flow as any).product_id)
-                      : null;
-                    if (flowPid) {
-                      if (focusedProductId !== flowPid) continue;
-                    } else if (focusedProductId) {
-                      continue;
-                    }
-                    const { data: firstStep } = await dyn()
-                      .from('flow_steps')
-                      .select('id')
-                      .eq('flow_id', flow.id)
-                      .is('parent_step_id', null)
-                      .order('step_order', { ascending: true })
-                      .limit(1)
-                      .maybeSingle();
-                    if (!firstStep) continue;
-                    const lowerText = e.text.toLowerCase();
-                    const triggerVal = (flow as any).trigger_value?.toLowerCase() ?? '';
-                    if (triggerVal && lowerText.includes(triggerVal)) {
-                      await ensureFlowRun(flow.id, firstStep.id, (flow as any).max_sends_per_contact);
-                    }
-                  }
-
-                  const { count: inboundCount } = await dyn()
-                    .from('messages')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('thread_id', thread.id)
-                    .eq('direction', 'in');
-                  const { count: outboundCount } = await dyn()
-                    .from('messages')
-                    .select('id', { count: 'exact', head: true })
-                    .eq('thread_id', thread.id)
-                    .eq('direction', 'out');
-
-                  const whatsappFlowTypes = [
-                    { type: 'wa_new_message', shouldTrigger: true },
-                    { type: 'wa_first_conversation', shouldTrigger: (inboundCount ?? 0) === 1 && (outboundCount ?? 0) === 0 },
-                    { type: 'wa_customer_reply', shouldTrigger: (outboundCount ?? 0) > 0 },
-                  ];
-
-                  for (const trigger of whatsappFlowTypes) {
-                    if (!trigger.shouldTrigger) continue;
-                    const { data: flows } = await dyn()
-                      .from('flows')
-                      .select('id, max_sends_per_contact, product_id')
-                      .eq('org_id', session.org_id)
-                      .eq('trigger_type', trigger.type)
-                      .eq('is_active', true);
-                    for (const flow of flows ?? []) {
-                      const flowPid = (flow as any).product_id
-                        ? String((flow as any).product_id)
-                        : null;
-                      if (flowPid) {
-                        if (focusedProductId !== flowPid) continue;
-                      } else if (focusedProductId) {
-                        continue;
-                      }
-                      const { data: firstStep } = await dyn()
-                        .from('flow_steps')
-                        .select('id')
-                        .eq('flow_id', flow.id)
-                        .is('parent_step_id', null)
-                        .order('step_order', { ascending: true })
-                        .limit(1)
-                        .maybeSingle();
-                      if (!firstStep) continue;
-                      await ensureFlowRun(flow.id, firstStep.id, (flow as any).max_sends_per_contact);
-                    }
-                  }
-                } else {
-                  console.log('[ingest] skip keyword/wa_* flows: IA activa (usa activate_flow)', {
-                    threadId: thread.id,
-                  });
-                }
-
-                // Update last_interaction_at for active/wait_node flow runs
-                await dyn()
+                const { data: runsToResume, error: fetchErr } = await dyn()
                   .from('flow_runs')
-                  .update({ last_interaction_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+                  .select('*')
                   .eq('contact_id', contactId)
-                  .in('status', ['active', 'wait_node']);
-              } catch (flowErr: any) {
-                console.error('[ingest] flow error (non-fatal):', flowErr.message);
+                  .in('status', ['active', 'wait_node'])
+                if (!fetchErr && runsToResume && runsToResume.length > 0) {
+                  const nowStr = new Date().toISOString()
+                  for (const run of runsToResume) {
+                    const { data: updatedRun } = await dyn()
+                      .from('flow_runs')
+                      .update({
+                        status: 'active',
+                        next_execution_at: nowStr,
+                        last_interaction_at: nowStr,
+                        updated_at: nowStr,
+                      })
+                      .eq('id', run.id)
+                      .select()
+                      .single()
+                    if (updatedRun) {
+                      console.info('[ingest] Resumiendo flujo inmediatamente por interacción del cliente', {
+                        runId: updatedRun.id,
+                        contactId,
+                      })
+                      const { processRunUntilWaitOrCompleted } = await import('@/lib/flow-runner.server')
+                      await processRunUntilWaitOrCompleted(updatedRun)
+                    }
+                  }
+                }
+              } catch (resumeErr: any) {
+                console.error('[ingest] Error al resumir flujo inmediatamente:', resumeErr.message)
               }
+
+              console.info('[ingest] orquestación turno', {
+                threadId: thread.id,
+                responder,
+                greetingOnly,
+                focusedProductId,
+                skipAiThisInbound,
+              })
             } else if (e.type === 'ack' && e.commandId) {
               const ackStatus = e.ackStatus ?? 'ok';
               const isFailed = ackStatus === 'failed' || ackStatus === 'error';

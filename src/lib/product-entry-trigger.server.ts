@@ -150,6 +150,22 @@ export async function tryProductEntryTriggerOnFirstMessage(params: {
   const text = String(params.text || "").trim();
   if (!text) return { activated: false, reason: "empty" };
 
+  // Saludo puro no debe enfocar producto (aunque la frase sea "hola").
+  const greetingNorm = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[!?¡¿.,]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (
+    /^(hola|buenas|buen dia|buenos dias|buenas tardes|buenas noches|hey|hi|hello|saludos)$/.test(
+      greetingNorm,
+    )
+  ) {
+    return { activated: false, reason: "greeting_only" };
+  }
+
   const { data: thread } = await supabaseAdmin
     .from("threads")
     .select("id, focused_product_id")

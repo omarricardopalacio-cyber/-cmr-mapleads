@@ -299,6 +299,98 @@ export const updateStoreProduct = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const createStoreProduct = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        name: z.string().min(1, "El nombre es obligatorio").max(200),
+        description: z.string().max(8000).nullable().optional(),
+        price: z.number().nullable().optional(),
+        stock: z.number().nullable().optional(),
+        image_url: z.string().max(2000).nullable().optional(),
+        video_url: z.string().max(2000).nullable().optional(),
+        sku: z.string().max(80).nullable().optional(),
+        badge: z.string().max(40).nullable().optional(),
+        category: z.string().max(80).nullable().optional(),
+        ai_observation: z.string().max(4000).nullable().optional(),
+        search_keywords: z.string().max(1000).nullable().optional(),
+        entry_trigger_phrase: z.string().max(500).nullable().optional(),
+        chat_ask_text: z.string().max(300).nullable().optional(),
+        gallery_images: z.array(z.string().max(2000)).max(12).optional(),
+        is_active: z.boolean().optional().default(true),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const insertRow: Record<string, unknown> = {
+      org_id: orgId,
+      name: data.name.trim(),
+      description: data.description?.trim() || null,
+      price: data.price ?? null,
+      stock: data.stock ?? null,
+      image_url: data.image_url?.trim() || null,
+      video_url: data.video_url?.trim() || null,
+      sku: data.sku?.trim() || null,
+      badge: data.badge?.trim() || null,
+      category: data.category?.trim() || null,
+      ai_observation: data.ai_observation?.trim() || null,
+      search_keywords: data.search_keywords?.trim() || null,
+      entry_trigger_phrase: data.entry_trigger_phrase?.trim() || null,
+      chat_ask_text: data.chat_ask_text?.trim() || null,
+      gallery_images: data.gallery_images ?? [],
+      is_active: data.is_active ?? true,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: created, error } = await (supabaseAdmin as any)
+      .from("products")
+      .insert(insertRow)
+      .select("id, name")
+      .single();
+
+    if (error) throw new Error(`Error al crear producto: ${error.message}`);
+    return { ok: true, product: created };
+  });
+
+/** Sube imagen o video de producto a Storage y devuelve URL pública. */
+export const uploadProductMedia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z
+      .object({
+        fileName: z.string().min(1).max(180),
+        contentBase64: z.string().min(1),
+        contentType: z.string().min(3).max(80),
+        productId: z.string().uuid().optional(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const orgId = await ensureUserOrg(context.userId);
+    const safeName = data.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+    const subFolder = data.productId ? data.productId : "temp";
+    const path = `products/${orgId}/${subFolder}/${Date.now()}-${safeName}`;
+    const buf = Buffer.from(data.contentBase64, "base64");
+
+    if (buf.length > 55_000_000) {
+      throw new Error("Archivo demasiado grande (máx 50 MB)");
+    }
+
+    const { error: upErr } = await supabaseAdmin.storage
+      .from("media")
+      .upload(path, buf, {
+        contentType: data.contentType || "application/octet-stream",
+        upsert: true,
+      });
+    if (upErr) throw new Error(upErr.message || "Error al subir multimedia");
+
+    const { data: pub } = supabaseAdmin.storage.from("media").getPublicUrl(path);
+    if (!pub?.publicUrl) throw new Error("No se pudo obtener URL pública");
+    return { url: pub.publicUrl, path };
+  });
+
 /** Sube imagen de producto a Storage y devuelve URL pública. */
 export const uploadProductImage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

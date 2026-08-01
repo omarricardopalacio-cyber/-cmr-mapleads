@@ -40,7 +40,11 @@ export function parseBase64Media(
 ): { mimeType: string; base64String: string } {
   let base64String = base64Raw.trim();
   let mimeType = normalizeMimeType(fallbackMime || "application/octet-stream");
-  const dataUriMatch = base64String.match(/^data:([^;]+);base64,(.+)$/i);
+  // Aceptar parámetros MIME usados por notas de voz de WhatsApp:
+  // data:audio/ogg; codecs=opus;base64,...
+  const dataUriMatch = base64String.match(
+    /^data:([^;,]+)(?:;[^,]*)?;base64,([\s\S]+)$/i
+  );
   if (dataUriMatch) {
     const dataUriMime = normalizeMimeType(dataUriMatch[1]);
     // Solo usar el mime del data URI si es específico.
@@ -52,6 +56,20 @@ export function parseBase64Media(
   }
   base64String = base64String.replace(/\s/g, "");
   return { mimeType, base64String };
+}
+
+function hasSupportedAudioSignature(bytes: Uint8Array): boolean {
+  if (bytes.length < 8) return false;
+  // OGG/Opus ("OggS"), WebM/Matroska, MP3, MP4/M4A, FLAC y AMR.
+  return (
+    (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) ||
+    (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) ||
+    (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) ||
+    (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) ||
+    (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) ||
+    (bytes[0] === 0x66 && bytes[1] === 0x4c && bytes[2] === 0x61 && bytes[3] === 0x43) ||
+    (bytes[0] === 0x23 && bytes[1] === 0x21 && bytes[2] === 0x41 && bytes[3] === 0x4d)
+  );
 }
 
 const HEAVY_KEYS = new Set(["base64", "body", "data"]);
@@ -111,6 +129,19 @@ export async function uploadBase64ToStorage(
   if (!bytes.length) return null;
   if (bytes.length > MAX_MEDIA_BYTES) {
     throw new Error(`Media exceeds ${MAX_MEDIA_BYTES} bytes`);
+  }
+  const normalizedMime = normalizeMimeType(mimeType);
+  const expectsAudio =
+    normalizedMime.startsWith("audio/") ||
+    options?.msgType === "ptt" ||
+    options?.msgType === "audio";
+  if (expectsAudio && !hasSupportedAudioSignature(bytes)) {
+    console.warn("[uploadBase64ToStorage] audio signature invalid; waiting for recovery", {
+      mimeType: normalizedMime,
+      msgType: options?.msgType,
+      size: bytes.length,
+    });
+    return null;
   }
 
   const ext = extensionFromMime(mimeType, options?.msgType);
@@ -220,8 +251,14 @@ export async function enrichMediaForMessage(
         fileName: (media.filename || media.fileName) as string | undefined,
       });
       if (!uploaded) {
-        console.log("[engine-media] audio uploadBase64ToStorage returned null");
-        return { ...media, url: null, error: "Archivo vacio o corrupto" };
+        console.log("[engine-media] audio inválido/incompleto; esperando mediaRecovery");
+        return {
+          ...media,
+          url: null,
+          error: undefined,
+          missing_media: true,
+          invalid_media: true,
+        };
       }
       console.log("[engine-media] Audio upload success (Whisper):", uploaded.url);
       return {

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsApp Chat Extractor",
+  "description": "Extrae numero/contacto y mensajes desde WhatsApp Web para analisis.",
+  "version": "1.0.0",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*"
+  ],
+  "action": {
+    "default_title": "WhatsApp Extractor",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

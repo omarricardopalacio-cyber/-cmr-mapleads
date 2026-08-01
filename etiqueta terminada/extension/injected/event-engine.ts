@@ -56,10 +56,20 @@ function emit(event: WAEventType, payload: any): void {
 function validateBase64Media(base64Data: string): { valid: boolean; firstBytesHex: string; detectedType: string } {
   try {
     // Quitar prefijo data URI si existe
-    const clean = base64Data.replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "");
-    if (clean.length < 8) return { valid: false, firstBytesHex: "too_short", detectedType: "unknown" };
+    // WhatsApp usa MIME con parámetros: audio/ogg; codecs=opus.
+    const clean = base64Data.replace(/^data:[^,]*;base64,/i, "").replace(/\s/g, "");
+    if (
+      clean.length < 12 ||
+      clean.length % 4 === 1 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(clean)
+    ) {
+      return { valid: false, firstBytesHex: "invalid_base64", detectedType: "unknown" };
+    }
 
     const binary = atob(clean);
+    if (binary.length < 8) {
+      return { valid: false, firstBytesHex: "too_short", detectedType: "unknown" };
+    }
     const bytes = new Uint8Array(8);
     for (let i = 0; i < 8; i++) bytes[i] = binary.charCodeAt(i);
 
@@ -237,7 +247,24 @@ async function blobUrlToBase64(blobUrl: string): Promise<string | null> {
  */
 async function resolveToBase64(data: any, mimetype?: string): Promise<string | null> {
   if (!data) return null;
-  if (typeof data === "string") return data || null;
+  if (typeof data === "string") {
+    const value = data.trim();
+    if (!value) return null;
+    if (value.startsWith("blob:")) return blobUrlToBase64(value);
+    if (value.startsWith("data:")) {
+      return /^data:[^,]*;base64,/i.test(value) ? value : null;
+    }
+    // Algunas APIs de WA-JS devuelven base64 puro. Rechazar URLs, mensajes
+    // de error y objetos serializados que antes se confundían con audio.
+    if (
+      value.length >= 12 &&
+      value.length % 4 !== 1 &&
+      /^[A-Za-z0-9+/]+={0,2}$/.test(value.replace(/\s/g, ""))
+    ) {
+      return value;
+    }
+    return null;
+  }
 
   // Blob
   if (typeof Blob !== "undefined" && data instanceof Blob) {
@@ -254,7 +281,11 @@ async function resolveToBase64(data: any, mimetype?: string): Promise<string | n
   if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
     const bytes = data instanceof ArrayBuffer
       ? new Uint8Array(data)
-      : new Uint8Array((data as ArrayBufferView).buffer);
+      : new Uint8Array(
+          (data as ArrayBufferView).buffer,
+          (data as ArrayBufferView).byteOffset,
+          (data as ArrayBufferView).byteLength,
+        );
     if (bytes.byteLength === 0) return null;
     let binary = "";
     for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
@@ -485,7 +516,10 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
     profilePictureUrl,
     contact: contactPayload,
     media,
-    mediaRecovery: mediaRecovered || lidResolved || undefined,
+    // Solo bytes/transcripción real bypass dedupe. LID→teléfono NO debe
+    // re-disparar automatización (evita 2–4 respuestas al mismo mensaje).
+    mediaRecovery: mediaRecovered || undefined,
+    lidRecovery: lidResolved || undefined,
   });
   return mediaRecovered || lidResolved;
 }
@@ -645,8 +679,46 @@ async function downloadMessageMedia(
     const WPP = getWPP();
     let base64Data: string | null = null;
     let retries = maxRetries;
+    const msgId = msg.id?._serialized || msg.id;
+
+    const resolveValidCandidate = async (
+      candidate: unknown,
+      source: string,
+    ): Promise<string | null> => {
+      const resolved = await resolveToBase64(candidate, msg.mimetype);
+      if (!resolved) return null;
+      const validation = validateBase64Media(resolved);
+      if (validation.valid) {
+        // Quitar parámetros como `codecs=opus` del encabezado para mantener
+        // compatibilidad con endpoints anteriores que esperan MIME simple.
+        return resolved.replace(
+          /^data:([^;,]+)(?:;[^,]*)?;base64,/i,
+          "data:$1;base64,",
+        );
+      }
+      if (isAudio) {
+        console.warn("[MAPLE MULTIMEDIA] Fuente de audio todavía inválida", {
+          messageId: msgId,
+          source,
+          firstBytes: validation.firstBytesHex,
+        });
+      }
+      return null;
+    };
 
     while (!base64Data && retries > 0) {
+      // API pública documentada de WA-JS 4.5: requiere el ID serializado,
+      // no el objeto del mensaje. Es la fuente principal para PTT entrantes.
+      const wppMethod = WPP?.chat?.downloadMedia;
+      if (typeof wppMethod === "function" && msgId) {
+        try {
+          const res = await wppMethod(msgId);
+          base64Data = await resolveValidCandidate(res, "WPP.chat.downloadMedia(id)");
+        } catch {
+          /* WhatsApp puede no haber terminado de descargarlo; reintentar */
+        }
+      }
+
       const possibleUrls = [
         msg.clientUrl,
         msg.mediaData?.clientUrl,
@@ -656,8 +728,10 @@ async function downloadMessageMedia(
       ].filter((u): u is string => typeof u === "string" && u.startsWith("blob:"));
 
       for (const url of possibleUrls) {
+        if (base64Data) break;
         try {
-          base64Data = await blobUrlToBase64(url);
+          const dataUri = await blobUrlToBase64(url);
+          base64Data = await resolveValidCandidate(dataUri, "blobUrl");
           if (base64Data) break;
         } catch {
           /* ignorar */
@@ -682,7 +756,7 @@ async function downloadMessageMedia(
         for (const candidate of embeddedMedia) {
           if (!candidate) continue;
           try {
-            base64Data = await resolveToBase64(candidate, msg.mimetype);
+            base64Data = await resolveValidCandidate(candidate, "embeddedMedia");
             if (base64Data) break;
           } catch {
             /* probar siguiente fuente */
@@ -693,7 +767,7 @@ async function downloadMessageMedia(
       if (!base64Data && typeof msg.downloadMediaCrypted === "function") {
         try {
           const res = await msg.downloadMediaCrypted();
-          base64Data = await resolveToBase64(res, msg.mimetype);
+          base64Data = await resolveValidCandidate(res, "msg.downloadMediaCrypted");
         } catch {
           /* ignorar */
         }
@@ -702,24 +776,21 @@ async function downloadMessageMedia(
       if (!base64Data && typeof msg.downloadMedia === "function") {
         try {
           const res = await msg.downloadMedia();
-          base64Data = await resolveToBase64(res, msg.mimetype);
+          base64Data = await resolveValidCandidate(res, "msg.downloadMedia");
         } catch {
           /* ignorar */
         }
       }
 
       if (!base64Data && WPP?.chat) {
-        const wppMethod = WPP.chat.downloadMedia || WPP.chat.downloadMediaMessage;
-        if (typeof wppMethod === "function") {
+        const legacyWppMethod = WPP.chat.downloadMediaMessage;
+        if (typeof legacyWppMethod === "function") {
           try {
-            const msgId = msg.id?._serialized || msg.id;
-            let res: any;
-            try {
-              res = await wppMethod(msg);
-            } catch {
-              res = await wppMethod(msgId);
-            }
-            base64Data = await resolveToBase64(res, msg.mimetype);
+            const res = await legacyWppMethod(msgId);
+            base64Data = await resolveValidCandidate(
+              res,
+              "WPP.chat.downloadMediaMessage(id)",
+            );
           } catch {
             /* ignorar */
           }
@@ -728,13 +799,22 @@ async function downloadMessageMedia(
 
       if (base64Data) {
         const validation = validateBase64Media(base64Data);
-        const isAudioMsg = isAudioMessage(msg);
-        if (!validation.valid && !isAudioMsg) {
+        if (!validation.valid) {
+          if (isAudio) {
+            console.warn("[MAPLE MULTIMEDIA] Candidato de audio inválido; se reintentará", {
+              messageId: msg.id?._serialized || msg.id,
+              firstBytes: validation.firstBytesHex,
+              detectedType: validation.detectedType,
+            });
+          }
           base64Data = null;
         } else {
           const approxBytes = Math.ceil(base64Data.length * 0.75);
           if (approxBytes <= 20 * 1024 * 1024) {
-            const mime = msg.mimetype || media.mimetype || (isAudioMsg ? "audio/ogg" : undefined);
+            const mime =
+              validation.detectedType !== "unknown/encrypted"
+                ? validation.detectedType
+                : msg.mimetype || media.mimetype || (isAudio ? "audio/ogg" : undefined);
             return {
               ...media,
               base64: base64Data,

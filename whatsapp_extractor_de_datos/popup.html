@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Campaign Extractor</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+      :root {
+        --bg: #071a29;
+        --panel: #0d2435;
+        --panel-2: #10293d;
+        --line: #1a3a52;
+        --text: #dceaf5;
+        --muted: #8da8bb;
+        --brand: #11c388;
+        --brand-2: #0ea876;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        width: 320px;
+        font-family: Segoe UI, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .card {
+        padding: 12px;
+        border: 1px solid var(--line);
+      }
+      .title {
+        font-size: 16px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .title-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--brand);
+        box-shadow: 0 0 10px var(--brand);
+      }
+      .subtitle {
+        color: var(--muted);
+        font-size: 11px;
+        margin: 4px 0 10px;
+      }
+      .field {
+        margin-bottom: 8px;
+      }
+      .field label {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      input,
+      select,
+      button {
+        width: 100%;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        padding: 7px 9px;
+        font-size: 12px;
+      }
+      button {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      #startBtn {
+        margin-top: 6px;
+        background: var(--brand);
+        color: #032317;
+        border-color: var(--brand);
+      }
+      #startBtn:hover {
+        background: var(--brand-2);
+      }
+      #stopBtn {
+        margin-top: 6px;
+      }
+      .download-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      #status {
+        margin-top: 10px;
+        min-height: 42px;
+        max-height: 140px;
+        overflow: auto;
+        white-space: pre-wrap;
+        font-size: 11px;
+        color: #b6ccdc;
+        background: #091f2f;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .footnote {
+        margin-top: 8px;
+        font-size: 10px;
+        color: #6f8a9d;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="title"><span class="title-dot"></span>Campaign Extractor</div>
+      <div class="subtitle">Extrae chats de WhatsApp Web para analizar campanas.</div>
+
+      <div class="field">
+        <label for="sourceSelect">Origen</label>
+        <select id="sourceSelect">
+          <option value="inbox">Toda la bandeja de entrada</option>
+          <option value="unread">Solo no leidos (visual)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="accessKey">Clave de acceso</label>
+        <input id="accessKey" type="password" placeholder="Ingresa clave" />
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="maxChats">Max. chats</label>
+          <input id="maxChats" type="number" min="1" value="50" />
+        </div>
+        <div class="field">
+          <label for="delayMs">Pausa (ms)</label>
+          <input id="delayMs" type="number" min="200" value="800" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="exportFormat">Formato exportar</label>
+        <select id="exportFormat">
+          <option value="json">JSON (recomendado para IA)</option>
+          <option value="csv">CSV (resumen rapido)</option>
+          <option value="excel">Excel con números de WhatsApp</option>
+          <option value="both">JSON + CSV</option>
+        </select>
+      </div>
+
+      <button id="startBtn">▶ Iniciar extraccion</button>
+      <button id="stopBtn" disabled>■ Detener</button>
+
+      <div class="download-row">
+        <button id="downloadJsonBtn" disabled>Descargar JSON</button>
+        <button id="downloadCsvBtn" disabled>Descargar CSV</button>
+      </div>
+      <div class="download-row">
+        <button id="downloadExcelBtn" disabled>Descargar Excel</button>
+      </div>
+
+      <div id="status">Abre WhatsApp Web y presiona iniciar.</div>
+      <div class="footnote">Tus datos nunca salen de tu navegador.</div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

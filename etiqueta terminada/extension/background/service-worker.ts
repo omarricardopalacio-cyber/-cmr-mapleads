@@ -485,7 +485,10 @@ async function flushIngestQueue(): Promise<void> {
   let batch = queue.slice(0, CONSTANTS.BATCH_MAX_SIZE) as WAEvent[];
   const heavyIdx = batch.findIndex((ev) => eventHasHeavyMedia(ev));
   if (heavyIdx >= 0) {
-    batch = [batch[heavyIdx]];
+    // Mantener orden causal: primero debe llegar la cáscara NEW_MESSAGE y
+    // después mediaRecovery. Antes se extraía el evento pesado de la mitad
+    // del lote y podía insertarse el audio corrupto antes del mensaje base.
+    batch = heavyIdx === 0 ? [batch[0]] : batch.slice(0, heavyIdx);
   }
 
   function mapEventType(t: string): string {
@@ -894,6 +897,22 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
 async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSender): Promise<void> {
   // Guardar en cola local (chrome.storage.local)
   try {
+    const flat = eventPayloadRecord(event);
+    const waMessageId = String(flat.messageId || flat.waMessageId || "").trim();
+    const isMediaRecovery = flat.mediaRecovery === true;
+    // Dedupe DOM+WPP del mismo waMessageId (salvo mediaRecovery real).
+    if (waMessageId && !isMediaRecovery && (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT")) {
+      const seenKey = `seenMsg:${waMessageId}`;
+      const seenStore = await chrome.storage.local.get(seenKey);
+      const prev = Number(seenStore[seenKey] || 0);
+      const now = Date.now();
+      if (prev && now - prev < 90_000) {
+        console.log("[ServiceWorker] skip evento duplicado (DOM/WPP)", waMessageId, event.type);
+        return;
+      }
+      await chrome.storage.local.set({ [seenKey]: now });
+    }
+
     let stored = event;
     if (eventHasHeavyMedia(event)) {
       console.log("[MAPLE MULTIMEDIA] Guardando en PC / offload selectivo...");

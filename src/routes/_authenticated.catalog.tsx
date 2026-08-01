@@ -6,6 +6,8 @@ import {
   listStoreCatalogProducts,
   updateStoreProduct,
   uploadProductImage,
+  createStoreProduct,
+  uploadProductMedia,
   getProductLearningStatusFn,
   restoreProductPromptFn,
   processProductLearningNowFn,
@@ -57,6 +59,7 @@ import {
   Workflow,
   MessageSquarePlus,
   ImagePlus,
+  Video,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/catalog")({
@@ -136,7 +139,9 @@ const PAGE = 40;
 function CatalogProductsPage() {
   const listFn = useServerFn(listStoreCatalogProducts);
   const updateFn = useServerFn(updateStoreProduct);
+  const createFn = useServerFn(createStoreProduct);
   const uploadFn = useServerFn(uploadProductImage);
+  const mediaUploadFn = useServerFn(uploadProductMedia);
   const learningStatusFn = useServerFn(getProductLearningStatusFn);
   const restorePromptFn = useServerFn(restoreProductPromptFn);
   const processLearningFn = useServerFn(processProductLearningNowFn);
@@ -146,13 +151,37 @@ function CatalogProductsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadingCreateImage, setUploadingCreateImage] = useState(false);
+  const [uploadingCreateVideo, setUploadingCreateVideo] = useState(false);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [entryFlowEditorId, setEntryFlowEditorId] = useState<string | null>(null);
   const [openingEntryFlow, setOpeningEntryFlow] = useState(false);
   const galleryFileRef = useRef<HTMLInputElement>(null);
+  const editImageFileRef = useRef<HTMLInputElement>(null);
+  const editVideoFileRef = useRef<HTMLInputElement>(null);
+  const createImageFileRef = useRef<HTMLInputElement>(null);
+  const createVideoFileRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const ensureEntryFlowFn = useServerFn(ensureProductEntryFlow);
   const getEntryFlowFn = useServerFn(getProductEntryFlow);
+
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    description: "",
+    price: "",
+    stock: "",
+    image_url: "",
+    video_url: "",
+    sku: "",
+    badge: "",
+    category: "",
+    ai_observation: "",
+    search_keywords: "",
+    entry_trigger_phrase: "",
+  });
 
   const [form, setForm] = useState({
     name: "",
@@ -267,6 +296,82 @@ function CatalogProductsPage() {
       newGalleryUrl: "",
     });
   }
+
+  async function handleMediaUpload(
+    file: File | null,
+    setUploading: (v: boolean) => void,
+    onSuccess: (url: string) => void,
+    productId?: string,
+  ) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+      const contentBase64 = btoa(binary);
+      const res = await mediaUploadFn({
+        data: {
+          fileName: file.name,
+          contentBase64,
+          contentType: file.type || "application/octet-stream",
+          productId,
+        },
+      });
+      if (res?.url) {
+        onSuccess(res.url);
+        toast.success("Archivo multimedia subido correctamente");
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "Error al subir archivo");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const createMut = useMutation({
+    mutationFn: () =>
+      createFn({
+        data: {
+          name: createForm.name.trim(),
+          description: createForm.description.trim() || null,
+          price: createForm.price.trim() === "" ? null : Number(createForm.price),
+          stock: createForm.stock.trim() === "" ? null : Number(createForm.stock),
+          image_url: createForm.image_url.trim() || null,
+          video_url: createForm.video_url.trim() || null,
+          sku: createForm.sku.trim() || null,
+          badge: createForm.badge.trim() || null,
+          category: createForm.category.trim() || null,
+          ai_observation: createForm.ai_observation.trim() || null,
+          search_keywords: createForm.search_keywords.trim() || null,
+          entry_trigger_phrase: createForm.entry_trigger_phrase.trim() || null,
+        },
+      }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["storeCatalogProducts"] });
+      toast.success("Producto creado exitosamente");
+      setIsCreateOpen(false);
+      setCreateForm({
+        name: "",
+        description: "",
+        price: "",
+        stock: "",
+        image_url: "",
+        video_url: "",
+        sku: "",
+        badge: "",
+        category: "",
+        ai_observation: "",
+        search_keywords: "",
+        entry_trigger_phrase: "",
+      });
+      if (res?.product?.id) {
+        setSelectedId(res.product.id);
+      }
+    },
+    onError: (e: Error) => toast.error(e.message || "Error al crear producto"),
+  });
 
   async function onGalleryFile(file: File | null) {
     if (!file || !selectedId) return;
@@ -555,7 +660,7 @@ function CatalogProductsPage() {
       </div>
 
       <form
-        className="flex gap-2"
+        className="flex gap-2 flex-wrap sm:flex-nowrap"
         onSubmit={(e) => {
           e.preventDefault();
           setSearch(q.trim());
@@ -572,6 +677,13 @@ function CatalogProductsPage() {
         </div>
         <Button type="submit" variant="secondary">
           Buscar
+        </Button>
+        <Button
+          type="button"
+          onClick={() => setIsCreateOpen(true)}
+          className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+        >
+          <Plus className="h-4 w-4" /> Nuevo producto
         </Button>
       </form>
 
@@ -737,7 +849,7 @@ function CatalogProductsPage() {
                                 id,
                               ),
                             )
-                            .map((id) => FLOW_FIELD_LABELS[id])
+                            .map((id) => labelForFlowOrderItem(id, selected.chat_flow?.custom_blocks))
                             .join(" → ") || "Nombre"}
                           )
                         </li>
@@ -943,21 +1055,95 @@ function CatalogProductsPage() {
                       onChange={(e) => setForm({ ...form, category: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <Label>URL imagen principal</Label>
-                    <Input
-                      value={form.image_url}
-                      onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-                      placeholder="https://..."
-                    />
+                  <div className="space-y-1.5 rounded-md border p-2.5 bg-muted/20">
+                    <Label className="font-semibold flex items-center justify-between">
+                      <span>Imagen principal</span>
+                      <span className="text-[11px] text-muted-foreground font-normal">URL o subida</span>
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={form.image_url}
+                        onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                        placeholder="https://..."
+                      />
+                      <input
+                        type="file"
+                        ref={editImageFileRef}
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            handleMediaUpload(
+                              f,
+                              setUploadingImage,
+                              (url) => setForm((prev) => ({ ...prev, image_url: url })),
+                              selectedId || undefined
+                            );
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={uploadingImage}
+                        onClick={() => editImageFileRef.current?.click()}
+                        className="shrink-0 gap-1"
+                      >
+                        <Upload className="h-4 w-4" />
+                        {uploadingImage ? "Subiendo..." : "Subir Imagen"}
+                      </Button>
+                    </div>
+                    {form.image_url ? (
+                      <div className="mt-2 rounded overflow-hidden border max-h-36 bg-black/5 flex justify-center">
+                        <img src={form.image_url} alt="Preview" className="max-h-32 object-contain" />
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="space-y-1">
-                    <Label>URL video</Label>
-                    <Input
-                      value={form.video_url}
-                      onChange={(e) => setForm({ ...form, video_url: e.target.value })}
-                      placeholder="https://...mp4 o Drive"
-                    />
+                  <div className="space-y-1.5 rounded-md border p-2.5 bg-muted/20">
+                    <Label className="font-semibold flex items-center justify-between">
+                      <span>Video de presentación</span>
+                      <span className="text-[11px] text-muted-foreground font-normal">URL o subida</span>
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={form.video_url}
+                        onChange={(e) => setForm({ ...form, video_url: e.target.value })}
+                        placeholder="https://...mp4"
+                      />
+                      <input
+                        type="file"
+                        ref={editVideoFileRef}
+                        accept="video/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            handleMediaUpload(
+                              f,
+                              setUploadingVideo,
+                              (url) => setForm((prev) => ({ ...prev, video_url: url })),
+                              selectedId || undefined
+                            );
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={uploadingVideo}
+                        onClick={() => editVideoFileRef.current?.click()}
+                        className="shrink-0 gap-1"
+                      >
+                        <Video className="h-4 w-4" />
+                        {uploadingVideo ? "Subiendo..." : "Subir Video"}
+                      </Button>
+                    </div>
+                    {form.video_url ? (
+                      <div className="mt-2 rounded overflow-hidden border max-h-40 bg-black flex justify-center">
+                        <video src={form.video_url} controls className="max-h-36 w-full" />
+                      </div>
+                    ) : null}
                   </div>
                   <div className="space-y-1">
                     <Label>Descripción</Label>
@@ -1423,6 +1609,212 @@ function CatalogProductsPage() {
               />
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo de Creación de Producto Nuevo con Imagen y Video */}
+      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold">
+              <Package className="h-5 w-5 text-emerald-600" />
+              Crear Nuevo Producto
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="font-semibold">Nombre del producto *</Label>
+              <Input
+                value={createForm.name}
+                onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                placeholder="Ej: Tenis Deportivos Pro Run"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Precio (COP)</Label>
+                <Input
+                  value={createForm.price}
+                  onChange={(e) => setCreateForm({ ...createForm, price: e.target.value })}
+                  placeholder="Ej: 120000"
+                  inputMode="decimal"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Stock</Label>
+                <Input
+                  value={createForm.stock}
+                  onChange={(e) => setCreateForm({ ...createForm, stock: e.target.value })}
+                  placeholder="Ej: 50"
+                  inputMode="numeric"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label>SKU</Label>
+                <Input
+                  value={createForm.sku}
+                  onChange={(e) => setCreateForm({ ...createForm, sku: e.target.value })}
+                  placeholder="SKU-001"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Etiqueta / Badge</Label>
+                <Input
+                  value={createForm.badge}
+                  onChange={(e) => setCreateForm({ ...createForm, badge: e.target.value })}
+                  placeholder="Nuevo / Oferta"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Categoría</Label>
+                <Input
+                  value={createForm.category}
+                  onChange={(e) => setCreateForm({ ...createForm, category: e.target.value })}
+                  placeholder="Calzado"
+                />
+              </div>
+            </div>
+
+            {/* Imagen Principal */}
+            <div className="space-y-2 rounded-md border p-3 bg-muted/20">
+              <Label className="font-semibold flex items-center justify-between">
+                <span>Imagen Principal</span>
+                <span className="text-xs text-muted-foreground font-normal">URL o Cargar Archivo</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  value={createForm.image_url}
+                  onChange={(e) => setCreateForm({ ...createForm, image_url: e.target.value })}
+                  placeholder="https://... imagen.jpg"
+                />
+                <input
+                  type="file"
+                  ref={createImageFileRef}
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      handleMediaUpload(
+                        f,
+                        setUploadingCreateImage,
+                        (url) => setCreateForm((prev) => ({ ...prev, image_url: url }))
+                      );
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={uploadingCreateImage}
+                  onClick={() => createImageFileRef.current?.click()}
+                  className="shrink-0 gap-1"
+                >
+                  <Upload className="h-4 w-4" />
+                  {uploadingCreateImage ? "Subiendo..." : "Subir Imagen"}
+                </Button>
+              </div>
+              {createForm.image_url ? (
+                <div className="mt-2 rounded overflow-hidden border max-h-40 bg-black/5 flex justify-center">
+                  <img src={createForm.image_url} alt="Vista previa" className="max-h-36 object-contain" />
+                </div>
+              ) : null}
+            </div>
+
+            {/* Video */}
+            <div className="space-y-2 rounded-md border p-3 bg-muted/20">
+              <Label className="font-semibold flex items-center justify-between">
+                <span>Video de Presentación</span>
+                <span className="text-xs text-muted-foreground font-normal">URL o Cargar Archivo</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  value={createForm.video_url}
+                  onChange={(e) => setCreateForm({ ...createForm, video_url: e.target.value })}
+                  placeholder="https://... video.mp4"
+                />
+                <input
+                  type="file"
+                  ref={createVideoFileRef}
+                  accept="video/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      handleMediaUpload(
+                        f,
+                        setUploadingCreateVideo,
+                        (url) => setCreateForm((prev) => ({ ...prev, video_url: url }))
+                      );
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={uploadingCreateVideo}
+                  onClick={() => createVideoFileRef.current?.click()}
+                  className="shrink-0 gap-1"
+                >
+                  <Video className="h-4 w-4" />
+                  {uploadingCreateVideo ? "Subiendo..." : "Subir Video"}
+                </Button>
+              </div>
+              {createForm.video_url ? (
+                <div className="mt-2 rounded overflow-hidden border max-h-48 bg-black flex justify-center">
+                  <video src={createForm.video_url} controls className="max-h-44 w-full" />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Descripción del producto</Label>
+              <Textarea
+                rows={3}
+                value={createForm.description}
+                onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
+                placeholder="Características principales, medidas, material..."
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="font-semibold text-emerald-600 dark:text-emerald-400">Observación / Prompts para la IA</Label>
+              <Textarea
+                rows={3}
+                value={createForm.ai_observation}
+                onChange={(e) => setCreateForm({ ...createForm, ai_observation: e.target.value })}
+                placeholder="Instrucciones específicas para que la IA atienda las dudas de este producto..."
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Palabras clave de búsqueda para la IA</Label>
+              <Input
+                value={createForm.search_keywords}
+                onChange={(e) => setCreateForm({ ...createForm, search_keywords: e.target.value })}
+                placeholder="Ej: tenis, calzado pro, pro run"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={createMut.isPending || !createForm.name.trim()}
+                onClick={() => createMut.mutate()}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {createMut.isPending ? "Creando..." : "Crear Producto"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -1875,6 +1875,44 @@ export async function executeToolCall(
     } catch {
       /* ignore */
     }
+    try {
+      const { sendWhatsAppNotificationAlert } = await import("@/lib/notifications.server");
+      const { data: contact } = contactId
+        ? await (supabaseAdmin as any)
+            .from("contacts")
+            .select("display_name, phone, wa_id")
+            .eq("id", contactId)
+            .maybeSingle()
+        : { data: null };
+
+      const prodName = String(orderForm?.Producto ?? orderForm?.producto ?? orderForm?.product ?? "").trim();
+      const qty = String(orderForm?.Cantidad ?? orderForm?.cantidad ?? "1").trim();
+      const val = String(orderForm?.Valor ?? orderForm?.valor ?? orderForm?.Total ?? orderForm?.total ?? "").trim();
+      const custName = String(orderForm?.Nombre ?? orderForm?.nombre ?? contact?.display_name ?? "").trim();
+      const addr = String(orderForm?.Direccion ?? orderForm?.dirección ?? orderForm?.address ?? "").trim();
+      const cty = String(orderForm?.Ciudad ?? orderForm?.ciudad ?? orderForm?.city ?? "").trim();
+      const nts = String(orderForm?.Notas ?? orderForm?.notas ?? "").trim();
+
+      await sendWhatsAppNotificationAlert({
+        orgId,
+        type: "sale",
+        data: {
+          threadId,
+          contactName: contact?.display_name || custName || "Cliente",
+          phoneNumber: contact?.phone || contact?.wa_id || null,
+          productName: prodName,
+          quantity: qty,
+          totalPrice: val,
+          customerName: custName,
+          address: addr,
+          city: cty,
+          notes: nts,
+          formData: orderForm,
+        },
+      });
+    } catch (e: any) {
+      console.error("[onPurchaseConfirmed] Error triggering WhatsApp alert:", e?.message);
+    }
   };
 
   if (name === "assign_tag") {
@@ -1973,6 +2011,36 @@ export async function executeToolCall(
         .update({ ai_enabled: false } as unknown as Record<string, never>)
         .eq("id", threadId)
         .eq("org_id", orgId);
+
+      const { insertMessagesSafe } = await import("@/lib/message-insert.server");
+      await insertMessagesSafe({
+        org_id: orgId,
+        thread_id: threadId,
+        direction: "out",
+        text: "⚠️ La IA ha transferido la conversación a un agente humano y ha pausado las respuestas automáticas.",
+        sent_at: new Date().toISOString(),
+        source: "system",
+      });
+
+      const { sendWhatsAppNotificationAlert } = await import("@/lib/notifications.server");
+      const { data: contact } = contactId
+        ? await (supabaseAdmin as any)
+            .from("contacts")
+            .select("display_name, phone, wa_id")
+            .eq("id", contactId)
+            .maybeSingle()
+        : { data: null };
+
+      await sendWhatsAppNotificationAlert({
+        orgId,
+        type: "transfer",
+        data: {
+          threadId,
+          contactName: contact?.display_name || "Cliente",
+          phoneNumber: contact?.phone || contact?.wa_id || null,
+          lastMessage: "Remitido a agente humano por la IA",
+        },
+      });
     } catch {
       // ai_enabled puede no existir en prod; ignorar silenciosamente
     }
@@ -2424,6 +2492,8 @@ export async function executeToolCall(
               : "\n(Este producto no tiene observación cargada.)",
           ].join("\n");
           details = `present_product: ${presented.productId} (switch)`;
+          // El sistema ya envió ficha/flujo: no añadir texto IA este turno.
+          ctx.activatedFlowThisTurn = true;
           if (presented.product) {
             ctx.lastProducts = [presented.product as any];
             await saveFocusedProduct(ctx, {
@@ -3774,7 +3844,7 @@ MODO C — CUANDO FALTA INFORMACIÓN EXACTA (CARACTERÍSTICAS, ESPECIFICACIONES,
 
   const activeFlowGuide =
     promptMode === "product_focus"
-      ? `MODO PRODUCTO EN FOCO:\n1. En CADA respuesta usa la OBSERVACIÓN DEL VENDEDOR (prioridad máxima sobre cualquier flujo).\n2. Si activate_flow envía un paquete, el contenido lo manda el sistema; tú sigues con la misma observación del producto.\n3. PROHIBIDO transferir a humano o decir "no tengo esa información" si el dato está en la observación.\n4. Si pide OTRO producto por nombre/SKU, llama present_product.\n5. Respuestas breves; una pregunta de cierre.`
+      ? `MODO PRODUCTO EN FOCO (PRIORIDAD ABSOLUTA):\n1. En CADA respuesta (incluido un "hola") usa SOLO la OBSERVACIÓN DEL VENDEDOR de ESTE producto; ignora instrucciones de otros flujos/paquetes genéricos.\n2. activate_flow SOLO con flujos de ESTE producto (ids listados). El sistema envía el contenido; tú no lo copies.\n3. Tras activate_flow o present_product, NO escribas texto extra en este turno; espera al cliente.\n4. PROHIBIDO transferir a humano o decir "no tengo esa información" si el dato está en la observación.\n5. Si pide OTRO producto por nombre/SKU, llama present_product.\n6. Respuestas breves; una pregunta de cierre.`
       : promptMode === "product_detail"
       ? `MODO DETALLE DE PRODUCTO:\n1. El cliente pregunta por el producto ya elegido; NO busques otros productos ni envíes otra ronda de imágenes.\n2. Responde usando PRODUCTO ELEGIDO y la observación del vendedor.\n3. Si un dato exacto no existe en el contexto, dilo de forma breve y ofrece verificarlo.\n4. Cierra con una sola pregunta de venta suave.`
       : promptMode === "pedido"

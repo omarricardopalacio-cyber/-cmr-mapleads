@@ -58,16 +58,27 @@ export function buildAiReplyDedupKey({ sessionId, threadId, text, waMessageId, s
   const normalizedChatId = String(chatId ?? '').trim().toLowerCase()
   const normalizedText = normalizeDedupText(text).slice(0, 180)
 
+  // Con waMessageId: omitir chatId (mismo mensaje @lid vs @c.us → una sola IA).
+  if (normalizedWaMessageId && normalizedWaMessageId !== 'no-wa-id') {
+    return [
+      'ai-reply',
+      String(sessionId ?? ''),
+      String(threadId ?? ''),
+      normalizedWaMessageId,
+      normalizedSentAt || 'no-time',
+    ].join('|')
+  }
+
   const baseKey = [
     'ai-reply',
     String(sessionId ?? ''),
     String(threadId ?? ''),
-    normalizedWaMessageId || 'no-wa-id',
+    'no-wa-id',
     normalizedChatId || 'no-chat',
     normalizedSentAt || 'no-time',
   ]
 
-  if (normalizedWaMessageId || normalizedSentAt) {
+  if (normalizedSentAt) {
     return baseKey.join('|')
   }
 
