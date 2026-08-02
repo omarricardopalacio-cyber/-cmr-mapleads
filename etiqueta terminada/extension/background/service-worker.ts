@@ -257,11 +257,15 @@ async function fetchWithTimeout(
   }
 }
 
+let pollRequestInFlight = false;
+
 async function pollCommands(): Promise<void> {
   if (!backendUrl || !sessionToken) {
     await chrome.storage.local.set({ wsStatus: "disconnected", lastError: "not_configured" });
     return;
   }
+  if (pollRequestInFlight) return;
+  pollRequestInFlight = true;
 
   try {
     // Netlify cold start suele tardar 8–15s; timeout corto provocaba "commands timeout"
@@ -314,6 +318,8 @@ async function pollCommands(): Promise<void> {
     } else {
       console.warn("[ServiceWorker] poll fallo temporal", pollFailStreak, msg);
     }
+  } finally {
+    pollRequestInFlight = false;
   }
 }
 
@@ -621,11 +627,13 @@ async function flushIngestQueue(): Promise<void> {
             : flat.chatId;
       const phone =
         (typeof existingContact?.phone === "string" && existingContact.phone.replace(/\D/g, "")) ||
+        (typeof flat.phone === "string" && flat.phone.replace(/\D/g, "")) ||
         phoneDigitsFromJid(counterpartJid) ||
+        phoneDigitsFromJid(flat.waId) ||
         phoneDigitsFromJid(existingContact?.waId) ||
         undefined;
 
-      let chatId = (counterpartJid || flat.chatId) as string | undefined;
+      let chatId = (counterpartJid || flat.chatId || flat.waId) as string | undefined;
       // Preferir @c.us cuando ya tenemos teléfono (evita que ingest descarte @lid)
       if (phone && (!chatId || String(chatId).endsWith("@lid"))) {
         chatId = `${phone}@c.us`;
@@ -638,7 +646,9 @@ async function flushIngestQueue(): Promise<void> {
         (flat.notifyName as string | undefined);
 
       const contact = {
-        waId: phone ? `${phone}@c.us` : String(chatId || existingContact?.waId || ""),
+        waId: phone
+          ? `${phone}@c.us`
+          : String(chatId || flat.waId || existingContact?.waId || ""),
         displayName: displayName || undefined,
         phone: phone || undefined,
         profilePictureUrl:
@@ -651,6 +661,7 @@ async function flushIngestQueue(): Promise<void> {
         type: inferredType as any,
         chatId,
         waMessageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
+        commandId: (flat.commandId ?? flat.taskId) as string | undefined,
         direction:
           (flat.direction as "in" | "out" | undefined) ??
           (typeof fromMe === "boolean" ? (fromMe ? "out" : "in") : undefined),
@@ -659,6 +670,7 @@ async function flushIngestQueue(): Promise<void> {
         contact: contact.waId ? contact : undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
         mediaRecovery: flat.mediaRecovery as boolean | undefined,
+        lidRecovery: flat.lidRecovery as boolean | undefined,
         payload: {
           fromMe: flat.fromMe as boolean | undefined,
           from: flat.from as string | undefined,
@@ -672,6 +684,9 @@ async function flushIngestQueue(): Promise<void> {
           displayName,
           profilePictureUrl: flat.profilePictureUrl as string | undefined,
           messageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
+          commandId: (flat.commandId ?? flat.taskId) as string | undefined,
+          mediaRecovery: flat.mediaRecovery as boolean | undefined,
+          lidRecovery: flat.lidRecovery as boolean | undefined,
           type: flat.type as string | undefined,
           waId: contact.waId,
         },

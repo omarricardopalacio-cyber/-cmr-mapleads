@@ -361,6 +361,12 @@ async function emitFromNode(node: HTMLElement) {
     if (!parsed || (!parsed.text && !parsed.media.image && !parsed.media.audio && !parsed.media.video && !parsed.media.document)) {
       return;
     }
+    // No marcar como visto: un escaneo posterior podrá resolver el header/LID.
+    // Enviar "unknown" hacía que ingest descartara el texto definitivamente.
+    if (!parsed.chatId || parsed.chatId === "unknown") {
+      console.warn("[DOMDetector] chatId aún no resuelto; se reintentará:", id);
+      return;
+    }
 
     const hasMedia = parsed.media.image || parsed.media.video || parsed.media.audio || parsed.media.document;
 

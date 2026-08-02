@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { convertUrlToBase64, storagePathFromMediaUrl } from "@/lib/media";
+import { storagePathFromMediaUrl } from "@/lib/media";
 import { sanitizeMessageText } from "@/lib/message-text";
 import { ensureUserOrg } from "@/lib/org-helpers";
 import { insertMessagesSafe } from "@/lib/message-insert.server";
@@ -49,58 +49,6 @@ async function deleteMediaFilesForMessages(
     if (!rmErr) removed += chunk.length;
   }
   return removed;
-}
-
-async function downloadMediaFromStorage(
-  path: string
-): Promise<{ base64: string; mimeType: string }> {
-  const { data, error } = await supabaseAdmin.storage.from("media").download(path);
-  if (error || !data) throw new Error(error?.message || "Storage download failed");
-  const arrayBuffer = await data.arrayBuffer();
-  const base64 = Buffer.from(arrayBuffer).toString("base64");
-  const mimeType = data.type || "application/octet-stream";
-  return { base64, mimeType };
-}
-
-async function resolveMediaForCommand(opts: {
-  media_url?: string | null;
-  media_base64?: string | null;
-  media_storage_path?: string | null;
-  mime_type?: string | null;
-  caption?: string | null;
-  text?: string;
-}): Promise<{ media?: string; caption?: string }> {
-  const caption = opts.caption || opts.text || undefined;
-
-  if (opts.media_base64) {
-    const raw = opts.media_base64.trim();
-    const media = raw.startsWith("data:")
-      ? raw
-      : `data:${opts.mime_type || "application/octet-stream"};base64,${raw}`;
-    return { media, caption };
-  }
-
-  const storagePath =
-    opts.media_storage_path ||
-    (opts.media_url ? storagePathFromMediaUrl(opts.media_url) : null);
-
-  if (storagePath) {
-    const { base64, mimeType } = await downloadMediaFromStorage(storagePath);
-    return {
-      media: `data:${opts.mime_type || mimeType};base64,${base64}`,
-      caption,
-    };
-  }
-
-  if (opts.media_url) {
-    const { base64, mimeType } = await convertUrlToBase64(opts.media_url);
-    return {
-      media: `data:${opts.mime_type || mimeType};base64,${base64}`,
-      caption,
-    };
-  }
-
-  return {};
 }
 
 /** Quita base64 gigantes del JSON de media (provocaban timeout al listar chats). */
@@ -340,30 +288,27 @@ export const sendMessage = createServerFn({ method: "POST" })
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
-    // Build payload and resolve media (including signed URLs)
+    // Payload liviano: no descargar/reconvertir media dentro de la función.
+    // La extensión resuelve la URL una sola vez al ejecutar el comando.
     const payload: Record<string, unknown> = {
       chatId,
       text: data.text.trim() || data.caption || "",
     };
 
-    // Use helper to resolve media URL or base64, handling signed URLs for storage paths
-    const resolved = await resolveMediaForCommand({
-      media_url: data.media_url,
-      media_base64: data.media_base64,
-      media_storage_path: data.media_storage_path,
-      mime_type: data.mime_type,
-      caption: data.caption,
-      text: data.text,
-    });
-
-    if (resolved.media) {
-      if (resolved.media.startsWith("data:")) {
-        payload.media = resolved.media;
-      } else {
-        payload.mediaUrl = resolved.media;
-      }
-      if (resolved.caption) payload.caption = resolved.caption;
+    if (data.media_base64) {
+      const raw = data.media_base64.trim();
+      payload.media = raw.startsWith("data:")
+        ? raw
+        : `data:${data.mime_type || "application/octet-stream"};base64,${raw}`;
+    } else if (data.media_url) {
+      payload.mediaUrl = data.media_url;
+    } else if (data.media_storage_path) {
+      payload.mediaUrl = supabaseAdmin.storage
+        .from("media")
+        .getPublicUrl(data.media_storage_path).data.publicUrl;
     }
+    if (data.mime_type) payload.mimeType = data.mime_type;
+    if (data.caption || data.text) payload.caption = data.caption || data.text;
 
     // Generar un ID para el comando para poder usarlo en el wa_message_id
     const cmdId = crypto.randomUUID();

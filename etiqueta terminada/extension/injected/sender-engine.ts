@@ -61,10 +61,14 @@ class SenderEngine {
   private sentTimestamps: number[] = [];
   private activeTasks: Map<string, AbortController> = new Map();
 
-  async send(payload: Omit<SendTask, "taskId" | "retryCount" | "status" | "createdAt" | "resolve">): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  async send(
+    payload: Omit<SendTask, "taskId" | "retryCount" | "status" | "createdAt" | "resolve"> & {
+      taskId?: string;
+    },
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     const task: SendTask = {
       ...payload,
-      taskId: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      taskId: payload.taskId || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       retryCount: 0,
       status: "pending",
       createdAt: Date.now(),
@@ -439,14 +443,8 @@ class SenderEngine {
               phone: phone.length >= 8 ? phone : undefined,
             }
           : undefined,
-        // Incluir media en el payload para que el backend pueda actualizar el mensaje
-        media: task.media
-          ? {
-              base64: task.media,
-              mimetype: task.options?.mimetype,
-              caption: task.caption,
-            }
-          : undefined,
+        // El mensaje pending del CRM ya conserva la URL pública. No reenviar
+        // base64 aquí: duplicaba payloads y ralentizaba ingest.
       },
     });
 

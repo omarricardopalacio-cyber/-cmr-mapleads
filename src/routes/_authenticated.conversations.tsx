@@ -58,7 +58,11 @@ function ConversationsLayout() {
   const { data, isLoading } = useQuery({
     queryKey: ["threads", filterTab],
     queryFn: () => fn({ data: { filter: filterTab } }),
-    refetchInterval: 2500,
+    // 1500 chats cada 2.5 s saturaban Supabase/Netlify y ralentizaban
+    // ingest, comandos y apertura de conversaciones.
+    refetchInterval: 10_000,
+    staleTime: 8_000,
+    refetchOnWindowFocus: false,
   });
   const params = useParams({ strict: false }) as { threadId?: string };
   const activeId = params.threadId;

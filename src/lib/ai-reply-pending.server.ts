@@ -7,6 +7,7 @@
  */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { normalizeOutboundChatId } from "@/lib/utils";
+import { isNetlifyRuntime } from "@/lib/runtime-env.server";
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
 
@@ -29,7 +30,7 @@ export function attachAiReplyRunner(fn: AiReplyRunner) {
 }
 
 // En Netlify el cron corre cada minuto: debounce corto para no acumular retrasos.
-const DEFAULT_DEBOUNCE_MS = process.env.NETLIFY === "true" ? 1500 : 5000;
+const DEFAULT_DEBOUNCE_MS = isNetlifyRuntime() ? 1500 : 5000;
 const DEFAULT_FLOW_WAIT_MS = 5000;
 
 function debounceMs() {
@@ -102,7 +103,7 @@ export async function contactHasExecutingFlow(contactId: string): Promise<boolea
     if (run.status === "wait_node" && run.next_execution_at) {
       const nextTime = new Date(run.next_execution_at).getTime();
       const diffMs = nextTime - now;
-      if (diffMs < 5 * 60 * 1000) {
+      if (diffMs > 0 && diffMs < 5 * 60 * 1000) {
         return true;
       }
     }
@@ -181,7 +182,7 @@ export async function scheduleDebouncedAiReply(params: {
   // En Netlify/serverless la IA síncrona dentro de /ingest provoca 502 (timeout).
   // Solo ejecutar inmediato si se fuerza explícitamente y no hay cola/flujo.
   const allowImmediate =
-    process.env.AI_REPLY_IMMEDIATE === "true" || process.env.NETLIFY !== "true";
+    process.env.AI_REPLY_IMMEDIATE === "true" || !isNetlifyRuntime();
   const shouldExecuteImmediately =
     allowImmediate && !isBusy && !hasPendingCmds && extraMs === 0;
 
@@ -213,7 +214,7 @@ export async function scheduleDebouncedAiReply(params: {
       sessionId,
       chatId,
     });
-  } else if (process.env.NETLIFY === "true") {
+  } else if (isNetlifyRuntime()) {
     console.info("[ai-reply-pending] Netlify: IA diferida a ai_reply_pending/cron (evita 502 ingest)", {
       threadId,
       isBusy,
@@ -296,7 +297,7 @@ export async function scheduleDebouncedAiReply(params: {
   const wakeIn = debounceMs() + extraMs + 250;
   const capturedThread = threadId;
 
-  if (process.env.NETLIFY === "true") {
+  if (isNetlifyRuntime()) {
     const base =
       process.env.URL ||
       process.env.DEPLOY_PRIME_URL ||
@@ -304,14 +305,22 @@ export async function scheduleDebouncedAiReply(params: {
       "https://cmrmaleads.netlify.app";
     // Background function: responde 202 al instante y sigue viva tras el ingest.
     const bgUrl = `${String(base).replace(/\/$/, "")}/.netlify/functions/ai-wake-bg`;
-    void fetch(bgUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threadId: capturedThread, delayMs: wakeIn }),
-    }).catch((err) => {
+    try {
+      // Esperar únicamente el 202 de aceptación. Con background:true la
+      // respuesta es inmediata y garantiza que Netlify sí encoló el trabajo.
+      const wakeResponse = await fetch(bgUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId: capturedThread, delayMs: wakeIn }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!wakeResponse.ok) {
+        console.warn("[ai-reply-pending] ai-wake-bg rechazado:", wakeResponse.status);
+      }
+    } catch (err) {
       console.warn("[ai-reply-pending] ai-wake-bg:", (err as Error)?.message);
       // Fallback: cron engine-dispatch cada minuto
-    });
+    }
   } else {
     setTimeout(() => {
       void processDueAiReplies({ threadId: capturedThread, limit: 5 }).catch((err) => {
@@ -350,11 +359,30 @@ export async function releaseAiReplyPendingForContact(contactId: string): Promis
     respondAfter,
   });
 
-  setTimeout(() => {
-    for (const row of rows) {
-      void processDueAiReplies({ threadId: row.thread_id, limit: 5 }).catch(() => {});
-    }
-  }, debounceMs() + 250);
+  if (isNetlifyRuntime()) {
+    const base =
+      process.env.URL ||
+      process.env.DEPLOY_PRIME_URL ||
+      process.env.DEPLOY_URL ||
+      "https://cmrmaleads.netlify.app";
+    const bgUrl = `${String(base).replace(/\/$/, "")}/.netlify/functions/ai-wake-bg`;
+    await Promise.allSettled(
+      rows.map((row: any) =>
+        fetch(bgUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threadId: row.thread_id, delayMs: debounceMs() + 250 }),
+          signal: AbortSignal.timeout(5_000),
+        }),
+      ),
+    );
+  } else {
+    setTimeout(() => {
+      for (const row of rows) {
+        void processDueAiReplies({ threadId: row.thread_id, limit: 5 }).catch(() => {});
+      }
+    }, debounceMs() + 250);
+  }
 }
 
 export async function cancelAiReplyPendingForThread(threadId: string, reason?: string) {
@@ -394,6 +422,16 @@ export async function processDueAiReplies(opts?: {
   let processed = 0;
   let deferred = 0;
   let skipped = 0;
+
+  // Si la función murió después del claim, processing_at quedaba bloqueado
+  // para siempre y el cron nunca volvía a tomar esa respuesta.
+  const staleClaimBefore = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  await dyn()
+    .from("ai_reply_pending")
+    .update({ processing_at: null, updated_at: now })
+    .is("processed_at", null)
+    .is("cancelled_at", null)
+    .lt("processing_at", staleClaimBefore);
 
   let q = dyn()
     .from("ai_reply_pending")

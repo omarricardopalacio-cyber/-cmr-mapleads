@@ -1,8 +1,35 @@
 // @ts-nocheck
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { processRunUntilWaitOrCompleted } from "./flow-runner.server";
+import { isNetlifyRuntime } from "@/lib/runtime-env.server";
 
 const ACTIVE_RUN_STATUSES = ["active", "running", "wait_node", "paused"];
+
+async function wakeDeferredFlowRunner(): Promise<void> {
+  if (!isNetlifyRuntime()) return;
+  const base =
+    process.env.URL ||
+    process.env.DEPLOY_PRIME_URL ||
+    process.env.DEPLOY_URL ||
+    "https://cmrmaleads.netlify.app";
+  try {
+    const response = await fetch(
+      `${String(base).replace(/\/$/, "")}/.netlify/functions/ai-wake-bg`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delayMs: 0 }),
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!response.ok) {
+      console.warn("[flow-trigger] background wake rechazado:", response.status);
+    }
+  } catch (err) {
+    // engine-dispatch (cada minuto) queda como respaldo.
+    console.warn("[flow-trigger] background wake falló:", (err as Error)?.message);
+  }
+}
 
 /**
  * Cancela ejecuciones activas del contacto.
@@ -241,6 +268,8 @@ export async function ensureFlowRunForContact(params: {
     } catch (err: any) {
       console.error("[ensureFlowRunForContact] Error procesando run", err?.message, { flowId, contactId });
     }
+  } else if (run) {
+    await wakeDeferredFlowRunner();
   }
 
   return {
@@ -471,7 +500,7 @@ export async function startProductEntryFlow(params: {
       firstStepId: firstStep.id,
       maxSends: flow.max_sends_per_contact,
       flowName: flow.name,
-      processNow: true,
+      processNow: !isNetlifyRuntime(),
     });
 
     console.info("[startProductEntryFlow] resultado", {
@@ -598,7 +627,7 @@ export async function tryKeywordFlowsForText(params: {
   if (!text) return { started: false };
   // Por defecto diferir en Netlify; en local/catálogo se puede procesar ya.
   const processNow =
-    params.processNow ?? (process.env.NETLIFY === "true" ? false : true);
+    params.processNow ?? !isNetlifyRuntime();
 
   try {
     const { data: keywordFlows, error } = await supabaseAdmin

@@ -47,5 +47,5 @@ export default async (req) => {
 };
 
 export const config = {
-  type: "background",
+  background: true,
 };

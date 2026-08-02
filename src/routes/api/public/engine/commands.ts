@@ -45,11 +45,6 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           .maybeSingle()
         if (sErr || !session) return json(401, { error: 'Invalid session token' })
 
-        await supabaseAdmin
-          .from('wa_sessions')
-          .update({ status: 'connected', last_heartbeat_at: new Date().toISOString() })
-          .eq('id', session.id)
-
         const now = new Date().toISOString()
 
         // Reclaim en background: no bloquear el poll (cold start + update = timeout en SW).

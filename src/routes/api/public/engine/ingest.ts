@@ -20,6 +20,7 @@ import {
   resolveOutboundMessageSource,
 } from '@/lib/message-insert.server'
 import { normalizeOutboundChatId } from '@/lib/utils'
+import { isNetlifyRuntime } from '@/lib/runtime-env.server'
 import {
   scheduleDebouncedAiReply,
   processDueAiReplies,
@@ -1463,6 +1464,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             // el segundo evento del mismo audio (ya con bytes/URL) y debe llegar
             // hasta la rama que actualiza/transcribe el mensaje existente.
             // lidRecovery con mensaje ya guardado: solo fusionar contacto, no reinsertar.
+            let priorMessageThreadIdForLidRecovery: string | null = null
             if (e.waMessageId && (e.type === 'message-in' || e.type === 'message-out')) {
               const { data: priorMsg } = await supabaseAdmin
                 .from('messages')
@@ -1470,7 +1472,17 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 .eq('org_id', session.org_id)
                 .eq('wa_message_id', e.waMessageId)
                 .maybeSingle()
-              if (priorMsg?.id && !e.mediaRecovery) {
+              if (priorMsg?.id && e.lidRecovery) {
+                // El primer evento pudo guardarse con un @lid anónimo. El segundo
+                // trae teléfono/nombre/foto: debe atravesar la resolución de
+                // contacto, pero no volverá a disparar automatización porque el
+                // mensaje ya existe.
+                priorMessageThreadIdForLidRecovery = priorMsg.thread_id
+                console.info('[ingest] enriqueciendo contacto desde lidRecovery', {
+                  waMessageId: e.waMessageId,
+                  threadId: priorMsg.thread_id,
+                })
+              } else if (priorMsg?.id && !e.mediaRecovery) {
                 console.log('[ingest] skip cross-thread duplicate waMessageId', {
                   waMessageId: e.waMessageId,
                   threadId: priorMsg.thread_id,
@@ -1509,6 +1521,33 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               phone = sanitizeContactPhone(resolved.phone, waId, ownDigits)
             }
 
+            if (priorMessageThreadIdForLidRecovery && phone) {
+              const { data: priorThread } = await supabaseAdmin
+                .from('threads')
+                .select('contact_id')
+                .eq('id', priorMessageThreadIdForLidRecovery)
+                .eq('org_id', session.org_id)
+                .maybeSingle()
+              if (priorThread?.contact_id) {
+                contactId = priorThread.contact_id
+                const recoveryPatch: Record<string, unknown> = {
+                  phone,
+                  wa_id: waId,
+                }
+                if (isUsefulDisplayName(e.contact?.displayName, phone, waId)) {
+                  recoveryPatch.display_name = e.contact!.displayName
+                }
+                if (e.contact?.profilePictureUrl) {
+                  recoveryPatch.profile_picture_url = e.contact.profilePictureUrl
+                }
+                await supabaseAdmin
+                  .from('contacts')
+                  .update(recoveryPatch as any)
+                  .eq('id', priorThread.contact_id)
+                  .eq('org_id', session.org_id)
+              }
+            }
+
             // Si el contacto LID ya existe con phone=LID (dato basura), limpiarlo
             if (isLidKey(waId)) {
               const { data: dirtyLid } = await supabaseAdmin
@@ -1530,7 +1569,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               // .maybeSingle() rompe si ya hay duplicados → crea una 3ª ficha.
               const { data: phoneRows } = await supabaseAdmin
                 .from('contacts')
-                .select('id, wa_id, display_name, updated_at')
+                .select('id, wa_id, display_name, profile_picture_url, updated_at')
                 .eq('org_id', session.org_id)
                 .eq('phone', phone)
                 .order('updated_at', { ascending: false })
@@ -1585,6 +1624,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   phone ?? undefined,
                   waId,
                 )
+                const hasNewProfilePhoto =
+                  !!e.contact?.profilePictureUrl &&
+                  e.contact.profilePictureUrl !== byPhone.profile_picture_url
 
                 // Preferir wa_id de teléfono real sobre LID cuando ya tenemos phone
                 const nextWaId =
@@ -1594,7 +1636,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       ? byPhone.wa_id
                       : waId
 
-                if (byPhone.wa_id !== nextWaId || (currentIsAnonymous && hasNewRealName)) {
+                if (
+                  byPhone.wa_id !== nextWaId ||
+                  (currentIsAnonymous && hasNewRealName) ||
+                  hasNewProfilePhoto
+                ) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
@@ -1603,7 +1649,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         ? e.contact!.displayName
                         : (byPhone.display_name ?? phone),
                       phone,
-                      profile_picture_url: e.contact?.profilePictureUrl,
+                      ...(e.contact?.profilePictureUrl
+                        ? { profile_picture_url: e.contact.profilePictureUrl }
+                        : {}),
                     })
                     .eq('id', byPhone.id)
                 }
@@ -1680,7 +1728,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (contactId) {
               const { data: cont } = await supabaseAdmin
                 .from('contacts')
-                .select('display_name, wa_id')
+                .select('display_name, wa_id, profile_picture_url')
                 .eq('id', contactId)
                 .maybeSingle()
               if (cont) {
@@ -1694,13 +1742,20 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   phone ?? undefined,
                   waId,
                 )
+                const hasNewProfilePhoto =
+                  !!e.contact?.profilePictureUrl &&
+                  e.contact.profilePictureUrl !== cont.profile_picture_url
 
-                if (currentIsAnonymous && hasNewRealName) {
+                if ((currentIsAnonymous && hasNewRealName) || hasNewProfilePhoto) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
-                      display_name: e.contact!.displayName,
-                      profile_picture_url: e.contact?.profilePictureUrl,
+                      ...(currentIsAnonymous && hasNewRealName
+                        ? { display_name: e.contact!.displayName }
+                        : {}),
+                      ...(e.contact?.profilePictureUrl
+                        ? { profile_picture_url: e.contact.profilePictureUrl }
+                        : {}),
                     })
                     .eq('id', contactId)
                 } else if (
@@ -1758,6 +1813,21 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             }
 
             if (!contactId) continue
+
+            if (
+              priorMessageThreadIdForLidRecovery &&
+              e.lidRecovery &&
+              !e.mediaRecovery
+            ) {
+              // Ya enriquecimos/fusionamos el contacto. El mensaje original ya
+              // existe: no crear otro hilo, no reinsertar y no reactivar IA/flujos.
+              console.info('[ingest] lidRecovery aplicado sin duplicar mensaje', {
+                waMessageId: e.waMessageId,
+                threadId: priorMessageThreadIdForLidRecovery,
+                contactId,
+              })
+              continue
+            }
 
             // No tocar last_message_at aquí: solo tras insert exitoso del mensaje.
             // Si no, la lista muestra chats "activos" con 0 mensajes.
@@ -2262,8 +2332,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       chatId: sendChatId,
                     })
                     if (
-                      !(await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey)) &&
-                      aiReplyDedupe.shouldProcess(aiReplyDedupKey)
+                      !(await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey))
                     ) {
                       await scheduleAiReplyFromIngest({
                         orgId: session.org_id,
@@ -2559,7 +2628,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       contactId,
                       flowId: session.default_flow_id,
                       firstStepId: firstStep.id,
-                      processNow: true,
+                      processNow: !isNetlifyRuntime(),
                     })
                     if (welcome.started || welcome.alreadyActive || welcome.alreadyRecent) {
                       responder = 'welcome_flow'
@@ -2680,11 +2749,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 )
                 if (alreadyQueued) {
                   console.log('[ingest] skip duplicate AI reply by persisted command', {
-                    aiReplyDedupKey,
-                    threadId: thread.id,
-                  })
-                } else if (!aiReplyDedupe.shouldProcess(aiReplyDedupKey)) {
-                  console.log('[ingest] skip duplicate AI reply', {
                     aiReplyDedupKey,
                     threadId: thread.id,
                   })
