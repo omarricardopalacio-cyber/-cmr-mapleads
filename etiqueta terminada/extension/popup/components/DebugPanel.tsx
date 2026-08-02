@@ -127,7 +127,7 @@ export default function DebugPanel() {
         )}
       </div>
 
-      {state.lastError && (
+      {state.lastError && state.wsStatus !== "connected" ? (
         <div className="bg-red-500/10 border border-red-500/20 rounded p-2 text-red-400 space-y-1">
           <div>Error: {state.lastError}</div>
           {state.lastError === "not_configured" ? (
@@ -138,12 +138,17 @@ export default function DebugPanel() {
           ) : null}
           {/Failed to fetch|timeout|commands /i.test(state.lastError) ? (
             <div className="text-red-300/90 text-[10px] leading-relaxed">
-              Fallo de red con Netlify (timeout). Recarga la extensión y WhatsApp.
-              Si persiste, el poll de /commands estaba pesado — ya se aligeró en el backend.
+              Netlify a veces tarda 10–20s en despertar (cold start). Espera 30s sin
+              recargar; si pasa a CONECTADO el error era temporal.
             </div>
           ) : null}
         </div>
-      )}
+      ) : null}
+      {state.wsStatus === "connected" && state.lastError ? (
+        <div className="text-[10px] text-slate-500">
+          Conectado (último aviso limpio en el próximo poll)
+        </div>
+      ) : null}
 
       <div className="flex gap-2">
         <button

@@ -56,6 +56,10 @@ async function loadConfig(): Promise<void> {
   backendUrl = (cfg.backendUrl || "").replace(/\/$/, "") || null;
   sessionToken = cfg.sessionToken || null;
   console.log("[ServiceWorker] Config cargada:", { backendUrl, hasToken: !!sessionToken });
+  // Al recargar la extensión no arrastrar un lastError viejo (timeout de cold start).
+  if (backendUrl && sessionToken) {
+    await chrome.storage.local.set({ lastError: null });
+  }
   await restoreSession();
 }
 
@@ -87,7 +91,8 @@ async function saveConfig(url: string, token: string): Promise<void> {
     tokenLen: cleanToken.length,
   });
   if (backendUrl && sessionToken) {
-    // Probar backend al instante para quitar DESCONECTADO / not_configured
+    pollFailStreak = 0;
+    // Probar backend al instante (cold start puede tardar; no marcar error aún)
     void pollCommands().catch(() => {});
   }
 }
@@ -259,6 +264,8 @@ async function pollCommands(): Promise<void> {
   }
 
   try {
+    // Netlify cold start suele tardar 8–15s; timeout corto provocaba "commands timeout"
+    // justo al recargar la extensión aunque el backend estuviera bien.
     let res: Response | null = null;
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -269,20 +276,22 @@ async function pollCommands(): Promise<void> {
             method: "GET",
             headers: { "X-Session-Token": sessionToken || "" },
           },
-          12_000,
+          28_000,
         );
         lastErr = null;
         break;
       } catch (e) {
         lastErr = e;
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
       }
     }
     if (!res) throw lastErr || new Error("Failed to fetch");
 
     if (!res.ok) {
       pollFailStreak++;
-      if (pollFailStreak >= 3) {
+      // 401 = token inválido (sí reportar). 5xx/timeouts: tolerar más.
+      const hardFail = res.status === 401 || res.status === 403 || pollFailStreak >= 5;
+      if (hardFail) {
         await chrome.storage.local.set({
           wsStatus: "disconnected",
           lastError: `commands ${res.status}`,
@@ -299,7 +308,8 @@ async function pollCommands(): Promise<void> {
   } catch (e: any) {
     pollFailStreak++;
     const msg = String(e?.name === "AbortError" ? "commands timeout" : e?.message || e);
-    if (pollFailStreak >= 3) {
+    // Cold start / blip: no asustar al usuario hasta 5 fallos seguidos
+    if (pollFailStreak >= 5) {
       await chrome.storage.local.set({ wsStatus: "disconnected", lastError: msg });
     } else {
       console.warn("[ServiceWorker] poll fallo temporal", pollFailStreak, msg);
