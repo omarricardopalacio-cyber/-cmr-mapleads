@@ -356,7 +356,18 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       .order("last_message_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (thread?.session_id) return thread.session_id;
+
+    if (thread?.session_id) {
+      const { data: threadSession } = await supabaseAdmin
+        .from("wa_sessions")
+        .select("id, status")
+        .eq("id", thread.session_id)
+        .maybeSingle();
+
+      if (threadSession?.status === "connected") {
+        return threadSession.id;
+      }
+    }
 
     const { data: connectedSession } = await supabaseAdmin
       .from("wa_sessions")
@@ -366,7 +377,17 @@ async function execStep(run: any, step: any): Promise<{ branch?: string; wait?: 
       .order("last_heartbeat_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (connectedSession?.id) return connectedSession.id;
+
+    if (connectedSession?.id) {
+      if (thread?.session_id !== connectedSession.id) {
+        await supabaseAdmin
+          .from("threads")
+          .update({ session_id: connectedSession.id } as any)
+          .eq("contact_id", contactId)
+          .eq("org_id", orgId);
+      }
+      return connectedSession.id;
+    }
 
     const { data: anySession } = await supabaseAdmin
       .from("wa_sessions")

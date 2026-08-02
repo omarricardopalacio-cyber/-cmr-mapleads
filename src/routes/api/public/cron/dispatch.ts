@@ -150,6 +150,18 @@ async function handler({ request }: { request: Request }) {
     let sentInBatch = 0;
     let failedInBatch = 0;
 
+    // Resolve active connected session for the organization
+    const { data: activeSess } = await supabaseAdmin
+      .from("wa_sessions")
+      .select("id")
+      .eq("org_id", b.org_id)
+      .eq("status", "connected")
+      .order("last_heartbeat_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const targetSessionId = activeSess?.id || b.session_id;
+
     for (const r of pending) {
       let payload: Record<string, unknown>;
       let type: string;
@@ -182,7 +194,7 @@ async function handler({ request }: { request: Request }) {
         .from("engine_commands")
         .insert({
           org_id: b.org_id,
-          session_id: b.session_id,
+          session_id: targetSessionId,
           type,
           payload: { ...payload, chatId: normalizeWaIdForBroadcast(r.wa_id) },
           status: "pending",
