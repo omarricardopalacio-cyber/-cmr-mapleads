@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Maple Local Desktop Pilot</title>
+    <style>
+      body { background: #0f172a; color: #e2e8f0; font: 14px system-ui; margin: 0; padding: 28px; }
+      main { max-width: 860px; margin: auto; } section { background: #172033; border: 1px solid #334155; border-radius: 8px; padding: 18px; margin: 16px 0; }
+      input, textarea { box-sizing: border-box; width: 100%; background: #0f172a; color: inherit; border: 1px solid #475569; border-radius: 4px; padding: 8px; margin: 4px 0 12px; }
+      button { background: #10b981; color: #052e16; padding: 9px 14px; font-weight: 700; border: 0; border-radius: 4px; cursor: pointer; }
+      code { word-break: break-all; color: #6ee7b7; } li { margin: 8px 0; } .muted { color: #94a3b8; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Maple local desktop pilot</h1>
+      <p id="health" class="muted">Starting local server…</p>
+      <section>
+        <h2>Desktop extension configuration</h2>
+        <p>Build the separate desktop extension path, then use:</p>
+        <p>URL: <code>http://127.0.0.1:4317</code></p>
+        <p>Token: <code id="token"></code></p>
+      </section>
+      <section>
+        <h2>Queue an outbound proof</h2>
+        <form id="command-form">
+          <label>WhatsApp chat ID<input id="chat-id" placeholder="573001234567@c.us" required /></label>
+          <label>Text<textarea id="text" required>Local pilot test message</textarea></label>
+          <button>Queue SEND_MESSAGE</button> <span id="result" class="muted"></span>
+        </form>
+      </section>
+      <section><h2>Recent messages</h2><ul id="messages"><li class="muted">No messages yet.</li></ul></section>
+    </main>
+    <script>
+      const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      const render = async () => {
+        if (!window.pilot?.status) {
+          document.querySelector("#health").textContent = "Preload failed: window.pilot is unavailable.";
+          document.querySelector("#token").textContent = "(unavailable)";
+          return;
+        }
+        try {
+          const state = await window.pilot.status();
+          document.querySelector("#health").textContent = `Healthy: ${state.url} (bound to loopback only)`;
+          document.querySelector("#token").textContent = state.token;
+          const list = document.querySelector("#messages");
+          list.innerHTML = state.messages.length
+            ? state.messages.map(m => `<li><b>${escapeHtml(m.contactName)}</b> (${escapeHtml(m.direction)}): ${escapeHtml(m.text)}<br><span class="muted">${escapeHtml(m.sentAt)} · ${escapeHtml(m.chatId)}</span></li>`).join("")
+            : "<li class='muted'>No messages yet.</li>";
+        } catch (error) {
+          document.querySelector("#health").textContent = `Status error: ${error.message || error}`;
+        }
+      };
+      document.querySelector("#command-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        const result = document.querySelector("#result");
+        try {
+          if (!window.pilot?.enqueue) throw new Error("Preload unavailable");
+          const command = await window.pilot.enqueue(document.querySelector("#chat-id").value, document.querySelector("#text").value);
+          result.textContent = `Queued ${command.id}`;
+        } catch (error) { result.textContent = error.message; }
+      });
+      render(); setInterval(render, 2500);
+    </script>
+  </body>
+</html>

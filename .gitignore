@@ -9,6 +9,8 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-desktop
+maple-local-extension
 dist-ssr
 .output
 .vinxi
@@ -28,6 +30,11 @@ migracion.env
 migracion-dump/
 # Secretos locales (para produccion se usan las variables de Netlify)
 .env
+.env.*
+!.env.example
+hybrid-cloud/.env
+hybrid-cloud/.env.*
+!hybrid-cloud/.env.example
 
 # Editor directories and files
 .vscode/*

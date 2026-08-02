@@ -5,6 +5,11 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const desktopPilot = process.env.MAPLE_DESKTOP_PILOT === "1";
+const outputDirectory = desktopPilot ? "dist-desktop" : "dist";
+const buildDefine = {
+  __MAPLE_DESKTOP_PILOT__: JSON.stringify(desktopPilot),
+};
 
 // latest en npm (= 4.4.3 hoy). El parche isBot + fallback getMessages cubre WA Web nuevo.
 const WPP_CDN = "https://cdn.jsdelivr.net/npm/@wppconnect/wa-js@latest/dist/wppconnect-wa.js";
@@ -12,6 +17,13 @@ const WPP_LOCAL = resolve(__dirname, "public", "vendor", "wppconnect-wa.min.js")
 const WPP_DIST = resolve(__dirname, "dist", "vendor", "wppconnect-wa.min.js");
 
 async function ensureWppJs() {
+  if (desktopPilot) {
+    if (!fs.existsSync(WPP_LOCAL)) {
+      throw new Error("Desktop pilot requires the existing local WA-JS vendor file.");
+    }
+    console.log("🧪 Desktop pilot: using existing local WA-JS without modifying shared assets.");
+    return;
+  }
   // Siempre intenta bajar la ÚLTIMA versión de WA-JS. WhatsApp Web cambia sus
   // módulos internos con frecuencia; si se reutiliza una copia vieja, el engine
   // deja de encontrar módulos (isAuthenticated, ChatStore, MsgStore...) y no
@@ -47,9 +59,13 @@ async function runBuilds() {
   console.log("\n📦 Building Popup and Service Worker...");
   await build({
     configFile: false,
+    // Chrome extension pages cannot load absolute "/popup.js" URLs.
+    base: "./",
+    // Vite only replaces globals when `define` is top-level (not under build).
+    define: buildDefine,
     plugins: [react()],
     build: {
-      outDir: "dist",
+      outDir: outputDirectory,
       emptyOutDir: true,
       rollupOptions: {
         input: {
@@ -69,8 +85,9 @@ async function runBuilds() {
   console.log("\n📦 Building Content Script (Self-contained IIFE)...");
   await build({
     configFile: false,
+    define: buildDefine,
     build: {
-      outDir: "dist",
+      outDir: outputDirectory,
       emptyOutDir: false,
       lib: {
         entry: resolve(__dirname, "content/index.ts"),
@@ -90,8 +107,9 @@ async function runBuilds() {
   console.log("\n📦 Building Injected Engine (Self-contained IIFE)...");
   await build({
     configFile: false,
+    define: buildDefine,
     build: {
-      outDir: "dist",
+      outDir: outputDirectory,
       emptyOutDir: false,
       lib: {
         entry: resolve(__dirname, "injected/whatsapp-engine.ts"),
@@ -107,6 +125,17 @@ async function runBuilds() {
     }
   });
 
+  // Chrome extension pages break on absolute Vite asset URLs and crossorigin.
+  const popupHtmlPath = resolve(__dirname, outputDirectory, "popup", "index.html");
+  if (fs.existsSync(popupHtmlPath)) {
+    const fixedHtml = fs
+      .readFileSync(popupHtmlPath, "utf-8")
+      .replace(/\s+crossorigin(?:="[^"]*")?/g, "")
+      .replace(/(src|href)="\/([^"]+)"/g, '$1="../$2"');
+    fs.writeFileSync(popupHtmlPath, fixedHtml, "utf-8");
+    console.log("\n✅ popup/index.html normalized for Chrome extension loading");
+  }
+
   // Copy manifest.json
   const manifestContent = JSON.parse(fs.readFileSync(resolve(__dirname, "manifest.json"), "utf-8"));
   
@@ -121,24 +150,31 @@ async function runBuilds() {
     war.resources.push("vendor/*");
   }
 
+  if (desktopPilot) {
+    manifestContent.name = "MAPLE WA Engine (Local)";
+    manifestContent.description = "Local desktop pilot bridge for Maple SQLite on 127.0.0.1:4317";
+    // Chrome only accepts 1-4 dot-separated integers (no suffixes like -local).
+    manifestContent.version = "1.0.10";
+  }
+
   fs.writeFileSync(
-    resolve(__dirname, "dist/manifest.json"),
+    resolve(__dirname, outputDirectory, "manifest.json"),
     JSON.stringify(manifestContent, null, 2),
     "utf-8"
   );
-  console.log("\n✅ Manifest copied and normalized to dist/manifest.json");
+  console.log(`\n✅ Manifest copied and normalized to ${outputDirectory}/manifest.json`);
 
   // Copy vendor folder to dist
   if (fs.existsSync(dirname(WPP_LOCAL))) {
-    fs.mkdirSync(resolve(__dirname, "dist", "vendor"), { recursive: true });
+    fs.mkdirSync(resolve(__dirname, outputDirectory, "vendor"), { recursive: true });
     const vendorFiles = fs.readdirSync(dirname(WPP_LOCAL));
     for (const file of vendorFiles) {
       fs.copyFileSync(
         resolve(dirname(WPP_LOCAL), file),
-        resolve(__dirname, "dist", "vendor", file)
+        resolve(__dirname, outputDirectory, "vendor", file)
       );
     }
-    console.log(`📁 Copied ${vendorFiles.length} vendor files to dist/vendor/`);
+    console.log(`📁 Copied ${vendorFiles.length} vendor files to ${outputDirectory}/vendor/`);
   }
   console.log("=====================================================");
   console.log("🎉 All builds completed successfully!");

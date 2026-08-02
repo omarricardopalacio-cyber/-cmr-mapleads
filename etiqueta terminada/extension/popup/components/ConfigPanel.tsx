@@ -1,13 +1,19 @@
 import { useState, useEffect } from "react";
 
+declare const __MAPLE_DESKTOP_PILOT__: boolean;
+
 const STORAGE_KEYS = ["backendUrl", "sessionToken"] as const;
 const PRODUCTION_BACKEND = "https://cmrmaleads.netlify.app";
+// Vite replaces this identifier at build time; keep a runtime fallback for safety.
+const DESKTOP_PILOT =
+  typeof __MAPLE_DESKTOP_PILOT__ !== "undefined" ? __MAPLE_DESKTOP_PILOT__ : false;
+const DEFAULT_BACKEND = DESKTOP_PILOT ? "http://127.0.0.1:4317" : PRODUCTION_BACKEND;
 const LEGACY_BACKENDS = new Set([
   "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app",
 ]);
 
 export default function ConfigPanel() {
-  const [backendUrl, setBackendUrl] = useState(PRODUCTION_BACKEND);
+  const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND);
   const [sessionToken, setSessionToken] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -21,7 +27,7 @@ export default function ConfigPanel() {
           : "";
       const backend =
         !storedUrl || LEGACY_BACKENDS.has(storedUrl)
-          ? PRODUCTION_BACKEND
+          ? DEFAULT_BACKEND
           : storedUrl;
       setBackendUrl(backend);
       // No escribir storage aquí: pisar solo la URL sin token dispara not_configured.

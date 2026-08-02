@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && node build.js",
+    "build:desktop": "tsc && node build-desktop.js",
+    "validate:desktop": "node validate-extension-bundle.mjs dist-desktop",
+    "validate:dist": "node validate-extension-bundle.mjs dist",
     "preview": "vite preview"
   },
   "dependencies": {
