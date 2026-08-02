@@ -28,14 +28,17 @@ export function attachAiReplyRunner(fn: AiReplyRunner) {
   aiReplyRunner = fn;
 }
 
+const DEFAULT_DEBOUNCE_MS = 5000;
+const DEFAULT_FLOW_WAIT_MS = 5000;
+
 function debounceMs() {
-  const n = Number(process.env.AI_REPLY_DEBOUNCE_MS || 0);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+  const n = Number(process.env.AI_REPLY_DEBOUNCE_MS ?? DEFAULT_DEBOUNCE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_DEBOUNCE_MS;
 }
 
 function flowWaitMs() {
-  const n = Number(process.env.AI_REPLY_FLOW_WAIT_MS || 0);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+  const n = Number(process.env.AI_REPLY_FLOW_WAIT_MS ?? DEFAULT_FLOW_WAIT_MS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FLOW_WAIT_MS;
 }
 
 function isoIn(ms: number) {
@@ -158,8 +161,12 @@ export async function scheduleDebouncedAiReply(params: {
   const respondAfter = isoIn(debounceMs() + extraMs);
   const now = new Date().toISOString();
 
-  // Ejecutar IA inmediatamente siempre que no haya retardo de auto-respuestas.
-  const shouldExecuteImmediately = extraMs === 0;
+  let isBusy = false;
+  if (waitForFlow !== false && contactId) {
+    isBusy = await contactHasExecutingFlow(contactId);
+  }
+  const hasPendingCmds = await hasPendingEngineCommandsForChat(sessionId, chatId);
+  const shouldExecuteImmediately = !isBusy && !hasPendingCmds && extraMs === 0;
 
   if (shouldExecuteImmediately) {
     const runner = await ensureRunner();
@@ -410,37 +417,36 @@ export async function processDueAiReplies(opts?: {
         continue;
       }
 
-      // ¿Llegó otro mensaje mientras reclamábamos?
-      const { data: fresh } = await dyn()
-        .from("ai_reply_pending")
-        .select("generation, respond_after")
-        .eq("id", row.id)
-        .maybeSingle();
-      if (!fresh || fresh.generation !== row.generation) {
-        await dyn()
-          .from("ai_reply_pending")
-          .update({ processing_at: null })
-          .eq("id", row.id);
-        skipped++;
-        continue;
-      }
-      if (fresh.respond_after && new Date(fresh.respond_after).getTime() > Date.now()) {
-        await dyn()
-          .from("ai_reply_pending")
-          .update({ processing_at: null })
-          .eq("id", row.id);
-        console.info("[ai-reply-pending] respuesta IA reprogramada por responder después", {
-          threadId: row.thread_id,
-          pendingId: row.id,
-          respondAfter: fresh.respond_after,
-        });
-        deferred++;
-        continue;
+      // ¿Hay un flujo activo o comandos pendientes para este chat? Si es así, reprogramar.
+      if (row.wait_for_flow !== false) {
+        const busy = await contactHasExecutingFlow(row.contact_id);
+        const hasPendingCommands = await hasPendingEngineCommandsForChat(row.session_id, row.chat_id);
+        if (busy || hasPendingCommands) {
+          const nextAt = isoIn(flowWaitMs());
+          await dyn()
+            .from("ai_reply_pending")
+            .update({
+              respond_after: nextAt,
+              processing_at: null,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+          console.info("[ai-reply-pending] flujo o comandos aún ejecutando/pendientes; reprograma", {
+            threadId: row.thread_id,
+            busy,
+            hasPendingCommands,
+            nextAt,
+          });
+          deferred++;
+          continue;
+        }
       }
 
       let text = String(row.latest_text || "").trim();
-      if (!text) {
-        try {
+      try {
+        const burst = await collectBurstInboundText(row.thread_id);
+        if (burst) text = burst;
+        else {
           const { data: lastIn } = await dyn()
             .from("messages")
             .select("text")
@@ -452,9 +458,9 @@ export async function processDueAiReplies(opts?: {
           if (lastIn?.text && String(lastIn.text).trim()) {
             text = String(lastIn.text).trim();
           }
-        } catch (_) {
-          /* keep latest_text */
         }
+      } catch (_) {
+        /* keep latest_text */
       }
 
       await runner({

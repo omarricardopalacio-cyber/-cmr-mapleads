@@ -398,28 +398,42 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
       : undefined
   const sentAt = toIso(e.sentAt) ?? toIso(p.sentAt) ?? toIso(p.timestamp) ?? toIso(p.t)
 
+  const payloadPhone =
+    typeof p.phoneNumber === 'string'
+      ? digits(p.phoneNumber)
+      : typeof p.phone === 'string'
+      ? digits(p.phone)
+      : undefined
+
   let contact = e.contact
   if (!contact && counterpart) {
     contact = {
       waId: counterpart,
-       displayName: pickDisplayName(p.notifyName ?? p.pushname ?? p.author?.name, counterpart, counterpartPhone),
-       phone: counterpartPhone,
-       profilePictureUrl: p.profilePictureUrl ?? p.profilePicture,
+      displayName: pickDisplayName(
+        p.notifyName ?? p.pushname ?? p.author?.name,
+        counterpart,
+        payloadPhone ?? counterpartPhone,
+      ),
+      phone: payloadPhone ?? counterpartPhone,
+      profilePictureUrl: p.profilePictureUrl ?? p.profilePicture,
     }
-   } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
-     contact = {
-       waId: counterpart,
-       displayName: pickDisplayName(contact.displayName, counterpart, counterpartPhone),
-       phone: counterpartPhone,
-       profilePictureUrl: contact.profilePictureUrl ?? p.profilePictureUrl ?? p.profilePicture,
-     }
-   } else if (contact) {
-     const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
-     const rawPhone = contact.phone ? digits(contact.phone) : counterpartPhone
-     const normalizedPhone = sanitizeContactPhone(
-       rawPhone ?? (!isLidKey(normalizedWaId) ? digits(normalizedWaId) : null),
-       normalizedWaId,
-     )
+  } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
+    contact = {
+      waId: counterpart,
+      displayName: pickDisplayName(contact.displayName, counterpart, payloadPhone ?? counterpartPhone),
+      phone: payloadPhone ?? counterpartPhone,
+      profilePictureUrl: contact.profilePictureUrl ?? p.profilePictureUrl ?? p.profilePicture,
+    }
+  } else if (contact) {
+    const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
+    const rawPhone =
+      contact.phone && contact.phone !== ''
+        ? digits(contact.phone)
+        : payloadPhone ?? counterpartPhone
+    const normalizedPhone = sanitizeContactPhone(
+      rawPhone ?? (!isLidKey(normalizedWaId) ? digits(normalizedWaId) : null),
+      normalizedWaId,
+    )
      if (normalizedWaId) {
        contact = {
          waId: normalizedWaId,
