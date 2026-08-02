@@ -142,7 +142,9 @@ function ThreadPage() {
     refetchInterval: 30000,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
-    retry: false,
+    retry: 1,
+    // No bloquear la UI 30s+ si el serverFn hace cold start lento
+    staleTime: 10_000,
   });
 
   // NIVEL 1: Consulta directa al navegador como salvavidas
@@ -561,12 +563,18 @@ function ThreadPage() {
             backgroundSize: "20px 20px",
           }}
         >
-          {(isLoading || clientLoading) && (
+          {/* Mostrar loading solo si aún no hay ningún mensaje (servidor ni cliente) */}
+          {mergedMessages.length === 0 && (isLoading || clientLoading) && (
             <p className="text-muted-foreground text-sm">Cargando mensajes...</p>
+          )}
+          {error && mergedMessages.length === 0 && !isLoading && !clientLoading && (
+            <p className="text-destructive text-sm px-2">
+              Error al cargar: {(error as Error).message}. Reintenta o recarga la página.
+            </p>
           )}
 
           {/* Chat vacío: casi siempre no hay filas en messages (no es un fallo de UI) */}
-          {!isLoading && !clientLoading && mergedMessages.length === 0 && (
+          {!isLoading && !clientLoading && mergedMessages.length === 0 && !error && (
             <div className="bg-slate-950 border border-amber-500/60 p-6 rounded-xl max-w-2xl mx-auto my-8 space-y-4 text-white shadow-lg">
               <div className="flex items-center gap-2 text-amber-300 font-bold text-lg">
                 <span>Sin mensajes en este chat</span>

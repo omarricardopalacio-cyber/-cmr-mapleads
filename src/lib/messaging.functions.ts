@@ -103,24 +103,46 @@ async function resolveMediaForCommand(opts: {
   return {};
 }
 
+/** Quita base64 gigantes del JSON de media (provocaban timeout al listar chats). */
+function slimMediaForClient(
+  media: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!media || typeof media !== "object") return media;
+  const out: Record<string, unknown> = { ...media };
+  delete out.base64;
+  delete out.body;
+  delete out.data;
+  // data: URIs enormes tampoco viajan al cliente
+  if (typeof out.url === "string" && out.url.startsWith("data:")) {
+    out.url = null;
+    out.missing_media = true;
+  }
+  return out;
+}
+
 async function signMessageMedia(
   media: Record<string, unknown> | null
 ): Promise<Record<string, unknown> | null> {
-  if (!media || typeof media !== "object") return media;
-  const url = typeof media.url === "string" ? media.url : null;
-  if (!url) return media;
+  const slim = slimMediaForClient(media);
+  if (!slim || typeof slim !== "object") return slim;
+  const url = typeof slim.url === "string" ? slim.url : null;
+  if (!url) return slim;
 
   // Si la URL ya es pública, no necesitamos firmarla. Esto previene que cambie la firma cada 3 segundos,
   // deteniendo el parpadeo/titileo de videos/imágenes y eliminando los timeouts en la base de datos.
   if (url.includes("/storage/v1/object/public/")) {
-    return media;
+    return slim;
   }
 
   const path = storagePathFromMediaUrl(url);
-  if (!path) return media;
-  const { data, error } = await supabaseAdmin.storage.from("media").createSignedUrl(path, 3600);
-  if (error || !data?.signedUrl) return media;
-  return { ...media, url: data.signedUrl };
+  if (!path) return slim;
+  try {
+    const { data, error } = await supabaseAdmin.storage.from("media").createSignedUrl(path, 3600);
+    if (error || !data?.signedUrl) return slim;
+    return { ...slim, url: data.signedUrl };
+  } catch {
+    return slim;
+  }
 }
 
 export const listMessages = createServerFn({ method: "GET" })
@@ -152,17 +174,17 @@ export const listMessages = createServerFn({ method: "GET" })
         .select("id, direction, text, sent_at, media")
         .eq("thread_id", data.threadId)
         .eq("org_id", orgId)
-        .order("sent_at", { ascending: true })
-        .limit(500);
-      messages = msgRes.data;
+        .order("sent_at", { ascending: false })
+        .limit(200);
+      messages = (msgRes.data ?? []).slice().reverse();
       msgErr = msgRes.error;
       if (msgErr) {
         console.error("[listMessages] messages query error (RLS):", msgErr.message);
       }
     }
 
-    // Fallback: si el cliente RLS falló o devolvió vacío, usar supabaseAdmin
-    const useFallback = !threadRow || !messages || messages.length === 0;
+    // Fallback solo si RLS falló o no hubo thread (chat vacío real NO debe ir a admin).
+    const useFallback = Boolean(threadErr || msgErr || !threadRow);
     if (useFallback) {
       console.warn("[listMessages] FALLBACK a supabaseAdmin. threadRow:", !!threadRow, "messagesCount:", messages?.length ?? 0);
       const { data: adminThread } = await supabaseAdmin
@@ -178,13 +200,13 @@ export const listMessages = createServerFn({ method: "GET" })
           .from("messages")
           .select("id, direction, text, sent_at, media")
           .eq("thread_id", data.threadId)
-          .order("sent_at", { ascending: true })
-          .limit(500);
+          .order("sent_at", { ascending: false })
+          .limit(200);
         if (adminErr) {
           console.error("[listMessages] messages query error (admin):", adminErr.message);
           throw new Error(`Messages query failed: ${adminErr.message}`);
         }
-        messages = adminMsgs ?? [];
+        messages = (adminMsgs ?? []).slice().reverse();
       }
     }
 
@@ -192,13 +214,22 @@ export const listMessages = createServerFn({ method: "GET" })
 
     const contact = Array.isArray(threadRow.contacts) ? threadRow.contacts[0] : threadRow.contacts;
     console.log("[listMessages] thread:", threadRow.id, "contact:", contact?.display_name ?? contact?.wa_id ?? "none", "messages:", (messages ?? []).length, "fallback:", useFallback);
-    const enriched = await Promise.all(
-      (messages ?? []).map(async (m) => ({
-        ...m,
-        text: sanitizeMessageText(m.text),
-        media: await signMessageMedia(m.media as Record<string, unknown> | null),
-      }))
-    );
+
+    // Firmar media en lotes pequeños (Promise.all de 200 firmas = timeout Netlify)
+    const rawMsgs = messages ?? [];
+    const enriched: typeof rawMsgs = [];
+    const BATCH = 15;
+    for (let i = 0; i < rawMsgs.length; i += BATCH) {
+      const chunk = rawMsgs.slice(i, i + BATCH);
+      const signed = await Promise.all(
+        chunk.map(async (m) => ({
+          ...m,
+          text: sanitizeMessageText(m.text),
+          media: await signMessageMedia(m.media as Record<string, unknown> | null),
+        })),
+      );
+      enriched.push(...signed);
+    }
 
     return {
       thread: {

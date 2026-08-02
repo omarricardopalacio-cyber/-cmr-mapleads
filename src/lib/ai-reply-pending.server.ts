@@ -290,14 +290,35 @@ export async function scheduleDebouncedAiReply(params: {
     console.info("[ai-reply-pending] programado", { threadId, respondAfter });
   }
 
-  // Despertar tras el debounce (best-effort en serverless)
+  // Despertar tras el debounce.
+  // En Netlify setTimeout muere con la request → HTTP fire-and-forget a /ai-wake
+  // (esa request aparte puede esperar el debounce y luego procesar).
   const wakeIn = debounceMs() + extraMs + 250;
   const capturedThread = threadId;
-  setTimeout(() => {
-    void processDueAiReplies({ threadId: capturedThread, limit: 5 }).catch((err) => {
-      console.warn("[ai-reply-pending] wake failed:", (err as Error)?.message);
+
+  if (process.env.NETLIFY === "true") {
+    const base =
+      process.env.URL ||
+      process.env.DEPLOY_PRIME_URL ||
+      process.env.DEPLOY_URL ||
+      "https://cmrmaleads.netlify.app";
+    // Background function: responde 202 al instante y sigue viva tras el ingest.
+    const bgUrl = `${String(base).replace(/\/$/, "")}/.netlify/functions/ai-wake-bg`;
+    void fetch(bgUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: capturedThread, delayMs: wakeIn }),
+    }).catch((err) => {
+      console.warn("[ai-reply-pending] ai-wake-bg:", (err as Error)?.message);
+      // Fallback: cron engine-dispatch cada minuto
     });
-  }, wakeIn);
+  } else {
+    setTimeout(() => {
+      void processDueAiReplies({ threadId: capturedThread, limit: 5 }).catch((err) => {
+        console.warn("[ai-reply-pending] wake failed:", (err as Error)?.message);
+      });
+    }, wakeIn);
+  }
 }
 
 /** Tras completar o pausar un flujo: adelanta la respuesta pendiente del contacto. */
