@@ -1,9 +1,9 @@
 [build]
-  # Copiar crons (engine-dispatch / daily-cleanup) al dir de functions de Nitro;
-  # sin esto Netlify no publica los scheduled jobs y fallan IA diferida, flujos y masivos.
-  command = "npm run build && mkdir -p .netlify/functions-internal && cp -f netlify/functions/*.mjs .netlify/functions-internal/"
+  # No overridear `functions` a functions-internal: Nitro ya publica el server ahí,
+  # y Netlify además toma netlify/functions (engine-dispatch / daily-cleanup).
+  # Copiar .mjs dentro de functions-internal rompía el bundler → 502 en ingest.
+  command = "npm run build"
   publish = "dist"
-  functions = ".netlify/functions-internal"
 
 [functions]
   node_bundler = "esbuild"

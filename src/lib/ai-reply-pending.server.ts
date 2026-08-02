@@ -177,7 +177,12 @@ export async function scheduleDebouncedAiReply(params: {
     isBusy = await contactHasExecutingFlow(contactId);
   }
   const hasPendingCmds = await hasPendingEngineCommandsForChat(sessionId, chatId);
-  const shouldExecuteImmediately = !isBusy && !hasPendingCmds && extraMs === 0;
+  // En Netlify/serverless la IA síncrona dentro de /ingest provoca 502 (timeout).
+  // Solo ejecutar inmediato si se fuerza explícitamente y no hay cola/flujo.
+  const allowImmediate =
+    process.env.AI_REPLY_IMMEDIATE === "true" || process.env.NETLIFY !== "true";
+  const shouldExecuteImmediately =
+    allowImmediate && !isBusy && !hasPendingCmds && extraMs === 0;
 
   if (shouldExecuteImmediately) {
     const runner = await ensureRunner();
@@ -206,6 +211,13 @@ export async function scheduleDebouncedAiReply(params: {
       contactId,
       sessionId,
       chatId,
+    });
+  } else if (process.env.NETLIFY === "true") {
+    console.info("[ai-reply-pending] Netlify: IA diferida a ai_reply_pending/cron (evita 502 ingest)", {
+      threadId,
+      isBusy,
+      hasPendingCmds,
+      extraMs,
     });
   }
 

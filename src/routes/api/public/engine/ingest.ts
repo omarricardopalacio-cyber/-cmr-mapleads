@@ -14,7 +14,7 @@ import { transcribeInboundAudio } from '@/lib/ai/transcribe.server'
 import { storagePathFromMediaUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createDedupTracker, buildInboundDedupKey, buildAiReplyDedupKey } from './-ingest-dedupe'
-import { ensureFlowRunForContact, tryKeywordFlowsForText } from '@/lib/flow-trigger.server'
+import { ensureFlowRunForContact } from '@/lib/flow-trigger.server'
 import {
   insertMessagesSafe,
   resolveOutboundMessageSource,
@@ -2111,11 +2111,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   let audioKeywordStarted = false
                   if (gotNewTranscript && e.text?.trim()) {
                     try {
+                      const { tryKeywordFlowsForText } = await import(
+                        '@/lib/flow-trigger.server'
+                      )
                       const kw = await tryKeywordFlowsForText({
                         orgId: session.org_id,
                         contactId,
                         text: e.text.trim(),
                         focusedProductId: (thread as any).focused_product_id || null,
+                        processNow: false,
                       })
                       audioKeywordStarted = kw.started
                     } catch (_) { /* ignore */ }
@@ -2224,11 +2228,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   let audioKeywordStarted2 = false
                   if (gotNewTranscript && e.text?.trim()) {
                     try {
+                      const { tryKeywordFlowsForText } = await import(
+                        '@/lib/flow-trigger.server'
+                      )
                       const kw = await tryKeywordFlowsForText({
                         orgId: session.org_id,
                         contactId,
                         text: e.text.trim(),
                         focusedProductId: (thread as any).focused_product_id || null,
+                        processNow: false,
                       })
                       audioKeywordStarted2 = kw.started
                     } catch (_) { /* ignore */ }
@@ -2626,11 +2634,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 realInboundText
               ) {
                 try {
+                  const { tryKeywordFlowsForText } = await import(
+                    '@/lib/flow-trigger.server'
+                  )
                   const kw = await tryKeywordFlowsForText({
                     orgId: session.org_id,
                     contactId,
                     text: realInboundText,
                     focusedProductId,
+                    processNow: false,
                   })
                   if (kw.started) {
                     if (responder === 'none') responder = 'generic_flow'

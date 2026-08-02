@@ -131,6 +131,7 @@ export const Route = createFileRoute("/api/public/store/chat/messages")({
             contactId: thread.contact_id,
             text,
             focusedProductId,
+            processNow: true,
           });
           keywordStarted = kw.started;
           if (keywordStarted) {

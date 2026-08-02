@@ -591,9 +591,14 @@ export async function tryKeywordFlowsForText(params: {
   contactId: string;
   text: string;
   focusedProductId?: string | null;
+  /** En ingest/Netlify usar false para no bloquear/tirar 502. Cron hace processDueRuns. */
+  processNow?: boolean;
 }): Promise<{ started: boolean; flowId?: string }> {
   const text = String(params.text || "").trim();
   if (!text) return { started: false };
+  // Por defecto diferir en Netlify; en local/catálogo se puede procesar ya.
+  const processNow =
+    params.processNow ?? (process.env.NETLIFY === "true" ? false : true);
 
   try {
     const { data: keywordFlows, error } = await supabaseAdmin
@@ -633,7 +638,7 @@ export async function tryKeywordFlowsForText(params: {
         firstStepId: firstStep.id,
         maxSends: (flow as any).max_sends_per_contact ?? null,
         flowName: flow.name,
-        processNow: true,
+        processNow,
       });
       if (fr.started) {
         return { started: true, flowId: flow.id };
