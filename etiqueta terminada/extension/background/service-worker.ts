@@ -900,8 +900,16 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
     const flat = eventPayloadRecord(event);
     const waMessageId = String(flat.messageId || flat.waMessageId || "").trim();
     const isMediaRecovery = flat.mediaRecovery === true;
-    // Dedupe DOM+WPP del mismo waMessageId (salvo mediaRecovery real).
-    if (waMessageId && !isMediaRecovery && (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT")) {
+    const isLidRecovery = flat.lidRecovery === true;
+    // Dedupe DOM+WPP del mismo waMessageId.
+    // Excepciones: mediaRecovery (bytes de audio) y lidRecovery (texto que
+    // llegó primero como LID sin teléfono y se reenvía ya resuelto).
+    if (
+      waMessageId &&
+      !isMediaRecovery &&
+      !isLidRecovery &&
+      (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT")
+    ) {
       const seenKey = `seenMsg:${waMessageId}`;
       const seenStore = await chrome.storage.local.get(seenKey);
       const prev = Number(seenStore[seenKey] || 0);

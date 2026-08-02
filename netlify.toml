@@ -1,5 +1,7 @@
 [build]
-  command = "npm run build"
+  # Copiar crons (engine-dispatch / daily-cleanup) al dir de functions de Nitro;
+  # sin esto Netlify no publica los scheduled jobs y fallan IA diferida, flujos y masivos.
+  command = "npm run build && mkdir -p .netlify/functions-internal && cp -f netlify/functions/*.mjs .netlify/functions-internal/"
   publish = "dist"
   functions = ".netlify/functions-internal"
 

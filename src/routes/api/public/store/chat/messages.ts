@@ -30,7 +30,7 @@ async function authStoreAndVisitor(request: Request) {
   if (!webSession) return { error: "Invalid visitor", status: 401 as const };
   const { data: thread } = await (supabaseAdmin as any)
     .from("threads")
-    .select("id, contact_id, ai_enabled, channel")
+    .select("id, contact_id, ai_enabled, channel, focused_product_id, unread_count")
     .eq("web_session_id", webSession.id)
     .eq("org_id", store.org_id)
     .eq("channel", "web")
@@ -119,38 +119,66 @@ export const Route = createFileRoute("/api/public/store/chat/messages")({
           } as any)
           .eq("id", thread.id);
 
-        let aiResult = { reply: "", actions: [] as string[], skipped: true };
+        // Flujos por keyword (mismo criterio que WhatsApp ingest)
+        let keywordStarted = false;
         try {
-          aiResult = await runChannelAiReply({
+          const { tryKeywordFlowsForText } = await import("@/lib/flow-trigger.server");
+          const focusedProductId = thread.focused_product_id
+            ? String(thread.focused_product_id)
+            : null;
+          const kw = await tryKeywordFlowsForText({
             orgId: store.org_id,
-            threadId: thread.id,
             contactId: thread.contact_id,
             text,
-            channel: "web",
+            focusedProductId,
           });
-        } catch (err: any) {
-          console.error("[store/chat/messages] AI failed", err);
-          if (process.env.DISABLE_AI_HANDOFF_ON_ERROR !== "true") {
-            await supabaseAdmin
-              .from("threads")
-              .update({ ai_enabled: false } as any)
-              .eq("id", thread.id);
+          keywordStarted = kw.started;
+          if (keywordStarted) {
+            console.info("[store/chat/messages] keyword flow activado", {
+              threadId: thread.id,
+              flowId: kw.flowId,
+            });
           }
-          await supabaseAdmin.from("messages").insert({
-            org_id: store.org_id,
-            thread_id: thread.id,
-            direction: "out",
-            text: "Un momento, te conecto con un asesor 😊",
-            wa_message_id: `web-fallback-${Date.now()}`,
-            sent_at: new Date().toISOString(),
-          });
+        } catch (kwErr: any) {
+          console.warn("[store/chat/messages] keyword flow:", kwErr?.message || kwErr);
+        }
+
+        let aiResult = { reply: "", actions: [] as string[], skipped: true };
+        // Si un flujo tomó el turno, no competir con la IA en el mismo mensaje.
+        if (!keywordStarted) {
+          try {
+            aiResult = await runChannelAiReply({
+              orgId: store.org_id,
+              threadId: thread.id,
+              contactId: thread.contact_id,
+              text,
+              channel: "web",
+            });
+          } catch (err: any) {
+            console.error("[store/chat/messages] AI failed", err);
+            if (process.env.DISABLE_AI_HANDOFF_ON_ERROR !== "true") {
+              await supabaseAdmin
+                .from("threads")
+                .update({ ai_enabled: false } as any)
+                .eq("id", thread.id);
+            }
+            await supabaseAdmin.from("messages").insert({
+              org_id: store.org_id,
+              thread_id: thread.id,
+              direction: "out",
+              text: "Un momento, te conecto con un asesor 😊",
+              wa_message_id: `web-fallback-${Date.now()}`,
+              sent_at: new Date().toISOString(),
+            });
+          }
         }
 
         return json(200, {
           ok: true,
           reply: aiResult.reply || null,
-          skipped: aiResult.skipped,
+          skipped: keywordStarted ? true : aiResult.skipped,
           actions: aiResult.actions,
+          flowStarted: keywordStarted,
         });
       },
     },

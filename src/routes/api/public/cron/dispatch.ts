@@ -119,12 +119,12 @@ async function handler({ request }: { request: Request }) {
     }
 
     if (!pending?.length) {
-      const { data: remaining } = await supabaseAdmin
+      const { count: remainingCount } = await supabaseAdmin
         .from("broadcast_recipients")
         .select("id", { count: "exact", head: true })
         .eq("broadcast_id", b.id)
         .eq("status", "pending");
-      if (!remaining || remaining.length === 0) {
+      if ((remainingCount ?? 0) === 0) {
         await supabaseAdmin
           .from("broadcasts")
           .update({ status: "done", finished_at: now })
@@ -227,6 +227,28 @@ async function handler({ request }: { request: Request }) {
 
   // 3) Flow steps
   await processDueRuns();
+
+  // 3b) Expirar comandos engine pending atascados (>10 min) para no bloquear IA/masivos
+  try {
+    const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data: staleCmds, error: staleErr } = await supabaseAdmin
+      .from("engine_commands")
+      .update({
+        status: "failed",
+        ack: { error: "expired_stale_pending", at: now },
+        acked_at: now,
+      } as any)
+      .eq("status", "pending")
+      .lt("created_at", staleBefore)
+      .select("id");
+    if (staleErr) {
+      console.warn("[dispatch] expire stale commands:", staleErr.message);
+    } else if (staleCmds?.length) {
+      console.warn("[dispatch] expired stale engine_commands", { count: staleCmds.length });
+    }
+  } catch (err) {
+    console.warn("[dispatch] expire stale commands:", (err as Error)?.message);
+  }
 
   // 4) Respuestas IA pendientes (debounce + post-flujo)
   try {

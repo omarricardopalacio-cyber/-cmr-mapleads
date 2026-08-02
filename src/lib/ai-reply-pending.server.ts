@@ -77,7 +77,7 @@ export async function contactHasExecutingFlow(contactId: string): Promise<boolea
   if (!contactId) return false;
   const { data: runs, error } = await dyn()
     .from("flow_runs")
-    .select("id, status, next_execution_at")
+    .select("id, status, next_execution_at, updated_at, created_at")
     .eq("contact_id", contactId)
     .in("status", ["active", "running", "wait_node"]);
 
@@ -88,9 +88,15 @@ export async function contactHasExecutingFlow(contactId: string): Promise<boolea
   if (!runs || runs.length === 0) return false;
 
   const now = Date.now();
+  const STALE_FLOW_MS = 15 * 60 * 1000;
   return runs.some((run: any) => {
+    const lastTouch = new Date(run.updated_at || run.created_at || 0).getTime();
+    const isStale = Number.isFinite(lastTouch) && now - lastTouch > STALE_FLOW_MS;
+
     if (run.status === "active" || run.status === "running") {
-      return true;
+      // Flujos atascados en active/running no deben bloquear la IA para siempre
+      // (el "bloqueo para agrupar" mencionaba este síntoma).
+      return !isStale;
     }
     if (run.status === "wait_node" && run.next_execution_at) {
       const nextTime = new Date(run.next_execution_at).getTime();
@@ -103,17 +109,22 @@ export async function contactHasExecutingFlow(contactId: string): Promise<boolea
   });
 }
 
+/** Comandos pending más viejos que esto se consideran atascados y no bloquean la IA. */
+const STALE_PENDING_CMD_MS = 3 * 60 * 1000;
+
 export async function hasPendingEngineCommandsForChat(
   sessionId: string,
   chatId: string,
 ): Promise<boolean> {
   if (!sessionId || !chatId) return false;
   try {
+    const since = new Date(Date.now() - STALE_PENDING_CMD_MS).toISOString();
     const { data: commands, error } = await dyn()
       .from("engine_commands")
-      .select("payload")
+      .select("id, payload, created_at")
       .eq("session_id", sessionId)
-      .eq("status", "pending");
+      .eq("status", "pending")
+      .gte("created_at", since);
 
     if (error || !commands) return false;
 

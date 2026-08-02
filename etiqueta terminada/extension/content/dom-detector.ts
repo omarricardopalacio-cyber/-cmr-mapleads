@@ -396,11 +396,13 @@ async function emitFromNode(node: HTMLElement) {
     SEEN.set(id, Date.now());
     gc();
 
+    // Conservar el data-id completo de WhatsApp (alineado con WPP `_serialized`).
+    // Truncar al hash final rompía el dedupe DOM↔WPP y podía perder textos.
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
     const payload: any = {
       type: parsed.direction === "out" ? "message-out" : "message-in",
       chatId: parsed.chatId,
-      waMessageId: parsed.id,
+      waMessageId: parsed.id || id,
       direction: parsed.direction,
       text: parsed.text,
       sentAt: new Date().toISOString(),

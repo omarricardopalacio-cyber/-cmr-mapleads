@@ -14,7 +14,7 @@ import { transcribeInboundAudio } from '@/lib/ai/transcribe.server'
 import { storagePathFromMediaUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createDedupTracker, buildInboundDedupKey, buildAiReplyDedupKey } from './-ingest-dedupe'
-import { ensureFlowRunForContact } from '@/lib/flow-trigger.server'
+import { ensureFlowRunForContact, tryKeywordFlowsForText } from '@/lib/flow-trigger.server'
 import {
   insertMessagesSafe,
   resolveOutboundMessageSource,
@@ -135,6 +135,8 @@ type NormalizedEvent = {
   commandId?: string
   ackStatus?: string
   mediaRecovery?: boolean
+  /** Reenvío tras resolver LID→teléfono (extensión). */
+  lidRecovery?: boolean
   historical?: boolean
   historicalClassify?: boolean
 }
@@ -460,6 +462,7 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
     commandId,
     ackStatus: ackStatus != null ? String(ackStatus) : undefined,
     mediaRecovery: !!(e as { mediaRecovery?: boolean }).mediaRecovery || !!(p as { mediaRecovery?: boolean }).mediaRecovery,
+    lidRecovery: !!(e as { lidRecovery?: boolean }).lidRecovery || !!(p as { lidRecovery?: boolean }).lidRecovery,
     historical: !!(e as { historical?: boolean }).historical || !!(p as { historical?: boolean }).historical,
     historicalClassify:
       !!(e as { historicalClassify?: boolean }).historicalClassify ||
@@ -1427,7 +1430,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 waId: e.contact?.waId,
               })
               const isMediaRecovery = !!(e as { mediaRecovery?: boolean }).mediaRecovery
-              if (!isMediaRecovery && !inboundEventDedupe.shouldProcess(dedupKey)) {
+              const isLidRecovery = !!(e as { lidRecovery?: boolean }).lidRecovery
+              // mediaRecovery / lidRecovery pueden ser el único evento que llega
+              // con teléfono resuelto tras un primer pase LID descartado.
+              if (!isMediaRecovery && !isLidRecovery && !inboundEventDedupe.shouldProcess(dedupKey)) {
                 console.log('[ingest] skip duplicate event', { dedupKey, type: e.type, chatId: e.chatId })
                 continue
               }
@@ -1456,6 +1462,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             // no crear otra ficha ni reenviar flujos. EXCEPCIÓN: mediaRecovery es
             // el segundo evento del mismo audio (ya con bytes/URL) y debe llegar
             // hasta la rama que actualiza/transcribe el mensaje existente.
+            // lidRecovery con mensaje ya guardado: solo fusionar contacto, no reinsertar.
             if (e.waMessageId && (e.type === 'message-in' || e.type === 'message-out')) {
               const { data: priorMsg } = await supabaseAdmin
                 .from('messages')
@@ -1467,6 +1474,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 console.log('[ingest] skip cross-thread duplicate waMessageId', {
                   waMessageId: e.waMessageId,
                   threadId: priorMsg.thread_id,
+                  lidRecovery: !!e.lidRecovery,
                 })
                 continue
               } else if (priorMsg?.id && e.mediaRecovery) {
@@ -1707,6 +1715,45 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     } as any)
                     .eq('id', contactId)
                 }
+              }
+            }
+
+            if (!contactId) {
+              if (
+                isLidKey(waId) &&
+                !phone &&
+                (e.direction === 'in' || e.type === 'message-in') &&
+                (e.text?.trim() || e.waMessageId)
+              ) {
+                // Fallback: LID entrante sin teléfono → contacto anónimo temporal
+                // para no perder textos. Se fusiona al enriquecer con teléfono real.
+                // (Removido en 95386d6 y provocó que solo audios con mediaRecovery entraran.)
+                console.info('[ingest] LID sin teléfono — creando contacto anónimo temporal', {
+                  waId,
+                  waMessageId: e.waMessageId,
+                })
+                const { data: anonContact } = await supabaseAdmin
+                  .from('contacts')
+                  .upsert(
+                    {
+                      org_id: session.org_id,
+                      wa_id: waId,
+                      display_name: isUsefulDisplayName(
+                        e.contact?.displayName,
+                        null,
+                        waId,
+                      )
+                        ? e.contact!.displayName
+                        : null,
+                      phone: null,
+                      profile_picture_url: e.contact?.profilePictureUrl,
+                    },
+                    { onConflict: 'org_id,wa_id' },
+                  )
+                  .select('id')
+                  .single()
+                contactId = anonContact?.id ?? null
+                isNewContact = Boolean(anonContact?.id)
               }
             }
 
@@ -2060,9 +2107,24 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       .is('cancelled_at', null)
                   } catch (_) { /* ignore */ }
 
+                  // Keywords sobre transcripción real (prioridad sobre IA)
+                  let audioKeywordStarted = false
+                  if (gotNewTranscript && e.text?.trim()) {
+                    try {
+                      const kw = await tryKeywordFlowsForText({
+                        orgId: session.org_id,
+                        contactId,
+                        text: e.text.trim(),
+                        focusedProductId: (thread as any).focused_product_id || null,
+                      })
+                      audioKeywordStarted = kw.started
+                    } catch (_) { /* ignore */ }
+                  }
+
                   // Auto-respuestas/etiquetas solo reciben texto realmente
                   // transcrito. El fallback queda reservado a la respuesta IA.
-                  const { aiDisabled, totalDelaySec } = gotNewTranscript && e.text?.trim()
+                  const { aiDisabled, totalDelaySec } =
+                    !audioKeywordStarted && gotNewTranscript && e.text?.trim()
                     ? await maybeAutoReply(
                         session.org_id,
                         session.id,
@@ -2072,7 +2134,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         contactId,
                       )
                     : { aiDisabled: false, totalDelaySec: 0 }
-                  if (!aiDisabled) {
+                  if (!audioKeywordStarted && !aiDisabled) {
                     const autoRepliesWereSent = totalDelaySec > 0
                     const aiReplyDedupKey = buildAiReplyDedupKey({
                       sessionId: session.id,
@@ -2159,7 +2221,20 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   if (audioGuard2.skip) {
                     console.warn('[ingest] skip audio automation', { reason: audioGuard2.reason, threadId: thread.id })
                   } else {
-                  const { aiDisabled, totalDelaySec } = gotNewTranscript && e.text?.trim()
+                  let audioKeywordStarted2 = false
+                  if (gotNewTranscript && e.text?.trim()) {
+                    try {
+                      const kw = await tryKeywordFlowsForText({
+                        orgId: session.org_id,
+                        contactId,
+                        text: e.text.trim(),
+                        focusedProductId: (thread as any).focused_product_id || null,
+                      })
+                      audioKeywordStarted2 = kw.started
+                    } catch (_) { /* ignore */ }
+                  }
+                  const { aiDisabled, totalDelaySec } =
+                    !audioKeywordStarted2 && gotNewTranscript && e.text?.trim()
                     ? await maybeAutoReply(
                         session.org_id,
                         session.id,
@@ -2169,7 +2244,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         contactId,
                       )
                     : { aiDisabled: false, totalDelaySec: 0 }
-                  if (!aiDisabled) {
+                  if (!audioKeywordStarted2 && !aiDisabled) {
                     const aiReplyDedupKey = buildAiReplyDedupKey({
                       sessionId: session.id,
                       threadId: thread.id,
@@ -2544,64 +2619,26 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
               }
 
-              // 4) Flujos keyword (solo producto ligado si hay foco; no en saludo)
+              // 4) Flujos keyword — siempre (también con IA ON y en saludos tipo "hola").
+              // Antes se omitían si ai_configs.enabled o greetingOnly → keywords nunca corrían.
               if (
                 (responder === 'none' || responder === 'product_focus') &&
-                realInboundText &&
-                !greetingOnly
+                realInboundText
               ) {
                 try {
-                  const { data: aiCfgForFlows } = await supabaseAdmin
-                    .from('ai_configs')
-                    .select('enabled')
-                    .eq('org_id', session.org_id)
-                    .maybeSingle()
-                  const aiHandlesFlows = aiCfgForFlows?.enabled === true && !focusedProductId
-
-                  if (!aiHandlesFlows) {
-                    const { data: keywordFlows } = await dyn()
-                      .from('flows')
-                      .select('id, trigger_value, max_sends_per_contact, product_id')
-                      .eq('org_id', session.org_id)
-                      .eq('trigger_type', 'keyword')
-                      .eq('is_active', true)
-                    for (const flow of keywordFlows ?? []) {
-                      const flowPid = (flow as any).product_id
-                        ? String((flow as any).product_id)
-                        : null
-                      if (focusedProductId) {
-                        if (!flowPid || flowPid !== focusedProductId) continue
-                      } else if (flowPid) {
-                        continue
-                      }
-                      const triggerVal = String((flow as any).trigger_value || '')
-                        .toLowerCase()
-                        .trim()
-                      if (!triggerVal || triggerVal.length < 3) continue
-                      if (!realInboundText.toLowerCase().includes(triggerVal)) continue
-                      const { data: firstStep } = await dyn()
-                        .from('flow_steps')
-                        .select('id')
-                        .eq('flow_id', flow.id)
-                        .is('parent_step_id', null)
-                        .order('step_order', { ascending: true })
-                        .limit(1)
-                        .maybeSingle()
-                      if (!firstStep) continue
-                      const fr = await ensureFlowRunForContact({
-                        orgId: session.org_id,
-                        contactId,
-                        flowId: flow.id,
-                        firstStepId: firstStep.id,
-                        maxSends: (flow as any).max_sends_per_contact ?? null,
-                        processNow: true,
-                      })
-                      if (fr.started) {
-                        if (responder === 'none') responder = 'generic_flow'
-                        skipAiThisInbound = true
-                        break
-                      }
-                    }
+                  const kw = await tryKeywordFlowsForText({
+                    orgId: session.org_id,
+                    contactId,
+                    text: realInboundText,
+                    focusedProductId,
+                  })
+                  if (kw.started) {
+                    if (responder === 'none') responder = 'generic_flow'
+                    skipAiThisInbound = true
+                    console.info('[ingest] keyword flow activado', {
+                      threadId: thread.id,
+                      flowId: kw.flowId,
+                    })
                   }
                 } catch (flowErr: any) {
                   console.error('[ingest] keyword flow error:', flowErr.message)
