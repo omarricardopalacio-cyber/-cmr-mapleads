@@ -192,6 +192,11 @@ export const sendMessage = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
+    if (data.media_base64) {
+      throw new Error(
+        "La multimedia debe subirse a Storage antes de enviarse; no se admite base64 en comandos.",
+      );
+    }
     const { data: thread } = await supabaseAdmin
       .from("threads")
       .select("id, session_id, channel, contact_id, contacts(id, wa_id, phone)")
@@ -262,12 +267,7 @@ export const sendMessage = createServerFn({ method: "POST" })
       text: data.text.trim() || data.caption || "",
     };
 
-    if (data.media_base64) {
-      const raw = data.media_base64.trim();
-      payload.media = raw.startsWith("data:")
-        ? raw
-        : `data:${data.mime_type || "application/octet-stream"};base64,${raw}`;
-    } else if (data.media_url) {
+    if (data.media_url) {
       payload.mediaUrl = data.media_url;
     } else if (data.media_storage_path) {
       payload.mediaUrl = supabaseAdmin.storage

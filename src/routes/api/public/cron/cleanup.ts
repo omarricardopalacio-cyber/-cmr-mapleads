@@ -13,22 +13,33 @@ function timingSafeStringEqual(a: string, b: string): boolean {
   return mismatch === 0
 }
 
-async function deleteEventsBefore(cutoff: string, batchSize = 10000, maxRounds = 50) {
+async function deleteRowsInBatches(
+  table: string,
+  buildSelect: () => any,
+  batchSize = 500,
+  maxRounds = 4,
+) {
   let total = 0
   for (let i = 0; i < maxRounds; i++) {
-    const { data } = await supabaseAdmin
-      .from('events')
-      .select('id')
-      .lt('created_at', cutoff)
-      .limit(batchSize)
+    const { data, error: selectError } = await buildSelect().limit(batchSize)
+    if (selectError) throw selectError
     const ids = (data ?? []).map((r: { id: string }) => r.id)
     if (!ids.length) break
-    const { count } = await supabaseAdmin.from('events').delete({ count: 'exact' }).in('id', ids)
+    const { count, error: deleteError } = await supabaseAdmin
+      .from(table)
+      .delete({ count: 'exact' })
+      .in('id', ids)
+    if (deleteError) throw deleteError
     total += count ?? ids.length
     if (ids.length < batchSize) break
   }
   return total
 }
+
+const deleteEventsBefore = (cutoff: string) =>
+  deleteRowsInBatches('events', () =>
+    supabaseAdmin.from('events').select('id').lt('created_at', cutoff),
+  )
 
 /**
  * Limpieza / retencion para controlar el consumo de espacio.
@@ -47,7 +58,8 @@ async function handler({ request }: { request: Request }) {
   }
 
   const auditDays = Number(process.env.AUDIT_RETENTION_DAYS ?? '7')
-  const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? '5')
+  // Limpiar Storage es costoso; solo hacerlo cuando el operador lo habilite.
+  const mediaDays = Number(process.env.MEDIA_RETENTION_DAYS ?? '0')
   const auditCutoff = new Date(Date.now() - auditDays * 86400000).toISOString()
   const result: Record<string, unknown> = { auditRetentionDays: auditDays, mediaRetentionDays: mediaDays }
 
@@ -58,14 +70,58 @@ async function handler({ request }: { request: Request }) {
   }
 
   try {
-    const { count } = await supabaseAdmin
-      .from('engine_commands')
-      .delete({ count: 'exact' })
-      .in('status', ['acked', 'failed', 'delivered'])
-      .lt('created_at', auditCutoff)
-    result.engine_commands_deleted = count ?? 0
+    result.engine_commands_deleted = await deleteRowsInBatches(
+      'engine_commands',
+      () =>
+        supabaseAdmin
+          .from('engine_commands')
+          .select('id')
+          .in('status', ['acked', 'failed'])
+          .lt('created_at', auditCutoff),
+    )
   } catch (e) {
     result.engine_commands_deleted = 'skip'
+  }
+
+  try {
+    result.ai_reply_pending_deleted = await deleteRowsInBatches(
+      'ai_reply_pending',
+      () =>
+        supabaseAdmin
+          .from('ai_reply_pending')
+          .select('id')
+          .or('processed_at.not.is.null,cancelled_at.not.is.null')
+          .lt('created_at', auditCutoff),
+    )
+  } catch {
+    result.ai_reply_pending_deleted = 'skip'
+  }
+
+  try {
+    result.inbound_claims_deleted = await deleteRowsInBatches(
+      'inbound_automation_claims',
+      () =>
+        supabaseAdmin
+          .from('inbound_automation_claims')
+          .select('id')
+          .lt('created_at', auditCutoff),
+    )
+  } catch {
+    result.inbound_claims_deleted = 'skip'
+  }
+
+  try {
+    result.no_response_pending_deleted = await deleteRowsInBatches(
+      'no_response_pending',
+      () =>
+        supabaseAdmin
+          .from('no_response_pending')
+          .select('id')
+          .or('fired_at.not.is.null,cancelled_at.not.is.null')
+          .lt('created_at', auditCutoff),
+    )
+  } catch {
+    result.no_response_pending_deleted = 'skip'
   }
 
   try {

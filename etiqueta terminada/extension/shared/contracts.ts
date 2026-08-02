@@ -12,7 +12,9 @@ export const CONSTANTS = {
   RATE_LIMIT_PER_MINUTE: 30,
 
   // Polling
-  POLLING_INTERVAL_MS: 1500,
+  // 1.5 s generaba 57.600 invocaciones Netlify/día por extensión y agotaba
+  // el plan. 10 s mantiene hasta 60 comandos/minuto (el endpoint entrega 10).
+  POLLING_INTERVAL_MS: 10000,
   HEARTBEAT_INTERVAL_MS: 15000,
   HEARTBEAT_TIMEOUT_MS: 45000,
 

@@ -99,7 +99,7 @@ export async function hasExistingAiReplyCommand(
     .select("id")
     .eq("org_id", orgId)
     .eq("session_id", sessionId)
-    .contains("payload", { dedupeKey })
+    .eq("payload->>dedupeKey", dedupeKey)
     .in("status", ["pending", "delivered", "acked"])
     .limit(1);
 

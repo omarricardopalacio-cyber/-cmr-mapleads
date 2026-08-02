@@ -1,21 +1,8 @@
 // @ts-nocheck
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { convertUrlToBase64 } from "@/lib/media";
 import { processDueRuns } from "@/lib/flow-runner.server";
 import { processDueAiReplies } from "@/lib/ai-reply.server";
-
-// For broadcast media: try base64 first, fall back to URL-only if too large
-async function resolveMediaForBroadcast(mediaUrl: string): Promise<{ base64?: string; mimeType?: string; mediaUrl?: string }> {
-  try {
-    const { base64, mimeType } = await convertUrlToBase64(mediaUrl);
-    return { base64, mimeType };
-  } catch (err: any) {
-    console.warn("[broadcast] base64 conversion failed, falling back to URL:", err.message);
-    // Fall back to sending the URL directly (engine will handle download)
-    return { mediaUrl };
-  }
-}
 
 const json = (s: number, b: unknown) =>
   new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
@@ -133,19 +120,10 @@ async function handler({ request }: { request: Request }) {
       continue;
     }
 
-    let mediaBase64: string | null = null;
-    let mediaMimeType: string | null = null;
-    let mediaFallbackUrl: string | null = null;
-    if (b.media_url) {
-      const resolved = await resolveMediaForBroadcast(b.media_url);
-      if (resolved.base64) {
-        mediaBase64 = resolved.base64;
-        mediaMimeType = b.mime_type || resolved.mimeType || null;
-      } else if (resolved.mediaUrl) {
-        mediaFallbackUrl = resolved.mediaUrl;
-        mediaMimeType = b.mime_type || null;
-      }
-    }
+    // La extensión descarga la URL al ejecutar. Nunca copiar base64 en cada
+    // destinatario: una sola campaña podía inflar engine_commands por cientos de MB.
+    const mediaUrl = b.media_url || null;
+    const mediaMimeType = b.mime_type || null;
 
     let sentInBatch = 0;
     let failedInBatch = 0;
@@ -166,21 +144,12 @@ async function handler({ request }: { request: Request }) {
       let payload: Record<string, unknown>;
       let type: string;
 
-      if (mediaBase64) {
-        // Send media with caption
-        type = "send_media";
-        payload = {
-          chatId: r.wa_id,
-          media: mediaBase64,
-          mimeType: mediaMimeType,
-          caption: b.message_text || undefined,
-        };
-      } else if (mediaFallbackUrl) {
+      if (mediaUrl) {
         // Send media via URL with caption
         type = "send_media";
         payload = {
           chatId: r.wa_id,
-          mediaUrl: mediaFallbackUrl,
+          mediaUrl,
           mimeType: mediaMimeType,
           caption: b.message_text || undefined,
         };
