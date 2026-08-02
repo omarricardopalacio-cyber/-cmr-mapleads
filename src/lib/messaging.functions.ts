@@ -99,72 +99,39 @@ export const listMessages = createServerFn({ method: "GET" })
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
 
-    // NIVEL 3: Usar context.supabase (cliente con JWT del usuario, respeta RLS) como PRIMARIA
-    const userSupabase = context.supabase;
-
-    const { data: thread, error: threadErr } = await userSupabase
+    // La autorización ya quedó validada por requireSupabaseAuth + ensureUserOrg.
+    // Consultar con admin evita evaluar is_member() por cada mensaje y elimina
+    // el doble intento RLS→admin que excedía el timeout cuando Supabase estaba cargado.
+    const { data: threadRow, error: threadErr } = await supabaseAdmin
       .from("threads")
       .select("id, contact_id, session_id, ai_enabled, purchase_intent, channel, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
     if (threadErr) {
-      console.error("[listMessages] thread query error (RLS):", threadErr.message);
+      console.error("[listMessages] thread query error:", threadErr.message);
+      throw new Error(`Thread query failed: ${threadErr.message}`);
     }
-
-    let threadRow = thread;
-    let messages: any[] | null = null;
-    let msgErr: any = null;
-
-    if (threadRow) {
-      const msgRes = await userSupabase
-        .from("messages")
-        .select("id, direction, text, sent_at, media")
-        .eq("thread_id", data.threadId)
-        .eq("org_id", orgId)
-        .order("sent_at", { ascending: false })
-        .limit(200);
-      messages = (msgRes.data ?? []).slice().reverse();
-      msgErr = msgRes.error;
-      if (msgErr) {
-        console.error("[listMessages] messages query error (RLS):", msgErr.message);
-      }
-    }
-
-    // Fallback solo si RLS falló o no hubo thread (chat vacío real NO debe ir a admin).
-    const useFallback = Boolean(threadErr || msgErr || !threadRow);
-    if (useFallback) {
-      console.warn("[listMessages] FALLBACK a supabaseAdmin. threadRow:", !!threadRow, "messagesCount:", messages?.length ?? 0);
-      const { data: adminThread } = await supabaseAdmin
-        .from("threads")
-        .select("id, contact_id, session_id, ai_enabled, purchase_intent, channel, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
-        .eq("id", data.threadId)
-        .eq("org_id", orgId)
-        .maybeSingle();
-      threadRow = adminThread ?? threadRow;
-
-      if (threadRow) {
-        const { data: adminMsgs, error: adminErr } = await supabaseAdmin
-          .from("messages")
-          .select("id, direction, text, sent_at, media")
-          .eq("thread_id", data.threadId)
-          .order("sent_at", { ascending: false })
-          .limit(200);
-        if (adminErr) {
-          console.error("[listMessages] messages query error (admin):", adminErr.message);
-          throw new Error(`Messages query failed: ${adminErr.message}`);
-        }
-        messages = (adminMsgs ?? []).slice().reverse();
-      }
-    }
-
     if (!threadRow) throw new Error("Thread not found");
 
+    const { data: messageRows, error: msgErr } = await supabaseAdmin
+      .from("messages")
+      .select("id, direction, text, sent_at, media")
+      .eq("thread_id", data.threadId)
+      .eq("org_id", orgId)
+      .order("sent_at", { ascending: false })
+      .limit(200);
+    if (msgErr) {
+      console.error("[listMessages] messages query error:", msgErr.message);
+      throw new Error(`Messages query failed: ${msgErr.message}`);
+    }
+    const messages = (messageRows ?? []).slice().reverse();
+
     const contact = Array.isArray(threadRow.contacts) ? threadRow.contacts[0] : threadRow.contacts;
-    console.log("[listMessages] thread:", threadRow.id, "contact:", contact?.display_name ?? contact?.wa_id ?? "none", "messages:", (messages ?? []).length, "fallback:", useFallback);
+    console.log("[listMessages] thread:", threadRow.id, "contact:", contact?.display_name ?? contact?.wa_id ?? "none", "messages:", messages.length);
 
     // Firmar media en lotes pequeños (Promise.all de 200 firmas = timeout Netlify)
-    const rawMsgs = messages ?? [];
+    const rawMsgs = messages;
     const enriched: typeof rawMsgs = [];
     const BATCH = 15;
     for (let i = 0; i < rawMsgs.length; i += BATCH) {
@@ -430,16 +397,9 @@ export const clearThreadMessages = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
 
-    // Borrar primero los archivos de Storage de estos mensajes (evita huerfanos)
-    await deleteMediaFilesForMessages(orgId, data.threadId);
-
-    const { error: messagesError } = await supabaseAdmin
-      .from("messages")
-      .delete()
-      .eq("thread_id", data.threadId)
-      .eq("org_id", orgId);
-    if (messagesError) throw new Error(messagesError.message);
-
+    // La FK messages.thread_id tiene ON DELETE CASCADE. Borrar el thread es
+    // atómico y rápido; recorrer Storage antes podía dejar la petición colgada
+    // hasta el Inactivity Timeout. Se prioriza que el chat desaparezca de BD.
     const { error: threadError } = await supabaseAdmin
       .from("threads")
       .delete()

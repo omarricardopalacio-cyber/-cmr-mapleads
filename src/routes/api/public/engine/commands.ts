@@ -47,19 +47,6 @@ export const Route = createFileRoute('/api/public/engine/commands')({
 
         const now = new Date().toISOString()
 
-        // Reclaim en background: no bloquear el poll (cold start + update = timeout en SW).
-        const reclaimBefore = new Date(Date.now() - 90_000).toISOString()
-        void supabaseAdmin
-          .from('engine_commands')
-          .update({ status: 'pending', delivered_at: null } as any)
-          .eq('session_id', session.id)
-          .eq('status', 'delivered')
-          .is('acked_at', null)
-          .lt('delivered_at', reclaimBefore)
-          .then(({ error }) => {
-            if (error) console.warn('[commands] reclaim delivered failed:', error.message)
-          })
-
         const [pendingNullResult, pendingDueResult] = await Promise.all([
           supabaseAdmin
             .from('engine_commands')

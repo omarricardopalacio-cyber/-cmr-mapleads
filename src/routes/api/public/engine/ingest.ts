@@ -2921,16 +2921,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           }
         }
 
-        // Log de auditoria opcional. Es la tabla que mas crece; se puede
-        // desactivar con DISABLE_EVENT_AUDIT=true para ahorrar espacio.
-        const eventRows = process.env.DISABLE_EVENT_AUDIT === 'true'
-          ? []
-          : normalized.map((e, i) => ({
+        // Auditoría opt-in: esta tabla creció a 355k filas y saturó el plan.
+        // No depender de una variable "disable" que puede faltar en Lambda.
+        const eventRows = process.env.ENABLE_EVENT_AUDIT === 'true'
+          ? normalized.map((e, i) => ({
               org_id: session.org_id,
               session_id: session.id,
               type: e.type,
               payload: stripHeavyFieldsForDb(events[i]) as never,
             }))
+          : []
         if (eventRows.length) {
           try {
             await supabaseAdmin.from('events').insert(eventRows)
