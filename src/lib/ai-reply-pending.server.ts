@@ -28,7 +28,8 @@ export function attachAiReplyRunner(fn: AiReplyRunner) {
   aiReplyRunner = fn;
 }
 
-const DEFAULT_DEBOUNCE_MS = 5000;
+// En Netlify el cron corre cada minuto: debounce corto para no acumular retrasos.
+const DEFAULT_DEBOUNCE_MS = process.env.NETLIFY === "true" ? 1500 : 5000;
 const DEFAULT_FLOW_WAIT_MS = 5000;
 
 function debounceMs() {

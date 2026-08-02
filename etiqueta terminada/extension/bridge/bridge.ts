@@ -143,7 +143,12 @@ export class ContentBridge {
     return new Promise((resolve, reject) => {
       const cmd = String(msg.event || "").toUpperCase();
       const waitMs =
-        cmd === "GET_CHAT_LIST" || cmd === "GET_CHAT_MESSAGES" || cmd === "GET_CONTACT_LIST"
+        cmd === "GET_CHAT_LIST" ||
+        cmd === "GET_CHAT_MESSAGES" ||
+        cmd === "GET_CONTACT_LIST" ||
+        cmd === "SEND_MESSAGE" ||
+        cmd === "SEND_MEDIA" ||
+        cmd === "SEND_BROADCAST"
           ? 120000
           : 15000;
       const timeout = setTimeout(() => {

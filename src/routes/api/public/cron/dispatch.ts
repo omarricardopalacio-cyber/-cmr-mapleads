@@ -228,7 +228,26 @@ async function handler({ request }: { request: Request }) {
   // 3) Flow steps
   await processDueRuns();
 
-  // 3b) Expirar comandos engine pending atascados (>10 min) para no bloquear IA/masivos
+  // 3b) Reclamar delivered sin ACK (extensión cayó / Failed to fetch) → pending de nuevo
+  try {
+    const reclaimBefore = new Date(Date.now() - 90_000).toISOString();
+    const { data: reclaimed, error: reclaimErr } = await supabaseAdmin
+      .from("engine_commands")
+      .update({ status: "pending", delivered_at: null } as any)
+      .eq("status", "delivered")
+      .is("acked_at", null)
+      .lt("delivered_at", reclaimBefore)
+      .select("id");
+    if (reclaimErr) {
+      console.warn("[dispatch] reclaim delivered:", reclaimErr.message);
+    } else if (reclaimed?.length) {
+      console.warn("[dispatch] reclaimed stuck delivered commands", { count: reclaimed.length });
+    }
+  } catch (err) {
+    console.warn("[dispatch] reclaim delivered:", (err as Error)?.message);
+  }
+
+  // 3c) Expirar pending antiguos (>10 min)
   try {
     const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const { data: staleCmds, error: staleErr } = await supabaseAdmin

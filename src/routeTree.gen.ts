@@ -52,6 +52,7 @@ import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/pub
 import { Route as ApiPublicEngineRetryProcessorRouteImport } from './routes/api/public/engine/retry-processor'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineImportHistoryRouteImport } from './routes/api/public/engine/import-history'
+import { Route as ApiPublicEngineHeartbeatRouteImport } from './routes/api/public/engine/heartbeat'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicCronProductLearningRouteImport } from './routes/api/public/cron/product-learning'
 import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
@@ -291,6 +292,12 @@ const ApiPublicEngineImportHistoryRoute =
     path: '/api/public/engine/import-history',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicEngineHeartbeatRoute =
+  ApiPublicEngineHeartbeatRouteImport.update({
+    id: '/api/public/engine/heartbeat',
+    path: '/api/public/engine/heartbeat',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
   id: '/api/public/engine/commands',
   path: '/api/public/engine/commands',
@@ -376,6 +383,7 @@ export interface FileRoutesByFullPath {
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/heartbeat': typeof ApiPublicEngineHeartbeatRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
@@ -426,6 +434,7 @@ export interface FileRoutesByTo {
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/heartbeat': typeof ApiPublicEngineHeartbeatRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
@@ -480,6 +489,7 @@ export interface FileRoutesById {
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
+  '/api/public/engine/heartbeat': typeof ApiPublicEngineHeartbeatRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
@@ -534,6 +544,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/flow-scheduler'
     | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
+    | '/api/public/engine/heartbeat'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
@@ -584,6 +595,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/flow-scheduler'
     | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
+    | '/api/public/engine/heartbeat'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
@@ -637,6 +649,7 @@ export interface FileRouteTypes {
     | '/api/public/cron/flow-scheduler'
     | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
+    | '/api/public/engine/heartbeat'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
@@ -666,6 +679,7 @@ export interface RootRouteChildren {
   ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
   ApiPublicCronProductLearningRoute: typeof ApiPublicCronProductLearningRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
+  ApiPublicEngineHeartbeatRoute: typeof ApiPublicEngineHeartbeatRoute
   ApiPublicEngineImportHistoryRoute: typeof ApiPublicEngineImportHistoryRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
   ApiPublicEngineRetryProcessorRoute: typeof ApiPublicEngineRetryProcessorRoute
@@ -981,6 +995,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEngineImportHistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/engine/heartbeat': {
+      id: '/api/public/engine/heartbeat'
+      path: '/api/public/engine/heartbeat'
+      fullPath: '/api/public/engine/heartbeat'
+      preLoaderRoute: typeof ApiPublicEngineHeartbeatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/engine/commands': {
       id: '/api/public/engine/commands'
       path: '/api/public/engine/commands'
@@ -1143,6 +1164,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
   ApiPublicCronProductLearningRoute: ApiPublicCronProductLearningRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
+  ApiPublicEngineHeartbeatRoute: ApiPublicEngineHeartbeatRoute,
   ApiPublicEngineImportHistoryRoute: ApiPublicEngineImportHistoryRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
   ApiPublicEngineRetryProcessorRoute: ApiPublicEngineRetryProcessorRoute,

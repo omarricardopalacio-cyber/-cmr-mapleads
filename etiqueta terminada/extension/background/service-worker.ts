@@ -72,11 +72,24 @@ async function restoreSession(): Promise<void> {
 }
 
 async function saveConfig(url: string, token: string): Promise<void> {
-  const cleanUrl = url.replace(/\/$/, "");
-  await chrome.storage.local.set({ backendUrl: cleanUrl, sessionToken: token });
-  backendUrl = cleanUrl;
-  sessionToken = token;
-  console.log("[ServiceWorker] Config guardada");
+  const cleanUrl = String(url || "").trim().replace(/\/$/, "");
+  const cleanToken = String(token || "").trim();
+  await chrome.storage.local.set({
+    backendUrl: cleanUrl,
+    sessionToken: cleanToken,
+    lastError: cleanUrl && cleanToken ? null : "not_configured",
+  });
+  backendUrl = cleanUrl || null;
+  sessionToken = cleanToken || null;
+  console.log("[ServiceWorker] Config guardada", {
+    backendUrl,
+    hasToken: !!sessionToken,
+    tokenLen: cleanToken.length,
+  });
+  if (backendUrl && sessionToken) {
+    // Probar backend al instante para quitar DESCONECTADO / not_configured
+    void pollCommands().catch(() => {});
+  }
 }
 
 // ============================================================
@@ -222,6 +235,23 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // Polling — Obtener comandos del backend
 // ============================================================
 
+/** Fallos de red consecutivos antes de marcar DESCONECTADO (evita parpadeo por un timeout). */
+let pollFailStreak = 0;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function pollCommands(): Promise<void> {
   if (!backendUrl || !sessionToken) {
     await chrome.storage.local.set({ wsStatus: "disconnected", lastError: "not_configured" });
@@ -229,21 +259,51 @@ async function pollCommands(): Promise<void> {
   }
 
   try {
-    const res = await fetch(`${backendUrl}${API_ENDPOINTS.GET_COMMANDS}`, {
-      method: "GET",
-      headers: { "X-Session-Token": sessionToken || "" },
-    });
+    let res: Response | null = null;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await fetchWithTimeout(
+          `${backendUrl}${API_ENDPOINTS.GET_COMMANDS}`,
+          {
+            method: "GET",
+            headers: { "X-Session-Token": sessionToken || "" },
+          },
+          12_000,
+        );
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+    if (!res) throw lastErr || new Error("Failed to fetch");
+
     if (!res.ok) {
-      await chrome.storage.local.set({ wsStatus: "disconnected", lastError: `commands ${res.status}` });
+      pollFailStreak++;
+      if (pollFailStreak >= 3) {
+        await chrome.storage.local.set({
+          wsStatus: "disconnected",
+          lastError: `commands ${res.status}`,
+        });
+      }
       return;
     }
+    pollFailStreak = 0;
     await chrome.storage.local.set({ wsStatus: "connected", lastPoll: Date.now(), lastError: null });
     const { commands = [] } = await res.json();
     for (const cmd of commands) {
       await dispatchCommand(cmd);
     }
   } catch (e: any) {
-    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: String(e?.message || e) });
+    pollFailStreak++;
+    const msg = String(e?.name === "AbortError" ? "commands timeout" : e?.message || e);
+    if (pollFailStreak >= 3) {
+      await chrome.storage.local.set({ wsStatus: "disconnected", lastError: msg });
+    } else {
+      console.warn("[ServiceWorker] poll fallo temporal", pollFailStreak, msg);
+    }
   }
 }
 
@@ -614,20 +674,25 @@ async function flushIngestQueue(): Promise<void> {
   console.log("[ServiceWorker] Ingest body:", bodyJson.substring(0, 2000));
 
   try {
-    const response = await fetch(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Session-Token": sessionToken || "",
+    const response = await fetchWithTimeout(
+      `${backendUrl}${API_ENDPOINTS.POST_INGEST}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-Token": sessionToken || "",
+        },
+        body: bodyJson,
       },
-      body: bodyJson,
-    });
+      25_000,
+    );
 
     if (response.ok) {
       // Remover eventos enviados de la cola
       const remaining = queue.slice(batch.length);
       await chrome.storage.local.set({ eventQueue: remaining });
-      await chrome.storage.local.set({ wsStatus: "connected", lastFlush: Date.now() });
+      await chrome.storage.local.set({ wsStatus: "connected", lastFlush: Date.now(), lastError: null });
+      pollFailStreak = 0;
       console.log(`[ServiceWorker] Ingest: ${batch.length} eventos sincronizados, ${remaining.length} restantes`);
     } else {
       const errText = await response.text().catch(() => "");
@@ -635,7 +700,13 @@ async function flushIngestQueue(): Promise<void> {
       await chrome.storage.local.set({ lastError: `ingest ${response.status}: ${errText.substring(0, 200)}` });
     }
   } catch (err: any) {
-    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: String(err?.message || err) });
+    const msg = String(err?.name === "AbortError" ? "ingest timeout" : err?.message || err);
+    pollFailStreak++;
+    if (pollFailStreak >= 3) {
+      await chrome.storage.local.set({ wsStatus: "disconnected", lastError: msg });
+    } else {
+      console.warn("[ServiceWorker] ingest fallo temporal", pollFailStreak, msg);
+    }
   }
 }
 

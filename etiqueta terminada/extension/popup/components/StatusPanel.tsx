@@ -55,6 +55,13 @@ export default function StatusPanel() {
           }
         },
       );
+      // Backend real = último poll OK (no solo "hay token en storage")
+      chrome.storage.local.get(["wsStatus"]).then((stored) => {
+        setStatus((prev) => ({
+          ...prev,
+          backendConnected: stored.wsStatus === "connected",
+        }));
+      });
     };
     pull();
     const interval = setInterval(pull, 2000);

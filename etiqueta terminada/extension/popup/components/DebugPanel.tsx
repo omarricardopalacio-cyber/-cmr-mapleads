@@ -33,23 +33,42 @@ export default function DebugPanel() {
         }));
       });
 
-      // Ping directo al content script (no requiere injected script)
-      chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-        const waTab = tabs.find((t) => t.url?.includes("web.whatsapp.com"));
-        if (waTab?.id) {
-          chrome.tabs.sendMessage(waTab.id, {
-            source: "MAPLE_WA_POPUP_PING",
-          }).then((res) => {
+      // Buscar CUALQUIER tab de WhatsApp (no solo la activa: el popup suele abrirse desde el CRM)
+      chrome.tabs.query({ url: ["https://web.whatsapp.com/*"] }).then((tabs) => {
+        const waTab = tabs[0];
+        if (!waTab?.id) {
+          setState((prev) => ({
+            ...prev,
+            engineLoaded: false,
+            wppLoaded: false,
+            lastError:
+              prev.lastError === "not_configured"
+                ? prev.lastError
+                : prev.lastError || "Abre web.whatsapp.com y recarga esa pestaña",
+          }));
+          return;
+        }
+        chrome.tabs
+          .sendMessage(waTab.id, { source: "MAPLE_WA_POPUP_PING" })
+          .then((res) => {
             setState((prev) => ({
               ...prev,
               engineLoaded: !!res?.contentScript,
-              wppLoaded: !!res?.engineReady, // WPP confirmado por eventos del engine
+              wppLoaded: !!res?.engineReady,
             }));
-          }).catch((err) => {
+          })
+          .catch((err) => {
             console.log("[DebugPanel] Ping falló:", err);
-            setState((prev) => ({ ...prev, engineLoaded: false, wppLoaded: false }));
+            setState((prev) => ({
+              ...prev,
+              engineLoaded: false,
+              wppLoaded: false,
+              lastError:
+                prev.lastError === "not_configured"
+                  ? prev.lastError
+                  : "Recarga web.whatsapp.com (content script no responde)",
+            }));
           });
-        }
       });
     };
 
@@ -109,8 +128,20 @@ export default function DebugPanel() {
       </div>
 
       {state.lastError && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded p-2 text-red-400">
-          Error: {state.lastError}
+        <div className="bg-red-500/10 border border-red-500/20 rounded p-2 text-red-400 space-y-1">
+          <div>Error: {state.lastError}</div>
+          {state.lastError === "not_configured" ? (
+            <div className="text-red-300/90 text-[10px] leading-relaxed">
+              Ve a Config → pega Backend URL + Session Token del CRM → Guardar.
+              Luego abre web.whatsapp.com (el CRM en &quot;Conectado&quot; no basta).
+            </div>
+          ) : null}
+          {/Failed to fetch|timeout|commands /i.test(state.lastError) ? (
+            <div className="text-red-300/90 text-[10px] leading-relaxed">
+              Fallo de red con Netlify (timeout). Recarga la extensión y WhatsApp.
+              Si persiste, el poll de /commands estaba pesado — ya se aligeró en el backend.
+            </div>
+          ) : null}
         </div>
       )}
 

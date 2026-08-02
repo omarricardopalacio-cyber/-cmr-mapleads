@@ -1,18 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { supabaseAdmin } from '@/integrations/supabase/client.server'
 
-async function toDataUriFromUrl(url: string, fallbackMime?: string) {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Failed to fetch media (${res.status})`)
-  const contentType = res.headers.get('content-type') || fallbackMime || 'application/octet-stream'
-  if (contentType.startsWith('text/') || contentType.includes('html')) {
-    throw new Error(`Invalid media content type: ${contentType}`)
-  }
-  const arrayBuffer = await res.arrayBuffer()
-  const base64 = Buffer.from(arrayBuffer).toString('base64')
-  return `data:${contentType};base64,${base64}`
-}
-
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -26,6 +14,22 @@ const json = (status: number, body: unknown) =>
     headers: { 'Content-Type': 'application/json', ...CORS },
   })
 
+const commandTypeMap: Record<string, string> = {
+  send_message: 'SEND_MESSAGE',
+  send_media: 'SEND_MEDIA',
+  send_broadcast: 'SEND_BROADCAST',
+  get_chats: 'GET_CHATS',
+  get_contacts: 'GET_CONTACTS',
+  update_label: 'UPDATE_LABEL',
+  ping: 'PING',
+}
+
+/**
+ * Polling liviano: NO descarga media aquí.
+ * Antes se convertía mediaUrl→dataURI en cada poll y eso hacía timeout de Netlify
+ * → el SW veía "Failed to fetch" y marcaba DESCONECTADO.
+ * La extensión / WhatsApp resuelven la URL al enviar.
+ */
 export const Route = createFileRoute('/api/public/engine/commands')({
   server: {
     handlers: {
@@ -47,7 +51,20 @@ export const Route = createFileRoute('/api/public/engine/commands')({
           .eq('id', session.id)
 
         const now = new Date().toISOString()
-        console.log('[commands] polling pending engine_commands', { sessionId: session.id, now })
+
+        // Reclamar comandos "delivered" sin ACK (SW murió / Failed to fetch a mitad).
+        const reclaimBefore = new Date(Date.now() - 90_000).toISOString()
+        try {
+          await supabaseAdmin
+            .from('engine_commands')
+            .update({ status: 'pending', delivered_at: null } as any)
+            .eq('session_id', session.id)
+            .eq('status', 'delivered')
+            .is('acked_at', null)
+            .lt('delivered_at', reclaimBefore)
+        } catch (err) {
+          console.warn('[commands] reclaim delivered failed:', (err as Error)?.message)
+        }
 
         const [pendingNullResult, pendingDueResult] = await Promise.all([
           supabaseAdmin
@@ -57,7 +74,7 @@ export const Route = createFileRoute('/api/public/engine/commands')({
             .eq('status', 'pending')
             .is('scheduled_for', null)
             .order('created_at', { ascending: true })
-            .limit(20),
+            .limit(10),
           supabaseAdmin
             .from('engine_commands')
             .select('id, type, payload, attempts, created_at')
@@ -65,106 +82,28 @@ export const Route = createFileRoute('/api/public/engine/commands')({
             .eq('status', 'pending')
             .lte('scheduled_for', now)
             .order('created_at', { ascending: true })
-            .limit(20),
+            .limit(10),
         ])
 
         if (pendingNullResult.error || pendingDueResult.error) {
-          console.error('[commands] error fetching engine_commands', pendingNullResult.error ?? pendingDueResult.error)
+          console.error(
+            '[commands] error fetching engine_commands',
+            pendingNullResult.error ?? pendingDueResult.error,
+          )
           return json(500, { error: 'Failed to fetch engine commands' })
         }
 
-        let commands = [
-          ...(pendingNullResult.data ?? []),
-          ...(pendingDueResult.data ?? []),
-        ]
+        const commands = [...(pendingNullResult.data ?? []), ...(pendingDueResult.data ?? [])]
           .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
-          .slice(0, 20)
-          .map(({ created_at, ...command }) => command)
-
-        // Normalize command types so extension receives uppercase names.
-        const commandTypeMap: Record<string, string> = {
-          send_message: 'SEND_MESSAGE',
-          send_media: 'SEND_MEDIA',
-          send_broadcast: 'SEND_BROADCAST',
-          get_chats: 'GET_CHATS',
-          get_contacts: 'GET_CONTACTS',
-          update_label: 'UPDATE_LABEL',
-          ping: 'PING',
-        };
-
-        // Resolve media before delivery so the extension receives inline data when possible.
-        // This avoids browser/CORS issues and makes WhatsApp send more reliable.
-        commands = await Promise.all(
-          commands.map(async (c) => {
-            const normalizedType = typeof c.type === 'string' ? commandTypeMap[c.type] ?? c.type.toUpperCase() : c.type;
-            if ((normalizedType === 'SEND_MEDIA' || normalizedType === 'SEND_MESSAGE') && c.payload && typeof c.payload === 'object') {
-              const p = c.payload as any;
-              const mediaUrl = typeof p.mediaUrl === 'string' ? p.mediaUrl : typeof p.media_url === 'string' ? p.media_url : null;
-              const hasInlineMedia = typeof p.media === 'string' && p.media.startsWith('data:');
-              console.log('[commands] command payload before media resolution', {
-                commandId: c.id || '(unknown)',
-                type: normalizedType,
-                hasInlineMedia,
-                mediaUrl: mediaUrl ? mediaUrl.substring(0, 120) : null,
-                mimeType: p.mimeType || p.mime_type,
-              });
-
-              if (!mediaUrl) {
-                return { ...c, type: normalizedType };
-              }
-
-              try {
-                let dataUri: string | null = null;
-
-                if (!mediaUrl.startsWith('http')) {
-                  const { data: signed } = await supabaseAdmin.storage
-                    .from('auto-reply-media')
-                    .createSignedUrl(mediaUrl, 3600);
-                  if (signed?.signedUrl) {
-                    dataUri = await toDataUriFromUrl(signed.signedUrl, p.mimeType || p.mime_type);
-                  }
-                } else {
-                  dataUri = await toDataUriFromUrl(mediaUrl, p.mimeType || p.mime_type);
-                }
-
-                if (dataUri) {
-                  console.log('[commands] resolved mediaUrl to inline data URI for command', c.id || '(unknown)', {
-                    type: normalizedType,
-                    mediaUrl: mediaUrl.substring(0, 120),
-                    mimeType: p.mimeType || p.mime_type,
-                    dataUriPrefix: dataUri.substring(0, 60),
-                  });
-                  return {
-                    ...c,
-                    type: normalizedType,
-                    payload: {
-                      ...p,
-                      media: dataUri,
-                      mediaUrl: dataUri,
-                      mimeType: p.mimeType || p.mime_type,
-                    },
-                  };
-                }
-
-                console.warn('[commands] unable to resolve mediaUrl to inline data URI, leaving url as-is', {
-                  commandId: c.id || '(unknown)',
-                  type: normalizedType,
-                  mediaUrl: mediaUrl.substring(0, 120),
-                });
-              } catch (err) {
-                console.error('[commands] error resolving mediaUrl to inline data URI:', err, {
-                  commandId: c.id || '(unknown)',
-                  type: normalizedType,
-                  mediaUrl: mediaUrl.substring(0, 120),
-                });
-              }
-            }
-
-            return { ...c, type: normalizedType };
+          .slice(0, 10)
+          .map(({ created_at: _c, ...command }) => {
+            const normalizedType =
+              typeof command.type === 'string'
+                ? commandTypeMap[command.type] ?? command.type.toUpperCase()
+                : command.type
+            return { ...command, type: normalizedType }
           })
-        );
 
-        console.log('[commands] pending commands count', { count: commands.length })
         if (commands.length > 0) {
           const ids = commands.map((c) => c.id)
           await supabaseAdmin
@@ -176,7 +115,7 @@ export const Route = createFileRoute('/api/public/engine/commands')({
             .in('id', ids)
         }
 
-        return json(200, { commands })
+        return json(200, { commands, serverTime: now })
       },
     },
   },

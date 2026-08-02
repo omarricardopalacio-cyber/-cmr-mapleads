@@ -964,7 +964,7 @@ function hasRenderableMessageContent(
   if (typeof media.body === 'string' && media.body.length > 20) return true
   if (typeof media.base64 === 'string' && media.base64.length > 20) return true
   if (typeof media.data === 'string' && media.data.length > 20) return true
-  if (typeof media.type === 'string' && media.type.length > 0) return true
+  // Solo `media.type` sin bytes/URL producía burbujas azules vacías en el CRM.
   return false
 }
 

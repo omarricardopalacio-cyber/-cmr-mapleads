@@ -339,8 +339,13 @@ class SenderEngine {
           }
         }
       } else {
-        console.log(`[MAPLE SENDER] Calling sendTextMessage with text="${task.text || ""}"`);
-        result = await WPP.chat.sendTextMessage(targetChatId, task.text || "", sendOptions);
+        const text = String(task.text || task.caption || "").trim();
+        if (!text) {
+          console.error("[MAPLE SENDER] Rechazado: SEND_MESSAGE sin texto (evita burbuja vacía)");
+          return { success: false, error: "EMPTY_TEXT" };
+        }
+        console.log(`[MAPLE SENDER] Calling sendTextMessage with text="${text.slice(0, 80)}"`);
+        result = await WPP.chat.sendTextMessage(targetChatId, text, sendOptions);
       }
 
       console.log(`[MAPLE SENDER] WPP result:`, JSON.stringify(result));
