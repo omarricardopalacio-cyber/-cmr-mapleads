@@ -448,7 +448,7 @@ export async function callVertexAI(opts: {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
       const res = await fetch(url, {
@@ -497,12 +497,12 @@ export async function callVertexAI(opts: {
     } catch (err) {
       if (attempt < maxAttempts) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        if (
+        const isTransient =
           errMsg.includes("429") ||
           errMsg.includes("503") ||
-          errMsg.includes("AbortError") ||
-          errMsg.includes("timeout")
-        ) {
+          errMsg.toLowerCase().includes("abort") ||
+          errMsg.toLowerCase().includes("timeout");
+        if (isTransient) {
           retriedAttempts.add(attempt);
           if (opts.onRetry) {
             try {
@@ -553,8 +553,12 @@ const hasOpenAICredentials = (cfg: Record<string, unknown>) => !!(cfg.openai_api
 const hasGrokCredentials = (cfg: Record<string, unknown>) => !!(cfg.grok_api_key as string);
 const normalizeOpenAIModel = (model?: string) =>
   model?.startsWith("gpt-") ? model : "gpt-4o-mini";
-const normalizeGrokModel = (model?: string) =>
-  /^(llama|gemma|mixtral|compound)/i.test(model ?? "") ? model! : "llama-3.1-8b-instant";
+const normalizeGrokModel = (model?: string) => {
+  if (!model || model.includes("llama") || model.includes("mixtral") || model.includes("gemma")) {
+    return "openai/gpt-oss-120b";
+  }
+  return model;
+};
 
 const validateCredentials = (provider: string, cfg: Record<string, unknown>) => {
   if (provider === "openai" && !cfg.openai_api_key) throw new Error("Falta openai_api_key");
