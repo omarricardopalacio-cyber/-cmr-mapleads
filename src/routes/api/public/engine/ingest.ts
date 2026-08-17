@@ -871,8 +871,9 @@ async function scheduleAiReplyFromIngest(params: {
 
   try {
     const { executeAiReply } = await import('@/lib/ai-reply.server')
-    console.info('[ingest] ejecutando IA de forma síncrona en serverless', { threadId, contactId })
-    await executeAiReply({
+    console.info('[ingest] iniciando ejecucion de IA en serverless', { threadId, contactId })
+    // No bloquear la respuesta HTTP de ingesta (evita timeout de 10s en Netlify)
+    void executeAiReply({
       orgId,
       sessionId,
       chatId,
@@ -882,6 +883,8 @@ async function scheduleAiReplyFromIngest(params: {
       delayAfterAutoReplies,
       autoRepliesWereSent,
       aiReplyDedupeKey,
+    }).catch((err) => {
+      console.error('[ingest] error en executeAiReply asincrono:', err?.message || err)
     })
   } catch (err: any) {
     console.error('[ingest] error ejecutando IA síncrona, usando fallback scheduleDebouncedAiReply:', err?.message)
