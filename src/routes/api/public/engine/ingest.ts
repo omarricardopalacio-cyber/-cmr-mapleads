@@ -888,10 +888,6 @@ async function scheduleAiReplyFromIngest(params: {
       })
       return
     }
-    if (!aiReplyDedupe.shouldProcess(aiReplyDedupeKey)) {
-      console.log('[ingest] skip duplicate AI reply', { aiReplyDedupeKey, threadId })
-      return
-    }
   }
 
   try {
