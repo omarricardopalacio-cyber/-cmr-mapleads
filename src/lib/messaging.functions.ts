@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { storagePathFromMediaUrl } from "@/lib/media";
+import { convertUrlToBase64, storagePathFromMediaUrl } from "@/lib/media";
 import { sanitizeMessageText } from "@/lib/message-text";
 import { ensureUserOrg } from "@/lib/org-helpers";
 import { insertMessagesSafe } from "@/lib/message-insert.server";
@@ -51,46 +51,76 @@ async function deleteMediaFilesForMessages(
   return removed;
 }
 
-/** Quita base64 gigantes del JSON de media (provocaban timeout al listar chats). */
-function slimMediaForClient(
-  media: Record<string, unknown> | null,
-): Record<string, unknown> | null {
-  if (!media || typeof media !== "object") return media;
-  const out: Record<string, unknown> = { ...media };
-  delete out.base64;
-  delete out.body;
-  delete out.data;
-  // data: URIs enormes tampoco viajan al cliente
-  if (typeof out.url === "string" && out.url.startsWith("data:")) {
-    out.url = null;
-    out.missing_media = true;
+async function downloadMediaFromStorage(
+  path: string
+): Promise<{ base64: string; mimeType: string }> {
+  const { data, error } = await supabaseAdmin.storage.from("media").download(path);
+  if (error || !data) throw new Error(error?.message || "Storage download failed");
+  const arrayBuffer = await data.arrayBuffer();
+  const base64 = Buffer.from(arrayBuffer).toString("base64");
+  const mimeType = data.type || "application/octet-stream";
+  return { base64, mimeType };
+}
+
+async function resolveMediaForCommand(opts: {
+  media_url?: string | null;
+  media_base64?: string | null;
+  media_storage_path?: string | null;
+  mime_type?: string | null;
+  caption?: string | null;
+  text?: string;
+}): Promise<{ media?: string; caption?: string }> {
+  const caption = opts.caption || opts.text || undefined;
+
+  if (opts.media_base64) {
+    const raw = opts.media_base64.trim();
+    const media = raw.startsWith("data:")
+      ? raw
+      : `data:${opts.mime_type || "application/octet-stream"};base64,${raw}`;
+    return { media, caption };
   }
-  return out;
+
+  const storagePath =
+    opts.media_storage_path ||
+    (opts.media_url ? storagePathFromMediaUrl(opts.media_url) : null);
+
+  if (storagePath) {
+    const { base64, mimeType } = await downloadMediaFromStorage(storagePath);
+    return {
+      media: `data:${opts.mime_type || mimeType};base64,${base64}`,
+      caption,
+    };
+  }
+
+  if (opts.media_url) {
+    const { base64, mimeType } = await convertUrlToBase64(opts.media_url);
+    return {
+      media: `data:${opts.mime_type || mimeType};base64,${base64}`,
+      caption,
+    };
+  }
+
+  return {};
 }
 
 async function signMessageMedia(
   media: Record<string, unknown> | null
 ): Promise<Record<string, unknown> | null> {
-  const slim = slimMediaForClient(media);
-  if (!slim || typeof slim !== "object") return slim;
-  const url = typeof slim.url === "string" ? slim.url : null;
-  if (!url) return slim;
+  if (!media || typeof media !== "object") return media;
+  const url = typeof media.url === "string" ? media.url : null;
+  if (!url) return media;
 
   // Si la URL ya es pública, no necesitamos firmarla. Esto previene que cambie la firma cada 3 segundos,
   // deteniendo el parpadeo/titileo de videos/imágenes y eliminando los timeouts en la base de datos.
   if (url.includes("/storage/v1/object/public/")) {
-    return slim;
+    return media;
   }
 
   const path = storagePathFromMediaUrl(url);
-  if (!path) return slim;
-  try {
-    const { data, error } = await supabaseAdmin.storage.from("media").createSignedUrl(path, 3600);
-    if (error || !data?.signedUrl) return slim;
-    return { ...slim, url: data.signedUrl };
-  } catch {
-    return slim;
-  }
+  if (!path) return media;
+  const { data, error } = await supabaseAdmin.storage.from("media").createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) return media;
+  return { ...media, url: data.signedUrl };
 }
 
 export const listMessages = createServerFn({ method: "GET" })
@@ -99,52 +129,76 @@ export const listMessages = createServerFn({ method: "GET" })
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
 
-    // La autorización ya quedó validada por requireSupabaseAuth + ensureUserOrg.
-    // Consultar con admin evita evaluar is_member() por cada mensaje y elimina
-    // el doble intento RLS→admin que excedía el timeout cuando Supabase estaba cargado.
-    const { data: threadRow, error: threadErr } = await supabaseAdmin
+    // NIVEL 3: Usar context.supabase (cliente con JWT del usuario, respeta RLS) como PRIMARIA
+    const userSupabase = context.supabase;
+
+    const { data: thread, error: threadErr } = await userSupabase
       .from("threads")
       .select("id, contact_id, session_id, ai_enabled, purchase_intent, channel, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
       .eq("id", data.threadId)
       .eq("org_id", orgId)
       .maybeSingle();
     if (threadErr) {
-      console.error("[listMessages] thread query error:", threadErr.message);
-      throw new Error(`Thread query failed: ${threadErr.message}`);
+      console.error("[listMessages] thread query error (RLS):", threadErr.message);
     }
+
+    let threadRow = thread;
+    let messages: any[] | null = null;
+    let msgErr: any = null;
+
+    if (threadRow) {
+      const msgRes = await userSupabase
+        .from("messages")
+        .select("id, direction, text, sent_at, media")
+        .eq("thread_id", data.threadId)
+        .eq("org_id", orgId)
+        .order("sent_at", { ascending: true })
+        .limit(500);
+      messages = msgRes.data;
+      msgErr = msgRes.error;
+      if (msgErr) {
+        console.error("[listMessages] messages query error (RLS):", msgErr.message);
+      }
+    }
+
+    // Fallback: si el cliente RLS falló o devolvió vacío, usar supabaseAdmin
+    const useFallback = !threadRow || !messages || messages.length === 0;
+    if (useFallback) {
+      console.warn("[listMessages] FALLBACK a supabaseAdmin. threadRow:", !!threadRow, "messagesCount:", messages?.length ?? 0);
+      const { data: adminThread } = await supabaseAdmin
+        .from("threads")
+        .select("id, contact_id, session_id, ai_enabled, purchase_intent, channel, contacts:contact_id(id, display_name, wa_id, phone, profile_picture_url)")
+        .eq("id", data.threadId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+      threadRow = adminThread ?? threadRow;
+
+      if (threadRow) {
+        const { data: adminMsgs, error: adminErr } = await supabaseAdmin
+          .from("messages")
+          .select("id, direction, text, sent_at, media")
+          .eq("thread_id", data.threadId)
+          .order("sent_at", { ascending: true })
+          .limit(500);
+        if (adminErr) {
+          console.error("[listMessages] messages query error (admin):", adminErr.message);
+          throw new Error(`Messages query failed: ${adminErr.message}`);
+        }
+        messages = adminMsgs ?? [];
+      }
+    }
+
     if (!threadRow) throw new Error("Thread not found");
 
-    const { data: messageRows, error: msgErr } = await supabaseAdmin
-      .from("messages")
-      .select("id, direction, text, sent_at, media")
-      .eq("thread_id", data.threadId)
-      .eq("org_id", orgId)
-      .order("sent_at", { ascending: false })
-      .limit(200);
-    if (msgErr) {
-      console.error("[listMessages] messages query error:", msgErr.message);
-      throw new Error(`Messages query failed: ${msgErr.message}`);
-    }
-    const messages = (messageRows ?? []).slice().reverse();
-
     const contact = Array.isArray(threadRow.contacts) ? threadRow.contacts[0] : threadRow.contacts;
-    console.log("[listMessages] thread:", threadRow.id, "contact:", contact?.display_name ?? contact?.wa_id ?? "none", "messages:", messages.length);
-
-    // Firmar media en lotes pequeños (Promise.all de 200 firmas = timeout Netlify)
-    const rawMsgs = messages;
-    const enriched: typeof rawMsgs = [];
-    const BATCH = 15;
-    for (let i = 0; i < rawMsgs.length; i += BATCH) {
-      const chunk = rawMsgs.slice(i, i + BATCH);
-      const signed = await Promise.all(
-        chunk.map(async (m) => ({
-          ...m,
-          text: sanitizeMessageText(m.text),
-          media: await signMessageMedia(m.media as Record<string, unknown> | null),
-        })),
-      );
-      enriched.push(...signed);
-    }
+    console.log("[listMessages] thread:", threadRow.id, "contact:", contact?.display_name ?? contact?.wa_id ?? "none", "messages:", (messages ?? []).length, "fallback:", useFallback);
+    const enriched = await Promise.all(
+      (messages ?? []).map(async (m) => ({
+        ...m,
+        text: sanitizeMessageText(m.text),
+        media: await signMessageMedia(m.media as Record<string, unknown> | null),
+      }))
+    );
 
     return {
       thread: {
@@ -192,11 +246,6 @@ export const sendMessage = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     const orgId = await ensureUserOrg(context.userId);
-    if (data.media_base64) {
-      throw new Error(
-        "La multimedia debe subirse a Storage antes de enviarse; no se admite base64 en comandos.",
-      );
-    }
     const { data: thread } = await supabaseAdmin
       .from("threads")
       .select("id, session_id, channel, contact_id, contacts(id, wa_id, phone)")
@@ -260,22 +309,30 @@ export const sendMessage = createServerFn({ method: "POST" })
     if (!target) throw new Error("Contact missing wa_id");
     const chatId = /@/.test(target) ? target : `${target}@c.us`;
 
-    // Payload liviano: no descargar/reconvertir media dentro de la función.
-    // La extensión resuelve la URL una sola vez al ejecutar el comando.
+    // Build payload and resolve media (including signed URLs)
     const payload: Record<string, unknown> = {
       chatId,
       text: data.text.trim() || data.caption || "",
     };
 
-    if (data.media_url) {
-      payload.mediaUrl = data.media_url;
-    } else if (data.media_storage_path) {
-      payload.mediaUrl = supabaseAdmin.storage
-        .from("media")
-        .getPublicUrl(data.media_storage_path).data.publicUrl;
+    // Use helper to resolve media URL or base64, handling signed URLs for storage paths
+    const resolved = await resolveMediaForCommand({
+      media_url: data.media_url,
+      media_base64: data.media_base64,
+      media_storage_path: data.media_storage_path,
+      mime_type: data.mime_type,
+      caption: data.caption,
+      text: data.text,
+    });
+
+    if (resolved.media) {
+      if (resolved.media.startsWith("data:")) {
+        payload.media = resolved.media;
+      } else {
+        payload.mediaUrl = resolved.media;
+      }
+      if (resolved.caption) payload.caption = resolved.caption;
     }
-    if (data.mime_type) payload.mimeType = data.mime_type;
-    if (data.caption || data.text) payload.caption = data.caption || data.text;
 
     // Generar un ID para el comando para poder usarlo en el wa_message_id
     const cmdId = crypto.randomUUID();
@@ -397,9 +454,16 @@ export const clearThreadMessages = createServerFn({ method: "POST" })
       .maybeSingle();
     if (!thread) throw new Error("Thread not found");
 
-    // La FK messages.thread_id tiene ON DELETE CASCADE. Borrar el thread es
-    // atómico y rápido; recorrer Storage antes podía dejar la petición colgada
-    // hasta el Inactivity Timeout. Se prioriza que el chat desaparezca de BD.
+    // Borrar primero los archivos de Storage de estos mensajes (evita huerfanos)
+    await deleteMediaFilesForMessages(orgId, data.threadId);
+
+    const { error: messagesError } = await supabaseAdmin
+      .from("messages")
+      .delete()
+      .eq("thread_id", data.threadId)
+      .eq("org_id", orgId);
+    if (messagesError) throw new Error(messagesError.message);
+
     const { error: threadError } = await supabaseAdmin
       .from("threads")
       .delete()

@@ -6,7 +6,6 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { stripLeakedToolMarkup } from "@/lib/message-text";
 import { registerFailedAiRequest, sendSupportMessage } from "@/lib/retry-manager.server";
 import { loadCustomerMemory, extractAndSaveMemory } from "@/lib/ai/customer-memory.server";
-import { normalizeOutboundChatId } from "@/lib/utils";
 import {
   attachAiReplyRunner,
   scheduleDebouncedAiReply,
@@ -80,10 +79,8 @@ async function hasRecentQueuedReply(
   return (data ?? []).some((cmd: any) => {
     const payload = (cmd.payload as Record<string, unknown> | null) ?? {};
     const payloadText = normalizeForReplyDedup(String(payload.text ?? ""));
-    const payloadChat = String(payload.chatId ?? payload.chat_id ?? "").trim();
-    const normalizedPayloadChat = normalizeOutboundChatId(payloadChat) || payloadChat;
-    const normalizedTargetChat = normalizeOutboundChatId(chatId) || chatId;
-    return normalizedPayloadChat === normalizedTargetChat && payloadText === normalizedText;
+    const payloadChat = String(payload.chatId ?? "").trim();
+    return payloadChat === String(chatId).trim() && payloadText === normalizedText;
   });
 }
 
@@ -99,7 +96,7 @@ export async function hasExistingAiReplyCommand(
     .select("id")
     .eq("org_id", orgId)
     .eq("session_id", sessionId)
-    .eq("payload->>dedupeKey", dedupeKey)
+    .contains("payload", { dedupeKey })
     .in("status", ["pending", "delivered", "acked"])
     .limit(1);
 
@@ -327,12 +324,11 @@ export async function executeAiReply(params: {
       }
 
       if (!skipQueue) {
-        const normalizedChatId = normalizeOutboundChatId(chatId);
         await supabaseAdmin.from("engine_commands").insert({
           org_id: orgId,
           session_id: sessionId,
           type: "SEND_MESSAGE",
-          payload: { chatId: normalizedChatId, text: finalReply, dedupeKey: aiReplyDedupeKey },
+          payload: { chatId, text: finalReply, dedupeKey: aiReplyDedupeKey },
           status: "pending",
           scheduled_for: scheduleAt,
         });

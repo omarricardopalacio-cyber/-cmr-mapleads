@@ -1,35 +1,8 @@
 // @ts-nocheck
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { processRunUntilWaitOrCompleted } from "./flow-runner.server";
-import { isNetlifyRuntime } from "@/lib/runtime-env.server";
 
 const ACTIVE_RUN_STATUSES = ["active", "running", "wait_node", "paused"];
-
-async function wakeDeferredFlowRunner(): Promise<void> {
-  if (!isNetlifyRuntime()) return;
-  const base =
-    process.env.URL ||
-    process.env.DEPLOY_PRIME_URL ||
-    process.env.DEPLOY_URL ||
-    "https://cmrmaleads.netlify.app";
-  try {
-    const response = await fetch(
-      `${String(base).replace(/\/$/, "")}/.netlify/functions/ai-wake-bg`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ delayMs: 0 }),
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    if (!response.ok) {
-      console.warn("[flow-trigger] background wake rechazado:", response.status);
-    }
-  } catch (err) {
-    // engine-dispatch (cada minuto) queda como respaldo.
-    console.warn("[flow-trigger] background wake falló:", (err as Error)?.message);
-  }
-}
 
 /**
  * Cancela ejecuciones activas del contacto.
@@ -268,8 +241,6 @@ export async function ensureFlowRunForContact(params: {
     } catch (err: any) {
       console.error("[ensureFlowRunForContact] Error procesando run", err?.message, { flowId, contactId });
     }
-  } else if (run) {
-    await wakeDeferredFlowRunner();
   }
 
   return {
@@ -500,7 +471,7 @@ export async function startProductEntryFlow(params: {
       firstStepId: firstStep.id,
       maxSends: flow.max_sends_per_contact,
       flowName: flow.name,
-      processNow: !isNetlifyRuntime(),
+      processNow: true,
     });
 
     console.info("[startProductEntryFlow] resultado", {
@@ -608,73 +579,4 @@ export async function triggerFlows(params: {
   } catch (err: any) {
     console.error(`[flow-trigger] Error triggering flow ${params.triggerType}:`, err.message);
   }
-}
-
-/**
- * Dispara flujos por keyword presentes en el texto del cliente.
- * Funciona aunque la IA esté habilitada (la keyword tiene prioridad).
- * Usado por WhatsApp ingest y chat del catálogo.
- */
-export async function tryKeywordFlowsForText(params: {
-  orgId: string;
-  contactId: string;
-  text: string;
-  focusedProductId?: string | null;
-  /** En ingest/Netlify usar false para no bloquear/tirar 502. Cron hace processDueRuns. */
-  processNow?: boolean;
-}): Promise<{ started: boolean; flowId?: string }> {
-  const text = String(params.text || "").trim();
-  if (!text) return { started: false };
-  // Por defecto diferir en Netlify; en local/catálogo se puede procesar ya.
-  const processNow =
-    params.processNow ?? !isNetlifyRuntime();
-
-  try {
-    const { data: keywordFlows, error } = await supabaseAdmin
-      .from("flows")
-      .select("id, name, trigger_value, max_sends_per_contact, product_id")
-      .eq("org_id", params.orgId)
-      .eq("trigger_type", "keyword")
-      .eq("is_active", true);
-
-    if (error || !keywordFlows?.length) return { started: false };
-
-    const hay = text.toLowerCase();
-    for (const flow of keywordFlows) {
-      if (!flowMatchesProductFocus((flow as any).product_id, params.focusedProductId ?? null)) {
-        continue;
-      }
-      const triggerVal = String((flow as any).trigger_value || "")
-        .toLowerCase()
-        .trim();
-      if (!triggerVal || triggerVal.length < 3) continue;
-      if (!hay.includes(triggerVal)) continue;
-
-      const { data: firstStep } = await supabaseAdmin
-        .from("flow_steps")
-        .select("id")
-        .eq("flow_id", flow.id)
-        .is("parent_step_id", null)
-        .order("step_order", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      if (!firstStep) continue;
-
-      const fr = await ensureFlowRunForContact({
-        orgId: params.orgId,
-        contactId: params.contactId,
-        flowId: flow.id,
-        firstStepId: firstStep.id,
-        maxSends: (flow as any).max_sends_per_contact ?? null,
-        flowName: flow.name,
-        processNow,
-      });
-      if (fr.started) {
-        return { started: true, flowId: flow.id };
-      }
-    }
-  } catch (err: any) {
-    console.error("[flow-trigger] tryKeywordFlowsForText:", err?.message || err);
-  }
-  return { started: false };
 }

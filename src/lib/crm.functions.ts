@@ -131,9 +131,8 @@ export const listThreads = createServerFn({ method: "GET" })
 
       const { data: threads, error } = await query
         .order("last_message_at", { ascending: false, nullsFirst: false })
-        // La API limita realmente a 1000 y esa carga tardaba 5–18 s en cada
-        // poll. La bandeja operativa solo necesita los chats más recientes.
-        .limit(300);
+        // Cuentas grandes (~600–1000 chats importados); antes el tope 100 ocultaba el resto
+        .limit(1500);
 
       if (error) {
         console.error(`[DATABASE ERROR] en listThreads:`, error.message);

@@ -19,8 +19,6 @@ import {
   insertMessagesSafe,
   resolveOutboundMessageSource,
 } from '@/lib/message-insert.server'
-import { normalizeOutboundChatId } from '@/lib/utils'
-import { isNetlifyRuntime } from '@/lib/runtime-env.server'
 import {
   scheduleDebouncedAiReply,
   processDueAiReplies,
@@ -136,8 +134,6 @@ type NormalizedEvent = {
   commandId?: string
   ackStatus?: string
   mediaRecovery?: boolean
-  /** Reenvío tras resolver LID→teléfono (extensión). */
-  lidRecovery?: boolean
   historical?: boolean
   historicalClassify?: boolean
 }
@@ -337,9 +333,11 @@ function canCreateContactRecord({
   const cleanPhone = sanitizeContactPhone(phone, waId)
   if (cleanPhone) return true
   if (!waId) return false
-  // Nunca crear un contacto solo por un LID sin teléfono real.
+  // LID con nombre útil: permitir crear ficha temporal (se fusionará cuando llegue
+  // el evento enriquecido con el teléfono real)
   if (isLidKey(waId) || looksLikeLidDigits(digits(waId))) {
-    return false
+    // Solo crear ficha LID si tiene un nombre real (no solo dígitos/LID)
+    return isUsefulDisplayName(displayName, undefined, waId)
   }
   if (Boolean(digits(waId))) return true
   return isUsefulDisplayName(displayName, phone ?? undefined, waId)
@@ -401,42 +399,28 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
       : undefined
   const sentAt = toIso(e.sentAt) ?? toIso(p.sentAt) ?? toIso(p.timestamp) ?? toIso(p.t)
 
-  const payloadPhone =
-    typeof p.phoneNumber === 'string'
-      ? digits(p.phoneNumber)
-      : typeof p.phone === 'string'
-      ? digits(p.phone)
-      : undefined
-
   let contact = e.contact
   if (!contact && counterpart) {
     contact = {
       waId: counterpart,
-      displayName: pickDisplayName(
-        p.notifyName ?? p.pushname ?? p.author?.name,
-        counterpart,
-        payloadPhone ?? counterpartPhone,
-      ),
-      phone: payloadPhone ?? counterpartPhone,
-      profilePictureUrl: p.profilePictureUrl ?? p.profilePicture,
+       displayName: pickDisplayName(p.notifyName ?? p.pushname ?? p.author?.name, counterpart, counterpartPhone),
+       phone: counterpartPhone,
+       profilePictureUrl: p.profilePictureUrl ?? p.profilePicture,
     }
-  } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
-    contact = {
-      waId: counterpart,
-      displayName: pickDisplayName(contact.displayName, counterpart, payloadPhone ?? counterpartPhone),
-      phone: payloadPhone ?? counterpartPhone,
-      profilePictureUrl: contact.profilePictureUrl ?? p.profilePictureUrl ?? p.profilePicture,
-    }
-  } else if (contact) {
-    const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
-    const rawPhone =
-      contact.phone && contact.phone !== ''
-        ? digits(contact.phone)
-        : payloadPhone ?? counterpartPhone
-    const normalizedPhone = sanitizeContactPhone(
-      rawPhone ?? (!isLidKey(normalizedWaId) ? digits(normalizedWaId) : null),
-      normalizedWaId,
-    )
+   } else if (contact && meWaId && digits(contact.waId) === meWaId && counterpart) {
+     contact = {
+       waId: counterpart,
+       displayName: pickDisplayName(contact.displayName, counterpart, counterpartPhone),
+       phone: counterpartPhone,
+       profilePictureUrl: contact.profilePictureUrl ?? p.profilePictureUrl ?? p.profilePicture,
+     }
+   } else if (contact) {
+     const normalizedWaId = normalizeWaKey(contact.waId) ?? counterpart
+     const rawPhone = contact.phone ? digits(contact.phone) : counterpartPhone
+     const normalizedPhone = sanitizeContactPhone(
+       rawPhone ?? (!isLidKey(normalizedWaId) ? digits(normalizedWaId) : null),
+       normalizedWaId,
+     )
      if (normalizedWaId) {
        contact = {
          waId: normalizedWaId,
@@ -463,7 +447,6 @@ function normalizeEvent(e: z.infer<typeof EventSchema>, meWaId?: string | null):
     commandId,
     ackStatus: ackStatus != null ? String(ackStatus) : undefined,
     mediaRecovery: !!(e as { mediaRecovery?: boolean }).mediaRecovery || !!(p as { mediaRecovery?: boolean }).mediaRecovery,
-    lidRecovery: !!(e as { lidRecovery?: boolean }).lidRecovery || !!(p as { lidRecovery?: boolean }).lidRecovery,
     historical: !!(e as { historical?: boolean }).historical || !!(p as { historical?: boolean }).historical,
     historicalClassify:
       !!(e as { historicalClassify?: boolean }).historicalClassify ||
@@ -589,10 +572,9 @@ async function maybeAutoReply(
           await new Promise((r) => setTimeout(r, waitTime * 1000));
         }
 
-        const normalizedChatId = normalizeOutboundChatId(chatId) || chatId;
         if (step.media_url) {
           console.log('[auto-reply] enqueuing send_media command', {
-            chatId: normalizedChatId,
+            chatId,
             mediaUrl: step.media_url,
             mimeType: step.mime_type,
             caption: step.text_content,
@@ -602,16 +584,16 @@ async function maybeAutoReply(
             org_id: orgId,
             session_id: sessionId,
             type: 'send_media',
-            payload: { chatId: normalizedChatId, mediaUrl: step.media_url, mimeType: step.mime_type, caption: step.text_content },
+            payload: { chatId, mediaUrl: step.media_url, mimeType: step.mime_type, caption: step.text_content },
             status: 'pending',
           });
         } else if (step.text_content) {
-          console.log('[auto-reply] enqueuing send_message command', { chatId: normalizedChatId, text: step.text_content, stepId: step.id });
+          console.log('[auto-reply] enqueuing send_message command', { chatId, text: step.text_content, stepId: step.id });
           await supabaseAdmin.from('engine_commands').insert({
             org_id: orgId,
             session_id: sessionId,
             type: 'send_message',
-            payload: { chatId: normalizedChatId, text: step.text_content },
+            payload: { chatId, text: step.text_content },
             status: 'pending',
           });
         } else {
@@ -699,9 +681,8 @@ async function resolvePhoneForLidMessage(args: {
     const targetTs = sentAt ? new Date(sentAt).getTime() : Date.now()
     for (const cmd of commands ?? []) {
       const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-      const commandText = String(payload.text ?? payload.caption ?? '').trim()
-      if (commandText !== text.trim()) continue
-      const chatId = String(payload.chatId ?? payload.chat_id ?? '')
+      if (String(payload.text ?? '').trim() !== text.trim()) continue
+      const chatId = String(payload.chatId ?? '')
       const phone = digits(chatId)
       if (!phone) continue
       const createdTs = new Date(cmd.created_at).getTime()
@@ -726,7 +707,7 @@ async function resolvePhoneForLidMessage(args: {
       const createdTs = new Date(cmd.created_at).getTime()
       if (now - createdTs > 1000 * 60 * 5) continue
       const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-      const phone = digits(String(payload.chatId ?? payload.chat_id ?? ''))
+      const phone = digits(String(payload.chatId ?? ''))
       if (phone) return { contactId: existing?.id ?? null, phone }
     }
   }
@@ -965,7 +946,7 @@ function hasRenderableMessageContent(
   if (typeof media.body === 'string' && media.body.length > 20) return true
   if (typeof media.base64 === 'string' && media.base64.length > 20) return true
   if (typeof media.data === 'string' && media.data.length > 20) return true
-  // Solo `media.type` sin bytes/URL producía burbujas azules vacías en el CRM.
+  if (typeof media.type === 'string' && media.type.length > 0) return true
   return false
 }
 
@@ -1431,10 +1412,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 waId: e.contact?.waId,
               })
               const isMediaRecovery = !!(e as { mediaRecovery?: boolean }).mediaRecovery
-              const isLidRecovery = !!(e as { lidRecovery?: boolean }).lidRecovery
-              // mediaRecovery / lidRecovery pueden ser el único evento que llega
-              // con teléfono resuelto tras un primer pase LID descartado.
-              if (!isMediaRecovery && !isLidRecovery && !inboundEventDedupe.shouldProcess(dedupKey)) {
+              if (!isMediaRecovery && !inboundEventDedupe.shouldProcess(dedupKey)) {
                 console.log('[ingest] skip duplicate event', { dedupKey, type: e.type, chatId: e.chatId })
                 continue
               }
@@ -1463,8 +1441,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             // no crear otra ficha ni reenviar flujos. EXCEPCIÓN: mediaRecovery es
             // el segundo evento del mismo audio (ya con bytes/URL) y debe llegar
             // hasta la rama que actualiza/transcribe el mensaje existente.
-            // lidRecovery con mensaje ya guardado: solo fusionar contacto, no reinsertar.
-            let priorMessageThreadIdForLidRecovery: string | null = null
             if (e.waMessageId && (e.type === 'message-in' || e.type === 'message-out')) {
               const { data: priorMsg } = await supabaseAdmin
                 .from('messages')
@@ -1472,21 +1448,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 .eq('org_id', session.org_id)
                 .eq('wa_message_id', e.waMessageId)
                 .maybeSingle()
-              if (priorMsg?.id && e.lidRecovery) {
-                // El primer evento pudo guardarse con un @lid anónimo. El segundo
-                // trae teléfono/nombre/foto: debe atravesar la resolución de
-                // contacto, pero no volverá a disparar automatización porque el
-                // mensaje ya existe.
-                priorMessageThreadIdForLidRecovery = priorMsg.thread_id
-                console.info('[ingest] enriqueciendo contacto desde lidRecovery', {
-                  waMessageId: e.waMessageId,
-                  threadId: priorMsg.thread_id,
-                })
-              } else if (priorMsg?.id && !e.mediaRecovery) {
+              if (priorMsg?.id && !e.mediaRecovery) {
                 console.log('[ingest] skip cross-thread duplicate waMessageId', {
                   waMessageId: e.waMessageId,
                   threadId: priorMsg.thread_id,
-                  lidRecovery: !!e.lidRecovery,
                 })
                 continue
               } else if (priorMsg?.id && e.mediaRecovery) {
@@ -1521,33 +1486,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               phone = sanitizeContactPhone(resolved.phone, waId, ownDigits)
             }
 
-            if (priorMessageThreadIdForLidRecovery && phone) {
-              const { data: priorThread } = await supabaseAdmin
-                .from('threads')
-                .select('contact_id')
-                .eq('id', priorMessageThreadIdForLidRecovery)
-                .eq('org_id', session.org_id)
-                .maybeSingle()
-              if (priorThread?.contact_id) {
-                contactId = priorThread.contact_id
-                const recoveryPatch: Record<string, unknown> = {
-                  phone,
-                  wa_id: waId,
-                }
-                if (isUsefulDisplayName(e.contact?.displayName, phone, waId)) {
-                  recoveryPatch.display_name = e.contact!.displayName
-                }
-                if (e.contact?.profilePictureUrl) {
-                  recoveryPatch.profile_picture_url = e.contact.profilePictureUrl
-                }
-                await supabaseAdmin
-                  .from('contacts')
-                  .update(recoveryPatch as any)
-                  .eq('id', priorThread.contact_id)
-                  .eq('org_id', session.org_id)
-              }
-            }
-
             // Si el contacto LID ya existe con phone=LID (dato basura), limpiarlo
             if (isLidKey(waId)) {
               const { data: dirtyLid } = await supabaseAdmin
@@ -1569,7 +1507,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               // .maybeSingle() rompe si ya hay duplicados → crea una 3ª ficha.
               const { data: phoneRows } = await supabaseAdmin
                 .from('contacts')
-                .select('id, wa_id, display_name, profile_picture_url, updated_at')
+                .select('id, wa_id, display_name, updated_at')
                 .eq('org_id', session.org_id)
                 .eq('phone', phone)
                 .order('updated_at', { ascending: false })
@@ -1624,9 +1562,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   phone ?? undefined,
                   waId,
                 )
-                const hasNewProfilePhoto =
-                  !!e.contact?.profilePictureUrl &&
-                  e.contact.profilePictureUrl !== byPhone.profile_picture_url
 
                 // Preferir wa_id de teléfono real sobre LID cuando ya tenemos phone
                 const nextWaId =
@@ -1636,11 +1571,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       ? byPhone.wa_id
                       : waId
 
-                if (
-                  byPhone.wa_id !== nextWaId ||
-                  (currentIsAnonymous && hasNewRealName) ||
-                  hasNewProfilePhoto
-                ) {
+                if (byPhone.wa_id !== nextWaId || (currentIsAnonymous && hasNewRealName)) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
@@ -1649,9 +1580,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         ? e.contact!.displayName
                         : (byPhone.display_name ?? phone),
                       phone,
-                      ...(e.contact?.profilePictureUrl
-                        ? { profile_picture_url: e.contact.profilePictureUrl }
-                        : {}),
+                      profile_picture_url: e.contact?.profilePictureUrl,
                     })
                     .eq('id', byPhone.id)
                 }
@@ -1722,13 +1651,38 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .single()
                 contactId = newContact?.id ?? null
                 isNewContact = Boolean(newContact?.id)
+              } else if (
+                isLidKey(waId) &&
+                !phone &&
+                (e.direction === 'in' || e.type === 'message-in') &&
+                (e.text?.trim() || e.waMessageId)
+              ) {
+                // Fallback: LID entrante sin nombre ni teléfono → crear contacto anónimo
+                // temporal para que el mensaje no se pierda. Se fusionará cuando llegue
+                // el evento enriquecido con teléfono/nombre real de la extensión.
+                console.info('[ingest] LID sin nombre — creando contacto anónimo temporal', { waId })
+                const { data: anonContact } = await supabaseAdmin
+                  .from('contacts')
+                  .upsert(
+                    {
+                      org_id: session.org_id,
+                      wa_id: waId,
+                      display_name: null,
+                      phone: null,
+                    },
+                    { onConflict: 'org_id,wa_id' },
+                  )
+                  .select('id')
+                  .single()
+                contactId = anonContact?.id ?? null
+                isNewContact = Boolean(anonContact?.id)
               }
             }
 
             if (contactId) {
               const { data: cont } = await supabaseAdmin
                 .from('contacts')
-                .select('display_name, wa_id, profile_picture_url')
+                .select('display_name, wa_id')
                 .eq('id', contactId)
                 .maybeSingle()
               if (cont) {
@@ -1742,20 +1696,13 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   phone ?? undefined,
                   waId,
                 )
-                const hasNewProfilePhoto =
-                  !!e.contact?.profilePictureUrl &&
-                  e.contact.profilePictureUrl !== cont.profile_picture_url
 
-                if ((currentIsAnonymous && hasNewRealName) || hasNewProfilePhoto) {
+                if (currentIsAnonymous && hasNewRealName) {
                   await supabaseAdmin
                     .from('contacts')
                     .update({
-                      ...(currentIsAnonymous && hasNewRealName
-                        ? { display_name: e.contact!.displayName }
-                        : {}),
-                      ...(e.contact?.profilePictureUrl
-                        ? { profile_picture_url: e.contact.profilePictureUrl }
-                        : {}),
+                      display_name: e.contact!.displayName,
+                      profile_picture_url: e.contact?.profilePictureUrl,
                     })
                     .eq('id', contactId)
                 } else if (
@@ -1773,61 +1720,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
-            if (!contactId) {
-              if (
-                isLidKey(waId) &&
-                !phone &&
-                (e.direction === 'in' || e.type === 'message-in') &&
-                (e.text?.trim() || e.waMessageId)
-              ) {
-                // Fallback: LID entrante sin teléfono → contacto anónimo temporal
-                // para no perder textos. Se fusiona al enriquecer con teléfono real.
-                // (Removido en 95386d6 y provocó que solo audios con mediaRecovery entraran.)
-                console.info('[ingest] LID sin teléfono — creando contacto anónimo temporal', {
-                  waId,
-                  waMessageId: e.waMessageId,
-                })
-                const { data: anonContact } = await supabaseAdmin
-                  .from('contacts')
-                  .upsert(
-                    {
-                      org_id: session.org_id,
-                      wa_id: waId,
-                      display_name: isUsefulDisplayName(
-                        e.contact?.displayName,
-                        null,
-                        waId,
-                      )
-                        ? e.contact!.displayName
-                        : null,
-                      phone: null,
-                      profile_picture_url: e.contact?.profilePictureUrl,
-                    },
-                    { onConflict: 'org_id,wa_id' },
-                  )
-                  .select('id')
-                  .single()
-                contactId = anonContact?.id ?? null
-                isNewContact = Boolean(anonContact?.id)
-              }
-            }
-
             if (!contactId) continue
-
-            if (
-              priorMessageThreadIdForLidRecovery &&
-              e.lidRecovery &&
-              !e.mediaRecovery
-            ) {
-              // Ya enriquecimos/fusionamos el contacto. El mensaje original ya
-              // existe: no crear otro hilo, no reinsertar y no reactivar IA/flujos.
-              console.info('[ingest] lidRecovery aplicado sin duplicar mensaje', {
-                waMessageId: e.waMessageId,
-                threadId: priorMessageThreadIdForLidRecovery,
-                contactId,
-              })
-              continue
-            }
 
             // No tocar last_message_at aquí: solo tras insert exitoso del mensaje.
             // Si no, la lista muestra chats "activos" con 0 mensajes.
@@ -2149,12 +2042,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
                 // Audio transcrito (o fallback) tarde: disparar IA
                 if (shouldFireAudioAi) {
-                  const rawSendChatId = phone
-                    ? `${phone}@c.us`
+                  const sendChatId = e.contact?.phone
+                    ? `${e.contact.phone}@c.us`
                     : /^\d+$/.test(waId)
                       ? `${waId}@c.us`
                       : e.chatId
-                  const sendChatId = normalizeOutboundChatId(rawSendChatId) || e.chatId
                   const audioGuard = await shouldSkipAutomation({
                     orgId: session.org_id,
                     sessionId: session.id,
@@ -2177,28 +2069,9 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       .is('cancelled_at', null)
                   } catch (_) { /* ignore */ }
 
-                  // Keywords sobre transcripción real (prioridad sobre IA)
-                  let audioKeywordStarted = false
-                  if (gotNewTranscript && e.text?.trim()) {
-                    try {
-                      const { tryKeywordFlowsForText } = await import(
-                        '@/lib/flow-trigger.server'
-                      )
-                      const kw = await tryKeywordFlowsForText({
-                        orgId: session.org_id,
-                        contactId,
-                        text: e.text.trim(),
-                        focusedProductId: (thread as any).focused_product_id || null,
-                        processNow: false,
-                      })
-                      audioKeywordStarted = kw.started
-                    } catch (_) { /* ignore */ }
-                  }
-
                   // Auto-respuestas/etiquetas solo reciben texto realmente
                   // transcrito. El fallback queda reservado a la respuesta IA.
-                  const { aiDisabled, totalDelaySec } =
-                    !audioKeywordStarted && gotNewTranscript && e.text?.trim()
+                  const { aiDisabled, totalDelaySec } = gotNewTranscript && e.text?.trim()
                     ? await maybeAutoReply(
                         session.org_id,
                         session.id,
@@ -2208,7 +2081,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         contactId,
                       )
                     : { aiDisabled: false, totalDelaySec: 0 }
-                  if (!audioKeywordStarted && !aiDisabled) {
+                  if (!aiDisabled) {
                     const autoRepliesWereSent = totalDelaySec > 0
                     const aiReplyDedupKey = buildAiReplyDedupKey({
                       sessionId: session.id,
@@ -2232,7 +2105,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       await scheduleAiReplyFromIngest({
                         orgId: session.org_id,
                         sessionId: session.id,
-                        chatId: normalizeOutboundChatId(sendChatId) || sendChatId,
+                        chatId: sendChatId,
                         contactId,
                         threadId: thread.id,
                         text: textForAi,
@@ -2276,12 +2149,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
 
                 if (shouldFireAudioAi) {
-                  const rawSendChatId = phone
-                    ? `${phone}@c.us`
+                  const sendChatId = e.contact?.phone
+                    ? `${e.contact.phone}@c.us`
                     : /^\d+$/.test(waId)
                       ? `${waId}@c.us`
                       : e.chatId
-                  const sendChatId = normalizeOutboundChatId(rawSendChatId) || e.chatId
                   const audioGuard2 = await shouldSkipAutomation({
                     orgId: session.org_id,
                     sessionId: session.id,
@@ -2295,24 +2167,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   if (audioGuard2.skip) {
                     console.warn('[ingest] skip audio automation', { reason: audioGuard2.reason, threadId: thread.id })
                   } else {
-                  let audioKeywordStarted2 = false
-                  if (gotNewTranscript && e.text?.trim()) {
-                    try {
-                      const { tryKeywordFlowsForText } = await import(
-                        '@/lib/flow-trigger.server'
-                      )
-                      const kw = await tryKeywordFlowsForText({
-                        orgId: session.org_id,
-                        contactId,
-                        text: e.text.trim(),
-                        focusedProductId: (thread as any).focused_product_id || null,
-                        processNow: false,
-                      })
-                      audioKeywordStarted2 = kw.started
-                    } catch (_) { /* ignore */ }
-                  }
-                  const { aiDisabled, totalDelaySec } =
-                    !audioKeywordStarted2 && gotNewTranscript && e.text?.trim()
+                  const { aiDisabled, totalDelaySec } = gotNewTranscript && e.text?.trim()
                     ? await maybeAutoReply(
                         session.org_id,
                         session.id,
@@ -2322,7 +2177,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         contactId,
                       )
                     : { aiDisabled: false, totalDelaySec: 0 }
-                  if (!audioKeywordStarted2 && !aiDisabled) {
+                  if (!aiDisabled) {
                     const aiReplyDedupKey = buildAiReplyDedupKey({
                       sessionId: session.id,
                       threadId: thread.id,
@@ -2332,12 +2187,13 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       chatId: sendChatId,
                     })
                     if (
-                      !(await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey))
+                      !(await hasExistingAiReplyCommand(session.org_id, session.id, aiReplyDedupKey)) &&
+                      aiReplyDedupe.shouldProcess(aiReplyDedupKey)
                     ) {
                       await scheduleAiReplyFromIngest({
                         orgId: session.org_id,
                         sessionId: session.id,
-                        chatId: normalizeOutboundChatId(sendChatId) || sendChatId,
+                        chatId: sendChatId,
                         contactId,
                         threadId: thread.id,
                         text: textForAi,
@@ -2423,16 +2279,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               continue
             }
 
-            const { error: threadUpdateErr } = await supabaseAdmin
+            await supabaseAdmin
               .from('threads')
               .update({ last_message_at: sentAtIso })
               .eq('id', thread.id)
-            if (threadUpdateErr) {
-              console.warn('[ingest] failed to update last_message_at', threadUpdateErr.message, {
-                threadId: thread.id,
-                sentAtIso,
-              })
-            }
 
             // Aprendizaje: outbound agent o inbound tras atención humana
             if (
@@ -2517,13 +2367,12 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             const textForAiInsert = (realInboundText || audioAiFallbackText || '').trim()
             const inboundDir = (e.direction ?? (e.type === 'message-in' ? 'in' : 'out'))
             if (inboundDir === 'in' && textForAiInsert && !e.historical) {
-              // Use phone@c.us when we have a real phone (avoids @lid/issues)
-              const rawSendChatId = phone
-                ? `${phone}@c.us`
+              // Use phone@c.us when we have a real phone (avoids @lid issues)
+              const sendChatId = e.contact?.phone
+                ? `${e.contact.phone}@c.us`
                 : /^\d+$/.test(waId)
                   ? `${waId}@c.us`
                   : e.chatId
-              const sendChatId = normalizeOutboundChatId(rawSendChatId) || e.chatId
 
               const guard = await shouldSkipAutomation({
                 orgId: session.org_id,
@@ -2628,7 +2477,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       contactId,
                       flowId: session.default_flow_id,
                       firstStepId: firstStep.id,
-                      processNow: !isNetlifyRuntime(),
+                      processNow: true,
                     })
                     if (welcome.started || welcome.alreadyActive || welcome.alreadyRecent) {
                       responder = 'welcome_flow'
@@ -2696,30 +2545,64 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
               }
 
-              // 4) Flujos keyword — siempre (también con IA ON y en saludos tipo "hola").
-              // Antes se omitían si ai_configs.enabled o greetingOnly → keywords nunca corrían.
+              // 4) Flujos keyword (solo producto ligado si hay foco; no en saludo)
               if (
                 (responder === 'none' || responder === 'product_focus') &&
-                realInboundText
+                realInboundText &&
+                !greetingOnly
               ) {
                 try {
-                  const { tryKeywordFlowsForText } = await import(
-                    '@/lib/flow-trigger.server'
-                  )
-                  const kw = await tryKeywordFlowsForText({
-                    orgId: session.org_id,
-                    contactId,
-                    text: realInboundText,
-                    focusedProductId,
-                    processNow: false,
-                  })
-                  if (kw.started) {
-                    if (responder === 'none') responder = 'generic_flow'
-                    skipAiThisInbound = true
-                    console.info('[ingest] keyword flow activado', {
-                      threadId: thread.id,
-                      flowId: kw.flowId,
-                    })
+                  const { data: aiCfgForFlows } = await supabaseAdmin
+                    .from('ai_configs')
+                    .select('enabled')
+                    .eq('org_id', session.org_id)
+                    .maybeSingle()
+                  const aiHandlesFlows = aiCfgForFlows?.enabled === true && !focusedProductId
+
+                  if (!aiHandlesFlows) {
+                    const { data: keywordFlows } = await dyn()
+                      .from('flows')
+                      .select('id, trigger_value, max_sends_per_contact, product_id')
+                      .eq('org_id', session.org_id)
+                      .eq('trigger_type', 'keyword')
+                      .eq('is_active', true)
+                    for (const flow of keywordFlows ?? []) {
+                      const flowPid = (flow as any).product_id
+                        ? String((flow as any).product_id)
+                        : null
+                      if (focusedProductId) {
+                        if (!flowPid || flowPid !== focusedProductId) continue
+                      } else if (flowPid) {
+                        continue
+                      }
+                      const triggerVal = String((flow as any).trigger_value || '')
+                        .toLowerCase()
+                        .trim()
+                      if (!triggerVal || triggerVal.length < 3) continue
+                      if (!realInboundText.toLowerCase().includes(triggerVal)) continue
+                      const { data: firstStep } = await dyn()
+                        .from('flow_steps')
+                        .select('id')
+                        .eq('flow_id', flow.id)
+                        .is('parent_step_id', null)
+                        .order('step_order', { ascending: true })
+                        .limit(1)
+                        .maybeSingle()
+                      if (!firstStep) continue
+                      const fr = await ensureFlowRunForContact({
+                        orgId: session.org_id,
+                        contactId,
+                        flowId: flow.id,
+                        firstStepId: firstStep.id,
+                        maxSends: (flow as any).max_sends_per_contact ?? null,
+                        processNow: true,
+                      })
+                      if (fr.started) {
+                        if (responder === 'none') responder = 'generic_flow'
+                        skipAiThisInbound = true
+                        break
+                      }
+                    }
                   }
                 } catch (flowErr: any) {
                   console.error('[ingest] keyword flow error:', flowErr.message)
@@ -2749,6 +2632,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 )
                 if (alreadyQueued) {
                   console.log('[ingest] skip duplicate AI reply by persisted command', {
+                    aiReplyDedupKey,
+                    threadId: thread.id,
+                  })
+                } else if (!aiReplyDedupe.shouldProcess(aiReplyDedupKey)) {
+                  console.log('[ingest] skip duplicate AI reply', {
                     aiReplyDedupKey,
                     threadId: thread.id,
                   })
@@ -2921,16 +2809,16 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
           }
         }
 
-        // Auditoría opt-in: esta tabla creció a 355k filas y saturó el plan.
-        // No depender de una variable "disable" que puede faltar en Lambda.
-        const eventRows = process.env.ENABLE_EVENT_AUDIT === 'true'
-          ? normalized.map((e, i) => ({
+        // Log de auditoria opcional. Es la tabla que mas crece; se puede
+        // desactivar con DISABLE_EVENT_AUDIT=true para ahorrar espacio.
+        const eventRows = process.env.DISABLE_EVENT_AUDIT === 'true'
+          ? []
+          : normalized.map((e, i) => ({
               org_id: session.org_id,
               session_id: session.id,
               type: e.type,
               payload: stripHeavyFieldsForDb(events[i]) as never,
             }))
-          : []
         if (eventRows.length) {
           try {
             await supabaseAdmin.from('events').insert(eventRows)
@@ -3048,22 +2936,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
               continue
             }
-            // CASO D: no existe — sólo creamos si tenemos al menos phone o un nombre útil,
-            // y nunca creamos un contacto LID sin teléfono real.
-            if (!byWa && !byPhone) {
-              const shouldCreateName =
-                !!displayName &&
-                !isLidKey(waId) &&
-                isUsefulDisplayName(displayName, phone ?? undefined, waId);
-              if (phone || shouldCreateName) {
-                await supabaseAdmin.from('contacts').insert({
-                  org_id: session.org_id,
-                  wa_id: waId,
-                  phone,
-                  display_name: shouldCreateName ? displayName : phone ?? undefined,
-                  profile_picture_url: picUrl,
-                } as any)
-              }
+            // CASO D: no existe — sólo creamos si tenemos al menos phone o nombre útil
+            if (!byWa && !byPhone && (phone || displayName)) {
+              await supabaseAdmin.from('contacts').insert({
+                org_id: session.org_id,
+                wa_id: waId,
+                phone,
+                display_name: displayName ?? phone ?? waId.replace(/@lid$/, ''),
+                profile_picture_url: picUrl,
+              } as any)
             }
           } catch (err) {
             console.warn('[ingest] CONTACT_INFO handler error:', (err as Error)?.message)

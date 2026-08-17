@@ -56,10 +56,6 @@ async function loadConfig(): Promise<void> {
   backendUrl = (cfg.backendUrl || "").replace(/\/$/, "") || null;
   sessionToken = cfg.sessionToken || null;
   console.log("[ServiceWorker] Config cargada:", { backendUrl, hasToken: !!sessionToken });
-  // Al recargar la extensión no arrastrar un lastError viejo (timeout de cold start).
-  if (backendUrl && sessionToken) {
-    await chrome.storage.local.set({ lastError: null });
-  }
   await restoreSession();
 }
 
@@ -76,25 +72,11 @@ async function restoreSession(): Promise<void> {
 }
 
 async function saveConfig(url: string, token: string): Promise<void> {
-  const cleanUrl = String(url || "").trim().replace(/\/$/, "");
-  const cleanToken = String(token || "").trim();
-  await chrome.storage.local.set({
-    backendUrl: cleanUrl,
-    sessionToken: cleanToken,
-    lastError: cleanUrl && cleanToken ? null : "not_configured",
-  });
-  backendUrl = cleanUrl || null;
-  sessionToken = cleanToken || null;
-  console.log("[ServiceWorker] Config guardada", {
-    backendUrl,
-    hasToken: !!sessionToken,
-    tokenLen: cleanToken.length,
-  });
-  if (backendUrl && sessionToken) {
-    pollFailStreak = 0;
-    // Probar backend al instante (cold start puede tardar; no marcar error aún)
-    void pollCommands().catch(() => {});
-  }
+  const cleanUrl = url.replace(/\/$/, "");
+  await chrome.storage.local.set({ backendUrl: cleanUrl, sessionToken: token });
+  backendUrl = cleanUrl;
+  sessionToken = token;
+  console.log("[ServiceWorker] Config guardada");
 }
 
 // ============================================================
@@ -240,86 +222,28 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // Polling — Obtener comandos del backend
 // ============================================================
 
-/** Fallos de red consecutivos antes de marcar DESCONECTADO (evita parpadeo por un timeout). */
-let pollFailStreak = 0;
-
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-let pollRequestInFlight = false;
-
 async function pollCommands(): Promise<void> {
   if (!backendUrl || !sessionToken) {
     await chrome.storage.local.set({ wsStatus: "disconnected", lastError: "not_configured" });
     return;
   }
-  if (pollRequestInFlight) return;
-  pollRequestInFlight = true;
 
   try {
-    // Netlify cold start suele tardar 8–15s; timeout corto provocaba "commands timeout"
-    // justo al recargar la extensión aunque el backend estuviera bien.
-    let res: Response | null = null;
-    let lastErr: unknown = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        res = await fetchWithTimeout(
-          `${backendUrl}${API_ENDPOINTS.GET_COMMANDS}`,
-          {
-            method: "GET",
-            headers: { "X-Session-Token": sessionToken || "" },
-          },
-          28_000,
-        );
-        lastErr = null;
-        break;
-      } catch (e) {
-        lastErr = e;
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
-      }
-    }
-    if (!res) throw lastErr || new Error("Failed to fetch");
-
+    const res = await fetch(`${backendUrl}${API_ENDPOINTS.GET_COMMANDS}`, {
+      method: "GET",
+      headers: { "X-Session-Token": sessionToken || "" },
+    });
     if (!res.ok) {
-      pollFailStreak++;
-      // 401 = token inválido (sí reportar). 5xx/timeouts: tolerar más.
-      const hardFail = res.status === 401 || res.status === 403 || pollFailStreak >= 5;
-      if (hardFail) {
-        await chrome.storage.local.set({
-          wsStatus: "disconnected",
-          lastError: `commands ${res.status}`,
-        });
-      }
+      await chrome.storage.local.set({ wsStatus: "disconnected", lastError: `commands ${res.status}` });
       return;
     }
-    pollFailStreak = 0;
     await chrome.storage.local.set({ wsStatus: "connected", lastPoll: Date.now(), lastError: null });
     const { commands = [] } = await res.json();
     for (const cmd of commands) {
       await dispatchCommand(cmd);
     }
   } catch (e: any) {
-    pollFailStreak++;
-    const msg = String(e?.name === "AbortError" ? "commands timeout" : e?.message || e);
-    // Cold start / blip: no asustar al usuario hasta 5 fallos seguidos
-    if (pollFailStreak >= 5) {
-      await chrome.storage.local.set({ wsStatus: "disconnected", lastError: msg });
-    } else {
-      console.warn("[ServiceWorker] poll fallo temporal", pollFailStreak, msg);
-    }
-  } finally {
-    pollRequestInFlight = false;
+    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: String(e?.message || e) });
   }
 }
 
@@ -627,13 +551,11 @@ async function flushIngestQueue(): Promise<void> {
             : flat.chatId;
       const phone =
         (typeof existingContact?.phone === "string" && existingContact.phone.replace(/\D/g, "")) ||
-        (typeof flat.phone === "string" && flat.phone.replace(/\D/g, "")) ||
         phoneDigitsFromJid(counterpartJid) ||
-        phoneDigitsFromJid(flat.waId) ||
         phoneDigitsFromJid(existingContact?.waId) ||
         undefined;
 
-      let chatId = (counterpartJid || flat.chatId || flat.waId) as string | undefined;
+      let chatId = (counterpartJid || flat.chatId) as string | undefined;
       // Preferir @c.us cuando ya tenemos teléfono (evita que ingest descarte @lid)
       if (phone && (!chatId || String(chatId).endsWith("@lid"))) {
         chatId = `${phone}@c.us`;
@@ -646,9 +568,7 @@ async function flushIngestQueue(): Promise<void> {
         (flat.notifyName as string | undefined);
 
       const contact = {
-        waId: phone
-          ? `${phone}@c.us`
-          : String(chatId || flat.waId || existingContact?.waId || ""),
+        waId: phone ? `${phone}@c.us` : String(chatId || existingContact?.waId || ""),
         displayName: displayName || undefined,
         phone: phone || undefined,
         profilePictureUrl:
@@ -661,7 +581,6 @@ async function flushIngestQueue(): Promise<void> {
         type: inferredType as any,
         chatId,
         waMessageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
-        commandId: (flat.commandId ?? flat.taskId) as string | undefined,
         direction:
           (flat.direction as "in" | "out" | undefined) ??
           (typeof fromMe === "boolean" ? (fromMe ? "out" : "in") : undefined),
@@ -670,7 +589,6 @@ async function flushIngestQueue(): Promise<void> {
         contact: contact.waId ? contact : undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
         mediaRecovery: flat.mediaRecovery as boolean | undefined,
-        lidRecovery: flat.lidRecovery as boolean | undefined,
         payload: {
           fromMe: flat.fromMe as boolean | undefined,
           from: flat.from as string | undefined,
@@ -684,9 +602,6 @@ async function flushIngestQueue(): Promise<void> {
           displayName,
           profilePictureUrl: flat.profilePictureUrl as string | undefined,
           messageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
-          commandId: (flat.commandId ?? flat.taskId) as string | undefined,
-          mediaRecovery: flat.mediaRecovery as boolean | undefined,
-          lidRecovery: flat.lidRecovery as boolean | undefined,
           type: flat.type as string | undefined,
           waId: contact.waId,
         },
@@ -699,25 +614,20 @@ async function flushIngestQueue(): Promise<void> {
   console.log("[ServiceWorker] Ingest body:", bodyJson.substring(0, 2000));
 
   try {
-    const response = await fetchWithTimeout(
-      `${backendUrl}${API_ENDPOINTS.POST_INGEST}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Session-Token": sessionToken || "",
-        },
-        body: bodyJson,
+    const response = await fetch(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Session-Token": sessionToken || "",
       },
-      25_000,
-    );
+      body: bodyJson,
+    });
 
     if (response.ok) {
       // Remover eventos enviados de la cola
       const remaining = queue.slice(batch.length);
       await chrome.storage.local.set({ eventQueue: remaining });
-      await chrome.storage.local.set({ wsStatus: "connected", lastFlush: Date.now(), lastError: null });
-      pollFailStreak = 0;
+      await chrome.storage.local.set({ wsStatus: "connected", lastFlush: Date.now() });
       console.log(`[ServiceWorker] Ingest: ${batch.length} eventos sincronizados, ${remaining.length} restantes`);
     } else {
       const errText = await response.text().catch(() => "");
@@ -725,13 +635,7 @@ async function flushIngestQueue(): Promise<void> {
       await chrome.storage.local.set({ lastError: `ingest ${response.status}: ${errText.substring(0, 200)}` });
     }
   } catch (err: any) {
-    const msg = String(err?.name === "AbortError" ? "ingest timeout" : err?.message || err);
-    pollFailStreak++;
-    if (pollFailStreak >= 3) {
-      await chrome.storage.local.set({ wsStatus: "disconnected", lastError: msg });
-    } else {
-      console.warn("[ServiceWorker] ingest fallo temporal", pollFailStreak, msg);
-    }
+    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: String(err?.message || err) });
   }
 }
 
@@ -996,16 +900,8 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
     const flat = eventPayloadRecord(event);
     const waMessageId = String(flat.messageId || flat.waMessageId || "").trim();
     const isMediaRecovery = flat.mediaRecovery === true;
-    const isLidRecovery = flat.lidRecovery === true;
-    // Dedupe DOM+WPP del mismo waMessageId.
-    // Excepciones: mediaRecovery (bytes de audio) y lidRecovery (texto que
-    // llegó primero como LID sin teléfono y se reenvía ya resuelto).
-    if (
-      waMessageId &&
-      !isMediaRecovery &&
-      !isLidRecovery &&
-      (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT")
-    ) {
+    // Dedupe DOM+WPP del mismo waMessageId (salvo mediaRecovery real).
+    if (waMessageId && !isMediaRecovery && (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT")) {
       const seenKey = `seenMsg:${waMessageId}`;
       const seenStore = await chrome.storage.local.get(seenKey);
       const prev = Number(seenStore[seenKey] || 0);

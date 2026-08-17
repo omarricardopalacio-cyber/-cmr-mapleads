@@ -6,8 +6,6 @@
  * - Al terminar el flujo (o quedar en wait_node) se libera la cola.
  */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { normalizeOutboundChatId } from "@/lib/utils";
-import { isNetlifyRuntime } from "@/lib/runtime-env.server";
 
 const dyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
 
@@ -29,18 +27,14 @@ export function attachAiReplyRunner(fn: AiReplyRunner) {
   aiReplyRunner = fn;
 }
 
-// En Netlify el cron corre cada minuto: debounce corto para no acumular retrasos.
-const DEFAULT_DEBOUNCE_MS = isNetlifyRuntime() ? 1500 : 5000;
-const DEFAULT_FLOW_WAIT_MS = 5000;
-
 function debounceMs() {
-  const n = Number(process.env.AI_REPLY_DEBOUNCE_MS ?? DEFAULT_DEBOUNCE_MS);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_DEBOUNCE_MS;
+  const n = Number(process.env.AI_REPLY_DEBOUNCE_MS || 5000);
+  return Number.isFinite(n) && n >= 1000 ? n : 5000;
 }
 
 function flowWaitMs() {
-  const n = Number(process.env.AI_REPLY_FLOW_WAIT_MS ?? DEFAULT_FLOW_WAIT_MS);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FLOW_WAIT_MS;
+  const n = Number(process.env.AI_REPLY_FLOW_WAIT_MS || 5000);
+  return Number.isFinite(n) && n >= 1000 ? n : 5000;
 }
 
 function isoIn(ms: number) {
@@ -79,7 +73,7 @@ export async function contactHasExecutingFlow(contactId: string): Promise<boolea
   if (!contactId) return false;
   const { data: runs, error } = await dyn()
     .from("flow_runs")
-    .select("id, status, next_execution_at, updated_at, created_at")
+    .select("id, status, next_execution_at")
     .eq("contact_id", contactId)
     .in("status", ["active", "running", "wait_node"]);
 
@@ -90,20 +84,14 @@ export async function contactHasExecutingFlow(contactId: string): Promise<boolea
   if (!runs || runs.length === 0) return false;
 
   const now = Date.now();
-  const STALE_FLOW_MS = 15 * 60 * 1000;
   return runs.some((run: any) => {
-    const lastTouch = new Date(run.updated_at || run.created_at || 0).getTime();
-    const isStale = Number.isFinite(lastTouch) && now - lastTouch > STALE_FLOW_MS;
-
     if (run.status === "active" || run.status === "running") {
-      // Flujos atascados en active/running no deben bloquear la IA para siempre
-      // (el "bloqueo para agrupar" mencionaba este síntoma).
-      return !isStale;
+      return true;
     }
     if (run.status === "wait_node" && run.next_execution_at) {
       const nextTime = new Date(run.next_execution_at).getTime();
       const diffMs = nextTime - now;
-      if (diffMs > 0 && diffMs < 5 * 60 * 1000) {
+      if (diffMs < 5 * 60 * 1000) {
         return true;
       }
     }
@@ -111,31 +99,25 @@ export async function contactHasExecutingFlow(contactId: string): Promise<boolea
   });
 }
 
-/** Comandos pending más viejos que esto se consideran atascados y no bloquean la IA. */
-const STALE_PENDING_CMD_MS = 3 * 60 * 1000;
-
 export async function hasPendingEngineCommandsForChat(
   sessionId: string,
   chatId: string,
 ): Promise<boolean> {
   if (!sessionId || !chatId) return false;
   try {
-    const since = new Date(Date.now() - STALE_PENDING_CMD_MS).toISOString();
     const { data: commands, error } = await dyn()
       .from("engine_commands")
-      .select("id, payload, created_at")
+      .select("payload")
       .eq("session_id", sessionId)
-      .eq("status", "pending")
-      .gte("created_at", since);
+      .eq("status", "pending");
 
     if (error || !commands) return false;
 
-    const target = normalizeOutboundChatId(chatId) || chatId.trim().toLowerCase();
+    const target = chatId.trim().toLowerCase();
     for (const cmd of commands) {
       const p = (cmd.payload as any) || {};
-      const payloadChat = String(p.chatId ?? p.chat_id ?? "").trim();
-      const normalizedPayloadChat = normalizeOutboundChatId(payloadChat) || payloadChat.toLowerCase();
-      if (normalizedPayloadChat === target) {
+      const c1 = String(p.chatId || p.chat_id || "").trim().toLowerCase();
+      if (c1 === target || c1.replace("@c.us", "") === target.replace("@c.us", "")) {
         return true;
       }
     }
@@ -174,17 +156,14 @@ export async function scheduleDebouncedAiReply(params: {
   const respondAfter = isoIn(debounceMs() + extraMs);
   const now = new Date().toISOString();
 
+  // En Serverless (Netlify), si no hay flujos en ejecución, ni comandos pendientes, ni retardo de auto-respuestas,
+  // ejecutamos la IA de forma inmediata y síncrona para garantizar la respuesta instantánea en 1-2s.
   let isBusy = false;
   if (waitForFlow !== false && contactId) {
     isBusy = await contactHasExecutingFlow(contactId);
   }
   const hasPendingCmds = await hasPendingEngineCommandsForChat(sessionId, chatId);
-  // En Netlify/serverless la IA síncrona dentro de /ingest provoca 502 (timeout).
-  // Solo ejecutar inmediato si se fuerza explícitamente y no hay cola/flujo.
-  const allowImmediate =
-    process.env.AI_REPLY_IMMEDIATE === "true" || !isNetlifyRuntime();
-  const shouldExecuteImmediately =
-    allowImmediate && !isBusy && !hasPendingCmds && extraMs === 0;
+  const shouldExecuteImmediately = !isBusy && !hasPendingCmds && extraMs === 0;
 
   if (shouldExecuteImmediately) {
     const runner = await ensureRunner();
@@ -192,8 +171,6 @@ export async function scheduleDebouncedAiReply(params: {
       console.info("[ai-reply-pending] ejecución inmediata (sin flujos ni retardo en serverless)", {
         threadId,
         contactId,
-        sessionId,
-        chatId,
       });
       await runner({
         orgId,
@@ -208,19 +185,6 @@ export async function scheduleDebouncedAiReply(params: {
       });
       return;
     }
-    console.warn("[ai-reply-pending] runner inmediato no disponible; cayendo a programación pendient", {
-      threadId,
-      contactId,
-      sessionId,
-      chatId,
-    });
-  } else if (isNetlifyRuntime()) {
-    console.info("[ai-reply-pending] Netlify: IA diferida a ai_reply_pending/cron (evita 502 ingest)", {
-      threadId,
-      isBusy,
-      hasPendingCmds,
-      extraMs,
-    });
   }
 
   const { data: existing } = await dyn()
@@ -250,17 +214,13 @@ export async function scheduleDebouncedAiReply(params: {
       })
       .eq("id", existing.id);
     if (error) {
-      console.error("[ai-reply-pending] update failed:", error.message, {
-        threadId,
-        existingId: existing.id,
-      });
+      console.error("[ai-reply-pending] update failed:", error.message);
       return;
     }
     console.info("[ai-reply-pending] reprogramado (debounce)", {
       threadId,
       respondAfter,
       generation: (existing.generation || 1) + 1,
-      existingId: existing.id,
     });
   } else {
     const { error } = await dyn().from("ai_reply_pending").insert({
@@ -291,43 +251,14 @@ export async function scheduleDebouncedAiReply(params: {
     console.info("[ai-reply-pending] programado", { threadId, respondAfter });
   }
 
-  // Despertar tras el debounce.
-  // En Netlify setTimeout muere con la request → HTTP fire-and-forget a /ai-wake
-  // (esa request aparte puede esperar el debounce y luego procesar).
+  // Despertar tras el debounce (best-effort en serverless)
   const wakeIn = debounceMs() + extraMs + 250;
   const capturedThread = threadId;
-
-  if (isNetlifyRuntime()) {
-    const base =
-      process.env.URL ||
-      process.env.DEPLOY_PRIME_URL ||
-      process.env.DEPLOY_URL ||
-      "https://cmrmaleads.netlify.app";
-    // Background function: responde 202 al instante y sigue viva tras el ingest.
-    const bgUrl = `${String(base).replace(/\/$/, "")}/.netlify/functions/ai-wake-bg`;
-    try {
-      // Esperar únicamente el 202 de aceptación. Con background:true la
-      // respuesta es inmediata y garantiza que Netlify sí encoló el trabajo.
-      const wakeResponse = await fetch(bgUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threadId: capturedThread, delayMs: wakeIn }),
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (!wakeResponse.ok) {
-        console.warn("[ai-reply-pending] ai-wake-bg rechazado:", wakeResponse.status);
-      }
-    } catch (err) {
-      console.warn("[ai-reply-pending] ai-wake-bg:", (err as Error)?.message);
-      // Fallback: cron engine-dispatch cada minuto
-    }
-  } else {
-    setTimeout(() => {
-      void processDueAiReplies({ threadId: capturedThread, limit: 5 }).catch((err) => {
-        console.warn("[ai-reply-pending] wake failed:", (err as Error)?.message);
-      });
-    }, wakeIn);
-  }
+  setTimeout(() => {
+    void processDueAiReplies({ threadId: capturedThread, limit: 5 }).catch((err) => {
+      console.warn("[ai-reply-pending] wake failed:", (err as Error)?.message);
+    });
+  }, wakeIn);
 }
 
 /** Tras completar o pausar un flujo: adelanta la respuesta pendiente del contacto. */
@@ -359,30 +290,11 @@ export async function releaseAiReplyPendingForContact(contactId: string): Promis
     respondAfter,
   });
 
-  if (isNetlifyRuntime()) {
-    const base =
-      process.env.URL ||
-      process.env.DEPLOY_PRIME_URL ||
-      process.env.DEPLOY_URL ||
-      "https://cmrmaleads.netlify.app";
-    const bgUrl = `${String(base).replace(/\/$/, "")}/.netlify/functions/ai-wake-bg`;
-    await Promise.allSettled(
-      rows.map((row: any) =>
-        fetch(bgUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ threadId: row.thread_id, delayMs: debounceMs() + 250 }),
-          signal: AbortSignal.timeout(5_000),
-        }),
-      ),
-    );
-  } else {
-    setTimeout(() => {
-      for (const row of rows) {
-        void processDueAiReplies({ threadId: row.thread_id, limit: 5 }).catch(() => {});
-      }
-    }, debounceMs() + 250);
-  }
+  setTimeout(() => {
+    for (const row of rows) {
+      void processDueAiReplies({ threadId: row.thread_id, limit: 5 }).catch(() => {});
+    }
+  }, debounceMs() + 250);
 }
 
 export async function cancelAiReplyPendingForThread(threadId: string, reason?: string) {
@@ -423,16 +335,6 @@ export async function processDueAiReplies(opts?: {
   let deferred = 0;
   let skipped = 0;
 
-  // Si la función murió después del claim, processing_at quedaba bloqueado
-  // para siempre y el cron nunca volvía a tomar esa respuesta.
-  const staleClaimBefore = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-  await dyn()
-    .from("ai_reply_pending")
-    .update({ processing_at: null, updated_at: now })
-    .is("processed_at", null)
-    .is("cancelled_at", null)
-    .lt("processing_at", staleClaimBefore);
-
   let q = dyn()
     .from("ai_reply_pending")
     .select(
@@ -447,31 +349,16 @@ export async function processDueAiReplies(opts?: {
 
   if (opts?.threadId) q = q.eq("thread_id", opts.threadId);
 
-  console.info("[ai-reply-pending] buscando respuestas IA pendientes", {
-    threadId: opts?.threadId,
-    limit,
-    now,
-  });
   const { data: due, error } = await q;
   if (error) {
-    console.error("[ai-reply-pending] fetch due failed:", error.message, {
-      threadId: opts?.threadId,
-    });
+    console.error("[ai-reply-pending] fetch due failed:", error.message);
     return { processed, deferred, skipped };
   }
-  if (!due?.length) {
-    console.info("[ai-reply-pending] no hay respuestas IA pendientes debidas", {
-      threadId: opts?.threadId,
-    });
-    return { processed, deferred, skipped };
-  }
+  if (!due?.length) return { processed, deferred, skipped };
 
   const runner = await ensureRunner();
   if (!runner) {
-    console.warn("[ai-reply-pending] sin runner; se reintentará luego", {
-      threadId: opts?.threadId,
-      pendingCount: due.length,
-    });
+    console.warn("[ai-reply-pending] sin runner; se reintentará luego");
     return { processed, deferred, skipped: due.length };
   }
 
@@ -491,16 +378,33 @@ export async function processDueAiReplies(opts?: {
         .maybeSingle();
 
       if (claimErr || !claimed) {
-        console.info("[ai-reply-pending] claim falló; otro proceso se adelantó", {
-          threadId: row.thread_id,
-          pendingId: row.id,
-          generation: row.generation,
-        });
         skipped++;
         continue;
       }
 
-      // ¿Hay un flujo activo o comandos pendientes para este chat? Si es así, reprogramar.
+      // ¿Llegó otro mensaje mientras reclamábamos?
+      const { data: fresh } = await dyn()
+        .from("ai_reply_pending")
+        .select("generation, respond_after")
+        .eq("id", row.id)
+        .maybeSingle();
+      if (!fresh || fresh.generation !== row.generation) {
+        await dyn()
+          .from("ai_reply_pending")
+          .update({ processing_at: null })
+          .eq("id", row.id);
+        skipped++;
+        continue;
+      }
+      if (fresh.respond_after && new Date(fresh.respond_after).getTime() > Date.now()) {
+        await dyn()
+          .from("ai_reply_pending")
+          .update({ processing_at: null })
+          .eq("id", row.id);
+        deferred++;
+        continue;
+      }
+
       if (row.wait_for_flow !== false) {
         const busy = await contactHasExecutingFlow(row.contact_id);
         const hasPendingCommands = await hasPendingEngineCommandsForChat(row.session_id, row.chat_id);
@@ -525,6 +429,7 @@ export async function processDueAiReplies(opts?: {
         }
       }
 
+      // Historial completo: agrupar ráfaga de mensajes partidos del cliente
       let text = String(row.latest_text || "").trim();
       try {
         const burst = await collectBurstInboundText(row.thread_id);

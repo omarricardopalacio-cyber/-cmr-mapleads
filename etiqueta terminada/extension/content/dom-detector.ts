@@ -361,12 +361,6 @@ async function emitFromNode(node: HTMLElement) {
     if (!parsed || (!parsed.text && !parsed.media.image && !parsed.media.audio && !parsed.media.video && !parsed.media.document)) {
       return;
     }
-    // No marcar como visto: un escaneo posterior podrá resolver el header/LID.
-    // Enviar "unknown" hacía que ingest descartara el texto definitivamente.
-    if (!parsed.chatId || parsed.chatId === "unknown") {
-      console.warn("[DOMDetector] chatId aún no resuelto; se reintentará:", id);
-      return;
-    }
 
     const hasMedia = parsed.media.image || parsed.media.video || parsed.media.audio || parsed.media.document;
 
@@ -402,13 +396,11 @@ async function emitFromNode(node: HTMLElement) {
     SEEN.set(id, Date.now());
     gc();
 
-    // Conservar el data-id completo de WhatsApp (alineado con WPP `_serialized`).
-    // Truncar al hash final rompía el dedupe DOM↔WPP y podía perder textos.
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
     const payload: any = {
       type: parsed.direction === "out" ? "message-out" : "message-in",
       chatId: parsed.chatId,
-      waMessageId: parsed.id || id,
+      waMessageId: parsed.id,
       direction: parsed.direction,
       text: parsed.text,
       sentAt: new Date().toISOString(),
@@ -543,19 +535,18 @@ function attach(): boolean {
 export function startDomDetector(): void {
   if (active) return;
   console.log("[DOMDetector] Iniciando v2...");
-  // true desde el arranque: el flag false engañaba el Debug ("NO DOM") aunque WPP ya ingestara.
-  (window as any).__MAPLE_DOM_DETECTOR_ACTIVE = true;
-  (window as any).__MAPLE_DOM_DETECTOR_PHASE = "booting";
+  (window as any).__MAPLE_DOM_DETECTOR_ACTIVE = false;
 
   let attempts = 0;
   const boot = setInterval(() => {
     attempts++;
     // WhatsApp está listo cuando hay #app y elementos del chat
     const appReady = !!document.querySelector("#app, #main");
+    const hasMessages = scanAll() > 0;
 
     if (appReady) {
       if (attach()) {
-        (window as any).__MAPLE_DOM_DETECTOR_PHASE = "active";
+        (window as any).__MAPLE_DOM_DETECTOR_ACTIVE = true;
         console.log("[DOMDetector] Activado");
         clearInterval(boot);
         // Re-escanear cada 5s por nuevos mensajes y re-attach si cambia el chat
@@ -563,15 +554,15 @@ export function startDomDetector(): void {
           if (!observer) attach();
           else scanAll();
         }, 5000);
-      } else if (attempts > 15) {
-        // Aún sin panel de chat abierto: observer en body (mensajes entran igual vía WPP).
-        console.warn("[DOMDetector] Sin panel a los 15s, usando fallback body");
+      } else if (attempts > 30) {
+        // Aún sin panel, pero intentar observer en body como último recurso
+        console.warn("[DOMDetector] Sin panel después de 30s, usando fallback body");
         observer = new MutationObserver(() => {
           scanAll();
         });
         observer.observe(document.body, { childList: true, subtree: true });
         active = true;
-        (window as any).__MAPLE_DOM_DETECTOR_PHASE = "body_fallback";
+        (window as any).__MAPLE_DOM_DETECTOR_ACTIVE = true;
         clearInterval(boot);
       }
     }

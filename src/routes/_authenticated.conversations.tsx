@@ -58,11 +58,7 @@ function ConversationsLayout() {
   const { data, isLoading } = useQuery({
     queryKey: ["threads", filterTab],
     queryFn: () => fn({ data: { filter: filterTab } }),
-    // La lista reciente se refresca con moderación para dejar capacidad a
-    // ingest, comandos, IA y al chat activo.
-    refetchInterval: 30_000,
-    staleTime: 20_000,
-    refetchOnWindowFocus: false,
+    refetchInterval: 2500,
   });
   const params = useParams({ strict: false }) as { threadId?: string };
   const activeId = params.threadId;

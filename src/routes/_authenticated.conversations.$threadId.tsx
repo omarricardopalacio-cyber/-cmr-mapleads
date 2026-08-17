@@ -126,9 +126,11 @@ function ThreadPage() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Cache local alimentada únicamente por Realtime; la carga inicial tiene
-  // una sola fuente (listMessages) para evitar tres consultas simultáneas.
+  // NIVEL 1: Consulta redundante directa desde el navegador
   const [clientMessages, setClientMessages] = useState<any[]>([]);
+  const [clientLoading, setClientLoading] = useState(false);
+  const [clientError, setClientError] = useState<Error | null>(null);
+  const [userOrgId, setUserOrgId] = useState<string | null>(null);
 
   const { data: qrData } = useQuery({ queryKey: ["quickReplies"], queryFn: () => listQr({}) });
 
@@ -139,15 +141,55 @@ function ThreadPage() {
     // We keep a 30s polling fallback in case WebSocket fails.
     refetchInterval: 30000,
     refetchOnMount: true,
-    refetchOnWindowFocus: false,
-    retry: 1,
-    // No bloquear la UI 30s+ si el serverFn hace cold start lento
-    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+    retry: false,
   });
 
+  // NIVEL 1: Consulta directa al navegador como salvavidas
   useEffect(() => {
+    let cancelled = false;
+    setClientLoading(true);
+    setClientError(null);
     setClientMessages([]);
+
+    async function fetchDirect() {
+      try {
+        // Obtener org_id del usuario autenticado usando server function
+        const currentOrgId = await getOrgId({});
+        
+        if (currentOrgId && !cancelled) setUserOrgId(currentOrgId);
+
+        const { data: directMsgs, error: directErr } = await supabase
+          .from("messages")
+          .select("id, direction, text, sent_at, media")
+          .eq("thread_id", threadId)
+          .order("sent_at", { ascending: true });
+
+        if (!cancelled) {
+          if (directErr) {
+            setClientError(directErr as unknown as Error);
+            console.error("[CLIENT DIRECT SQL] Error:", directErr);
+          } else if (directMsgs) {
+            setClientMessages(directMsgs);
+            console.log("[CLIENT DIRECT SQL] Mensajes cargados desde navegador:", directMsgs.length);
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setClientError(e as Error);
+          console.error("[CLIENT DIRECT SQL] Excepción:", e);
+        }
+      } finally {
+        if (!cancelled) setClientLoading(false);
+      }
+    }
+
+    fetchDirect();
+    return () => { cancelled = true; };
   }, [threadId]);
+
+  // eslint-disable-next-line no-console
+  console.log("[DEBUG] Thread ID:", threadId, "Loading:", isLoading, "Error:", error, "Server messages:", (data?.messages ?? []).length, "Client messages:", clientMessages.length);
 
   const aiEnabled = (data as unknown as Record<string, unknown>)?.thread?.aiEnabled ?? true;
 
@@ -251,6 +293,8 @@ function ThreadPage() {
             };
           });
 
+          qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.invalidateQueries({ queryKey: ["threads"] });
         }
       )
       .on(
@@ -278,6 +322,8 @@ function ThreadPage() {
             };
           });
 
+          qc.invalidateQueries({ queryKey: ["thread", threadId] });
+          qc.invalidateQueries({ queryKey: ["threads"] });
         }
       )
       .on(
@@ -515,18 +561,12 @@ function ThreadPage() {
             backgroundSize: "20px 20px",
           }}
         >
-          {/* Mostrar loading solo si aún no hay ningún mensaje (servidor ni cliente) */}
-          {mergedMessages.length === 0 && isLoading && (
+          {(isLoading || clientLoading) && (
             <p className="text-muted-foreground text-sm">Cargando mensajes...</p>
-          )}
-          {error && mergedMessages.length === 0 && !isLoading && (
-            <p className="text-destructive text-sm px-2">
-              Error al cargar: {(error as Error).message}. Reintenta o recarga la página.
-            </p>
           )}
 
           {/* Chat vacío: casi siempre no hay filas en messages (no es un fallo de UI) */}
-          {!isLoading && mergedMessages.length === 0 && !error && (
+          {!isLoading && !clientLoading && mergedMessages.length === 0 && (
             <div className="bg-slate-950 border border-amber-500/60 p-6 rounded-xl max-w-2xl mx-auto my-8 space-y-4 text-white shadow-lg">
               <div className="flex items-center gap-2 text-amber-300 font-bold text-lg">
                 <span>Sin mensajes en este chat</span>
@@ -544,17 +584,24 @@ function ThreadPage() {
               </p>
               <div className="space-y-2 text-xs font-mono text-slate-400">
                 <div className="flex justify-between border-b border-slate-800 pb-1">
+                  <span>Org</span>
+                  <span className="text-emerald-400">{userOrgId ?? "—"}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-800 pb-1">
                   <span>Thread</span>
                   <span className="text-yellow-400">{threadId}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-800 pb-1">
-                  <span>Mensajes</span>
+                  <span>Servidor / navegador</span>
                   <span className="text-red-400">
-                    {(data?.messages ?? []).length}
+                    {(data?.messages ?? []).length} / {clientMessages.length}
                   </span>
                 </div>
                 {error && (
                   <div className="text-red-400">Error servidor: {(error as Error).message}</div>
+                )}
+                {clientError && (
+                  <div className="text-red-400">Error navegador: {clientError.message}</div>
                 )}
               </div>
               <Button

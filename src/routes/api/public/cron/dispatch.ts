@@ -1,8 +1,21 @@
 // @ts-nocheck
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { convertUrlToBase64 } from "@/lib/media";
 import { processDueRuns } from "@/lib/flow-runner.server";
 import { processDueAiReplies } from "@/lib/ai-reply.server";
+
+// For broadcast media: try base64 first, fall back to URL-only if too large
+async function resolveMediaForBroadcast(mediaUrl: string): Promise<{ base64?: string; mimeType?: string; mediaUrl?: string }> {
+  try {
+    const { base64, mimeType } = await convertUrlToBase64(mediaUrl);
+    return { base64, mimeType };
+  } catch (err: any) {
+    console.warn("[broadcast] base64 conversion failed, falling back to URL:", err.message);
+    // Fall back to sending the URL directly (engine will handle download)
+    return { mediaUrl };
+  }
+}
 
 const json = (s: number, b: unknown) =>
   new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
@@ -106,12 +119,12 @@ async function handler({ request }: { request: Request }) {
     }
 
     if (!pending?.length) {
-      const { count: remainingCount } = await supabaseAdmin
+      const { data: remaining } = await supabaseAdmin
         .from("broadcast_recipients")
         .select("id", { count: "exact", head: true })
         .eq("broadcast_id", b.id)
         .eq("status", "pending");
-      if ((remainingCount ?? 0) === 0) {
+      if (!remaining || remaining.length === 0) {
         await supabaseAdmin
           .from("broadcasts")
           .update({ status: "done", finished_at: now })
@@ -120,36 +133,42 @@ async function handler({ request }: { request: Request }) {
       continue;
     }
 
-    // La extensión descarga la URL al ejecutar. Nunca copiar base64 en cada
-    // destinatario: una sola campaña podía inflar engine_commands por cientos de MB.
-    const mediaUrl = b.media_url || null;
-    const mediaMimeType = b.mime_type || null;
+    let mediaBase64: string | null = null;
+    let mediaMimeType: string | null = null;
+    let mediaFallbackUrl: string | null = null;
+    if (b.media_url) {
+      const resolved = await resolveMediaForBroadcast(b.media_url);
+      if (resolved.base64) {
+        mediaBase64 = resolved.base64;
+        mediaMimeType = b.mime_type || resolved.mimeType || null;
+      } else if (resolved.mediaUrl) {
+        mediaFallbackUrl = resolved.mediaUrl;
+        mediaMimeType = b.mime_type || null;
+      }
+    }
 
     let sentInBatch = 0;
     let failedInBatch = 0;
-
-    // Resolve active connected session for the organization
-    const { data: activeSess } = await supabaseAdmin
-      .from("wa_sessions")
-      .select("id")
-      .eq("org_id", b.org_id)
-      .eq("status", "connected")
-      .order("last_heartbeat_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const targetSessionId = activeSess?.id || b.session_id;
 
     for (const r of pending) {
       let payload: Record<string, unknown>;
       let type: string;
 
-      if (mediaUrl) {
+      if (mediaBase64) {
+        // Send media with caption
+        type = "send_media";
+        payload = {
+          chatId: r.wa_id,
+          media: mediaBase64,
+          mimeType: mediaMimeType,
+          caption: b.message_text || undefined,
+        };
+      } else if (mediaFallbackUrl) {
         // Send media via URL with caption
         type = "send_media";
         payload = {
           chatId: r.wa_id,
-          mediaUrl,
+          mediaUrl: mediaFallbackUrl,
           mimeType: mediaMimeType,
           caption: b.message_text || undefined,
         };
@@ -163,7 +182,7 @@ async function handler({ request }: { request: Request }) {
         .from("engine_commands")
         .insert({
           org_id: b.org_id,
-          session_id: targetSessionId,
+          session_id: b.session_id,
           type,
           payload: { ...payload, chatId: normalizeWaIdForBroadcast(r.wa_id) },
           status: "pending",
@@ -196,47 +215,6 @@ async function handler({ request }: { request: Request }) {
 
   // 3) Flow steps
   await processDueRuns();
-
-  // 3b) Reclamar delivered sin ACK (extensión cayó / Failed to fetch) → pending de nuevo
-  try {
-    const reclaimBefore = new Date(Date.now() - 90_000).toISOString();
-    const { data: reclaimed, error: reclaimErr } = await supabaseAdmin
-      .from("engine_commands")
-      .update({ status: "pending", delivered_at: null } as any)
-      .eq("status", "delivered")
-      .is("acked_at", null)
-      .lt("delivered_at", reclaimBefore)
-      .select("id");
-    if (reclaimErr) {
-      console.warn("[dispatch] reclaim delivered:", reclaimErr.message);
-    } else if (reclaimed?.length) {
-      console.warn("[dispatch] reclaimed stuck delivered commands", { count: reclaimed.length });
-    }
-  } catch (err) {
-    console.warn("[dispatch] reclaim delivered:", (err as Error)?.message);
-  }
-
-  // 3c) Expirar pending antiguos (>10 min)
-  try {
-    const staleBefore = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const { data: staleCmds, error: staleErr } = await supabaseAdmin
-      .from("engine_commands")
-      .update({
-        status: "failed",
-        ack: { error: "expired_stale_pending", at: now },
-        acked_at: now,
-      } as any)
-      .eq("status", "pending")
-      .lt("created_at", staleBefore)
-      .select("id");
-    if (staleErr) {
-      console.warn("[dispatch] expire stale commands:", staleErr.message);
-    } else if (staleCmds?.length) {
-      console.warn("[dispatch] expired stale engine_commands", { count: staleCmds.length });
-    }
-  } catch (err) {
-    console.warn("[dispatch] expire stale commands:", (err as Error)?.message);
-  }
 
   // 4) Respuestas IA pendientes (debounce + post-flujo)
   try {

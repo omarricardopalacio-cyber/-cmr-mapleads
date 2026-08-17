@@ -52,13 +52,11 @@ import { Route as ApiPublicEngineUploadMediaRouteImport } from './routes/api/pub
 import { Route as ApiPublicEngineRetryProcessorRouteImport } from './routes/api/public/engine/retry-processor'
 import { Route as ApiPublicEngineIngestRouteImport } from './routes/api/public/engine/ingest'
 import { Route as ApiPublicEngineImportHistoryRouteImport } from './routes/api/public/engine/import-history'
-import { Route as ApiPublicEngineHeartbeatRouteImport } from './routes/api/public/engine/heartbeat'
 import { Route as ApiPublicEngineCommandsRouteImport } from './routes/api/public/engine/commands'
 import { Route as ApiPublicCronProductLearningRouteImport } from './routes/api/public/cron/product-learning'
 import { Route as ApiPublicCronFlowSchedulerRouteImport } from './routes/api/public/cron/flow-scheduler'
 import { Route as ApiPublicCronDispatchRouteImport } from './routes/api/public/cron/dispatch'
 import { Route as ApiPublicCronCleanupRouteImport } from './routes/api/public/cron/cleanup'
-import { Route as ApiPublicCronAiWakeRouteImport } from './routes/api/public/cron/ai-wake'
 import { Route as ApiAdminEngineFailedRequestsRouteImport } from './routes/api/admin/engine/failed-requests'
 import { Route as ApiPublicStoreChatSessionRouteImport } from './routes/api/public/store/chat/session'
 import { Route as ApiPublicStoreChatMessagesRouteImport } from './routes/api/public/store/chat/messages'
@@ -293,12 +291,6 @@ const ApiPublicEngineImportHistoryRoute =
     path: '/api/public/engine/import-history',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiPublicEngineHeartbeatRoute =
-  ApiPublicEngineHeartbeatRouteImport.update({
-    id: '/api/public/engine/heartbeat',
-    path: '/api/public/engine/heartbeat',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiPublicEngineCommandsRoute = ApiPublicEngineCommandsRouteImport.update({
   id: '/api/public/engine/commands',
   path: '/api/public/engine/commands',
@@ -324,11 +316,6 @@ const ApiPublicCronDispatchRoute = ApiPublicCronDispatchRouteImport.update({
 const ApiPublicCronCleanupRoute = ApiPublicCronCleanupRouteImport.update({
   id: '/api/public/cron/cleanup',
   path: '/api/public/cron/cleanup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiPublicCronAiWakeRoute = ApiPublicCronAiWakeRouteImport.update({
-  id: '/api/public/cron/ai-wake',
-  path: '/api/public/cron/ai-wake',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAdminEngineFailedRequestsRoute =
@@ -384,13 +371,11 @@ export interface FileRoutesByFullPath {
   '/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/store/$token/': typeof StoreTokenIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
-  '/api/public/cron/ai-wake': typeof ApiPublicCronAiWakeRoute
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
-  '/api/public/engine/heartbeat': typeof ApiPublicEngineHeartbeatRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
@@ -436,13 +421,11 @@ export interface FileRoutesByTo {
   '/conversations': typeof AuthenticatedConversationsIndexRoute
   '/store/$token': typeof StoreTokenIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
-  '/api/public/cron/ai-wake': typeof ApiPublicCronAiWakeRoute
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
-  '/api/public/engine/heartbeat': typeof ApiPublicEngineHeartbeatRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
@@ -492,13 +475,11 @@ export interface FileRoutesById {
   '/_authenticated/conversations/': typeof AuthenticatedConversationsIndexRoute
   '/store/$token/': typeof StoreTokenIndexRoute
   '/api/admin/engine/failed-requests': typeof ApiAdminEngineFailedRequestsRoute
-  '/api/public/cron/ai-wake': typeof ApiPublicCronAiWakeRoute
   '/api/public/cron/cleanup': typeof ApiPublicCronCleanupRoute
   '/api/public/cron/dispatch': typeof ApiPublicCronDispatchRoute
   '/api/public/cron/flow-scheduler': typeof ApiPublicCronFlowSchedulerRoute
   '/api/public/cron/product-learning': typeof ApiPublicCronProductLearningRoute
   '/api/public/engine/commands': typeof ApiPublicEngineCommandsRoute
-  '/api/public/engine/heartbeat': typeof ApiPublicEngineHeartbeatRoute
   '/api/public/engine/import-history': typeof ApiPublicEngineImportHistoryRoute
   '/api/public/engine/ingest': typeof ApiPublicEngineIngestRoute
   '/api/public/engine/retry-processor': typeof ApiPublicEngineRetryProcessorRoute
@@ -548,13 +529,11 @@ export interface FileRouteTypes {
     | '/conversations/'
     | '/store/$token/'
     | '/api/admin/engine/failed-requests'
-    | '/api/public/cron/ai-wake'
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
-    | '/api/public/engine/heartbeat'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
@@ -600,13 +579,11 @@ export interface FileRouteTypes {
     | '/conversations'
     | '/store/$token'
     | '/api/admin/engine/failed-requests'
-    | '/api/public/cron/ai-wake'
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
-    | '/api/public/engine/heartbeat'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
@@ -655,13 +632,11 @@ export interface FileRouteTypes {
     | '/_authenticated/conversations/'
     | '/store/$token/'
     | '/api/admin/engine/failed-requests'
-    | '/api/public/cron/ai-wake'
     | '/api/public/cron/cleanup'
     | '/api/public/cron/dispatch'
     | '/api/public/cron/flow-scheduler'
     | '/api/public/cron/product-learning'
     | '/api/public/engine/commands'
-    | '/api/public/engine/heartbeat'
     | '/api/public/engine/import-history'
     | '/api/public/engine/ingest'
     | '/api/public/engine/retry-processor'
@@ -686,13 +661,11 @@ export interface RootRouteChildren {
   ApiDebugMediaDiagRoute: typeof ApiDebugMediaDiagRoute
   ApiInternalNoResponseWorkerRoute: typeof ApiInternalNoResponseWorkerRoute
   ApiAdminEngineFailedRequestsRoute: typeof ApiAdminEngineFailedRequestsRoute
-  ApiPublicCronAiWakeRoute: typeof ApiPublicCronAiWakeRoute
   ApiPublicCronCleanupRoute: typeof ApiPublicCronCleanupRoute
   ApiPublicCronDispatchRoute: typeof ApiPublicCronDispatchRoute
   ApiPublicCronFlowSchedulerRoute: typeof ApiPublicCronFlowSchedulerRoute
   ApiPublicCronProductLearningRoute: typeof ApiPublicCronProductLearningRoute
   ApiPublicEngineCommandsRoute: typeof ApiPublicEngineCommandsRoute
-  ApiPublicEngineHeartbeatRoute: typeof ApiPublicEngineHeartbeatRoute
   ApiPublicEngineImportHistoryRoute: typeof ApiPublicEngineImportHistoryRoute
   ApiPublicEngineIngestRoute: typeof ApiPublicEngineIngestRoute
   ApiPublicEngineRetryProcessorRoute: typeof ApiPublicEngineRetryProcessorRoute
@@ -1008,13 +981,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEngineImportHistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/engine/heartbeat': {
-      id: '/api/public/engine/heartbeat'
-      path: '/api/public/engine/heartbeat'
-      fullPath: '/api/public/engine/heartbeat'
-      preLoaderRoute: typeof ApiPublicEngineHeartbeatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/public/engine/commands': {
       id: '/api/public/engine/commands'
       path: '/api/public/engine/commands'
@@ -1048,13 +1014,6 @@ declare module '@tanstack/react-router' {
       path: '/api/public/cron/cleanup'
       fullPath: '/api/public/cron/cleanup'
       preLoaderRoute: typeof ApiPublicCronCleanupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/cron/ai-wake': {
-      id: '/api/public/cron/ai-wake'
-      path: '/api/public/cron/ai-wake'
-      fullPath: '/api/public/cron/ai-wake'
-      preLoaderRoute: typeof ApiPublicCronAiWakeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/admin/engine/failed-requests': {
@@ -1179,13 +1138,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDebugMediaDiagRoute: ApiDebugMediaDiagRoute,
   ApiInternalNoResponseWorkerRoute: ApiInternalNoResponseWorkerRoute,
   ApiAdminEngineFailedRequestsRoute: ApiAdminEngineFailedRequestsRoute,
-  ApiPublicCronAiWakeRoute: ApiPublicCronAiWakeRoute,
   ApiPublicCronCleanupRoute: ApiPublicCronCleanupRoute,
   ApiPublicCronDispatchRoute: ApiPublicCronDispatchRoute,
   ApiPublicCronFlowSchedulerRoute: ApiPublicCronFlowSchedulerRoute,
   ApiPublicCronProductLearningRoute: ApiPublicCronProductLearningRoute,
   ApiPublicEngineCommandsRoute: ApiPublicEngineCommandsRoute,
-  ApiPublicEngineHeartbeatRoute: ApiPublicEngineHeartbeatRoute,
   ApiPublicEngineImportHistoryRoute: ApiPublicEngineImportHistoryRoute,
   ApiPublicEngineIngestRoute: ApiPublicEngineIngestRoute,
   ApiPublicEngineRetryProcessorRoute: ApiPublicEngineRetryProcessorRoute,

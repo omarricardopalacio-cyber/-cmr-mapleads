@@ -1,14 +1,10 @@
 [build]
-  # functions = netlify/functions → cron engine-dispatch / daily-cleanup.
-  # Nitro sigue publicando el server en .netlify/functions-internal (Frameworks API).
-  # NUNCA copiar .mjs a functions-internal (rompe el bundler → 502).
   command = "npm run build"
   publish = "dist"
-  functions = "netlify/functions"
+  functions = ".netlify/functions-internal"
 
 [functions]
   node_bundler = "esbuild"
-  directory = "netlify/functions"
 
 [functions."daily-cleanup"]
   schedule = "0 6 * * *"

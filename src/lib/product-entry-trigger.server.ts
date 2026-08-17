@@ -136,9 +136,8 @@ export async function findProductByEntryTrigger(params: {
 }
 
 /**
- * Activa por frase mientras el hilo no tenga producto en foco.
- * No se limita al primer inbound: es normal que el cliente primero salude y
- * luego envíe la frase del anuncio en un segundo mensaje.
+ * Solo primer mensaje inbound del hilo, sin producto en foco aún.
+ * Devuelve true si activó foco + flujo / ficha.
  */
 export async function tryProductEntryTriggerOnFirstMessage(params: {
   orgId: string;
@@ -177,6 +176,17 @@ export async function tryProductEntryTriggerOnFirstMessage(params: {
   if (!thread) return { activated: false, reason: "no_thread" };
   if ((thread as any).focused_product_id) {
     return { activated: false, reason: "already_focused" };
+  }
+
+  const { count: inboundCount } = await supabaseAdmin
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("thread_id", params.threadId)
+    .eq("direction", "in");
+
+  // Solo el primer mensaje entrante del chat
+  if ((inboundCount ?? 0) !== 1) {
+    return { activated: false, reason: "not_first_inbound" };
   }
 
   const match = await findProductByEntryTrigger({
