@@ -206,11 +206,12 @@ export async function executeAiReply(params: {
   }
 
   if (cfg.respond_to === "new") {
-    const { count } = await supabaseAdmin
+    const { count } = await (supabaseAdmin as any)
       .from("messages")
       .select("id", { count: "exact", head: true })
       .eq("thread_id", threadId)
-      .eq("direction", "out");
+      .eq("direction", "out")
+      .neq("source", "flow");
     if ((count ?? 0) > 0) return;
   }
 

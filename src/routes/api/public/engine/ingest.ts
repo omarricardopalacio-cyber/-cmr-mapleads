@@ -321,6 +321,30 @@ function isUsefulDisplayName(name: unknown, phone?: string, waId?: string): bool
   return true
 }
 
+function tryExtractContactDetailsFromText(text?: string | null): { extractedName?: string; extractedPhone?: string } {
+  if (!text || typeof text !== 'string') return {}
+  let extractedName: string | undefined
+  let extractedPhone: string | undefined
+
+  const phoneMatch = text.match(/(?:\+?57\s*)?(3\d{2}[\s.-]?\d{3}[\s.-]?\d{4})\b/)
+  if (phoneMatch) {
+    const raw = phoneMatch[1].replace(/\D/g, '')
+    if (raw.length === 10 && raw.startsWith('3')) {
+      extractedPhone = '57' + raw
+    }
+  }
+
+  const nameMatch = text.match(/(?:nombre|me llamo|soy|mi nombre es)\s*[:=;\-]?\s*([A-ZÁÉÍÓÚa-záéíóúñÑ]{2,25}(?:\s+[A-ZÁÉÍÓÚa-záéíóúñÑ]{2,25}){0,3})/i)
+  if (nameMatch) {
+    const cand = nameMatch[1].trim()
+    if (cand.length >= 3 && !looksLikeMessageNotPersonName(cand)) {
+      extractedName = cand
+    }
+  }
+
+  return { extractedName, extractedPhone }
+}
+
 function canCreateContactRecord({
   waId,
   phone,
@@ -1043,6 +1067,7 @@ async function maybeAiReply(
       .select('id', { count: 'exact', head: true })
       .eq('thread_id', threadId)
       .eq('direction', 'out')
+      .neq('source', 'flow')
     if ((count ?? 0) > 0) return
   }
 
@@ -1682,39 +1707,45 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
             if (contactId) {
               const { data: cont } = await supabaseAdmin
                 .from('contacts')
-                .select('display_name, wa_id')
+                .select('display_name, wa_id, phone')
                 .eq('id', contactId)
                 .maybeSingle()
               if (cont) {
                 const currentIsAnonymous = !isUsefulDisplayName(
                   cont.display_name,
-                  phone ?? undefined,
+                  phone ?? cont.phone ?? undefined,
                   cont.wa_id || waId,
                 )
                 const hasNewRealName = isUsefulDisplayName(
                   e.contact?.displayName,
-                  phone ?? undefined,
+                  phone ?? cont.phone ?? undefined,
                   waId,
                 )
 
-                if (currentIsAnonymous && hasNewRealName) {
-                  await supabaseAdmin
-                    .from('contacts')
-                    .update({
-                      display_name: e.contact!.displayName,
-                      profile_picture_url: e.contact?.profilePictureUrl,
-                    })
-                    .eq('id', contactId)
+                const extracted = tryExtractContactDetailsFromText(e.text)
+                const updates: Record<string, any> = {}
+
+                if (extracted.extractedPhone && !cont.phone) {
+                  updates.phone = extracted.extractedPhone
+                }
+                if (extracted.extractedName && (currentIsAnonymous || !cont.display_name)) {
+                  updates.display_name = extracted.extractedName
+                } else if (currentIsAnonymous && hasNewRealName) {
+                  updates.display_name = e.contact!.displayName
+                  if (e.contact?.profilePictureUrl) {
+                    updates.profile_picture_url = e.contact.profilePictureUrl
+                  }
                 } else if (
                   cont.display_name &&
                   looksLikeMessageNotPersonName(String(cont.display_name))
                 ) {
-                  // Limpiar nombres basura ya guardados ("Hola cómo estás")
+                  updates.display_name = phone || extracted.extractedPhone || null
+                }
+
+                if (Object.keys(updates).length > 0) {
                   await supabaseAdmin
                     .from('contacts')
-                    .update({
-                      display_name: phone || null,
-                    } as any)
+                    .update(updates as any)
                     .eq('id', contactId)
                 }
               }

@@ -113,11 +113,12 @@ export async function runChannelAiReply(
 
   // En tienda web el chat debe continuar; "solo nuevos" aplica a WhatsApp.
   if (!forceReply && channel !== "web" && (cfg as any).respond_to === "new") {
-    const { count } = await supabaseAdmin
+    const { count } = await (supabaseAdmin as any)
       .from("messages")
       .select("id", { count: "exact", head: true })
       .eq("thread_id", threadId)
-      .eq("direction", "out");
+      .eq("direction", "out")
+      .neq("source", "flow");
     if ((count ?? 0) > 0) {
       return { reply: "", actions: [], skipped: true, reason: "respond_to_new" };
     }
