@@ -2460,33 +2460,66 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                   .is('cancelled_at', null)
               } catch (_) { /* ignore */ }
 
-              // 1) Bienvenida: saludo puro + nuevo contacto → solo default_flow
-              if (greetingOnly && isNewContact && session.default_flow_id && !focusedProductId) {
+              // 1) Bienvenida: primer mensaje de contacto nuevo → buscar flujos wa_first_conversation
+              //    También usa default_flow_id si no se encontró flujo de bienvenida específico.
+              if (isNewContact && !focusedProductId) {
                 try {
-                  const { data: firstStep } = await dyn()
-                    .from('flow_steps')
-                    .select('id')
-                    .eq('flow_id', session.default_flow_id)
-                    .is('parent_step_id', null)
-                    .order('step_order', { ascending: true })
-                    .limit(1)
-                    .maybeSingle()
-                  if (firstStep) {
-                    const welcome = await ensureFlowRunForContact({
-                      orgId: session.org_id,
-                      contactId,
-                      flowId: session.default_flow_id,
-                      firstStepId: firstStep.id,
-                      processNow: true,
+                  // Primero: buscar flujos activos con trigger_type = 'wa_first_conversation'
+                  const { data: firstConvFlows } = await dyn()
+                    .from('flows')
+                    .select('id, name, max_sends_per_contact')
+                    .eq('org_id', session.org_id)
+                    .eq('trigger_type', 'wa_first_conversation')
+                    .eq('is_active', true)
+
+                  let welcomeFlowId: string | null = null
+                  let welcomeFlowName: string | undefined
+                  let welcomeMaxSends: number | null = null
+
+                  if (firstConvFlows && firstConvFlows.length > 0) {
+                    const fc = firstConvFlows[0]
+                    welcomeFlowId = fc.id
+                    welcomeFlowName = fc.name
+                    welcomeMaxSends = (fc as any).max_sends_per_contact ?? null
+                    console.info('[ingest] encontrado flujo wa_first_conversation', {
+                      flowId: welcomeFlowId,
+                      flowName: welcomeFlowName,
+                      threadId: thread.id,
                     })
-                    if (welcome.started || welcome.alreadyActive || welcome.alreadyRecent) {
-                      responder = 'welcome_flow'
-                      skipAiThisInbound = true
-                      console.info('[ingest] bienvenida (hola): solo default_flow', {
-                        threadId: thread.id,
-                        flowId: session.default_flow_id,
-                        deferAi: !!welcome.deferAiReply,
+                  } else if (greetingOnly && session.default_flow_id) {
+                    // Fallback: default_flow_id de la sesión solo si es saludo puro
+                    welcomeFlowId = session.default_flow_id
+                  }
+
+                  if (welcomeFlowId) {
+                    const { data: firstStep } = await dyn()
+                      .from('flow_steps')
+                      .select('id')
+                      .eq('flow_id', welcomeFlowId)
+                      .is('parent_step_id', null)
+                      .order('step_order', { ascending: true })
+                      .limit(1)
+                      .maybeSingle()
+                    if (firstStep) {
+                      const welcome = await ensureFlowRunForContact({
+                        orgId: session.org_id,
+                        contactId,
+                        flowId: welcomeFlowId,
+                        firstStepId: firstStep.id,
+                        maxSends: welcomeMaxSends,
+                        flowName: welcomeFlowName,
+                        processNow: true,
                       })
+                      if (welcome.started || welcome.alreadyActive || welcome.alreadyRecent) {
+                        responder = 'welcome_flow'
+                        skipAiThisInbound = true
+                        console.info('[ingest] bienvenida: flujo primera conversación activado', {
+                          threadId: thread.id,
+                          flowId: welcomeFlowId,
+                          flowName: welcomeFlowName,
+                          deferAi: !!welcome.deferAiReply,
+                        })
+                      }
                     }
                   }
                 } catch (flowErr: any) {
