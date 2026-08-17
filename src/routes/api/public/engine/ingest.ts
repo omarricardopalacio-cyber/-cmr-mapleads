@@ -728,27 +728,6 @@ async function resolvePhoneForLidMessage(args: {
     }
   }
 
-  // Fallback: último envío reciente de la sesión (5 min) si el texto no coincide
-  {
-    const { data: recent } = await supabaseAdmin
-      .from('engine_commands')
-      .select('payload, created_at')
-      .eq('org_id', orgId)
-      .eq('session_id', sessionId)
-      .in('type', ['SEND_MESSAGE', 'send_message', 'send_media'])
-      .order('created_at', { ascending: false })
-      .limit(5)
-
-    const now = Date.now()
-    for (const cmd of recent ?? []) {
-      const createdTs = new Date(cmd.created_at).getTime()
-      if (now - createdTs > 1000 * 60 * 5) continue
-      const payload = (cmd.payload as Record<string, unknown> | null) ?? {}
-      const phone = digits(String(payload.chatId ?? ''))
-      if (phone) return { contactId: existing?.id ?? null, phone }
-    }
-  }
-
   return { contactId: existing?.id ?? null, phone: null }
 }
 
@@ -1661,49 +1640,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
             }
 
-            if (!contactId && phone) {
-              const { data: threadWithLid } = await supabaseAdmin
-                .from('threads')
-                .select('contact_id')
-                .eq('session_id', session.id)
-                .order('last_message_at', { ascending: false })
-                .limit(1)
-                .maybeSingle()
 
-              if (threadWithLid?.contact_id) {
-                const { data: lidContact } = await supabaseAdmin
-                  .from('contacts')
-                  .select('id, wa_id, phone')
-                  .eq('id', threadWithLid.contact_id)
-                  .maybeSingle()
-
-                if (lidContact && (isLidKey(lidContact.wa_id || '') || !lidContact.phone)) {
-                  const safeName = isUsefulDisplayName(
-                    e.contact?.displayName,
-                    phone,
-                    waId,
-                  )
-                    ? e.contact!.displayName
-                    : phone
-
-                  await supabaseAdmin
-                    .from('contacts')
-                    .update({
-                      phone,
-                      display_name: safeName,
-                      profile_picture_url: e.contact?.profilePictureUrl,
-                    })
-                    .eq('id', lidContact.id)
-
-                  contactId = lidContact.id
-                  console.info('[ingest] vinculado teléfono a contacto LID existente (evitó duplicado)', {
-                    contactId,
-                    phone,
-                    waId,
-                  })
-                }
-              }
-            }
 
             if (!contactId) {
               const { data: byWa } = await supabaseAdmin
