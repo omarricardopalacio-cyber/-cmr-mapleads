@@ -55,7 +55,7 @@ function StoreSettingsPage() {
   const getFn = useServerFn(getStoreSettings);
   const updateFn = useServerFn(updateStoreSettings);
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["storeSettings"],
     queryFn: () => getFn({}),
   });
@@ -121,8 +121,20 @@ function StoreSettingsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return <div className="p-6 text-sm text-muted-foreground">Cargando tienda…</div>;
+  }
+
+  if (error || !data) {
+    return (
+      <div className="p-6 space-y-4 max-w-xl mx-auto mt-8">
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-destructive space-y-1">
+          <p className="font-semibold">Error al cargar la Tienda web</p>
+          <p className="text-sm">{(error as Error)?.message || "No se pudieron cargar los datos de la tienda."}</p>
+        </div>
+        <Button onClick={() => refetch()} variant="outline">Reintentar</Button>
+      </div>
+    );
   }
 
   const storeUrl =

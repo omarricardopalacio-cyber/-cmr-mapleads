@@ -71,13 +71,29 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
       }
     );
 
-    const { data, error } = await supabase.auth.getClaims(token);
-    if (error || !data?.claims) {
-      throw new Error('Unauthorized: Invalid token');
+    // Validar token con getUser (primario) y getClaims (fallback)
+    let userId: string | undefined;
+    let claimsData: any = undefined;
+
+    try {
+      const { data: userData, error: userError } = await supabase.auth.getUser(token);
+      if (userData?.user?.id) {
+        userId = userData.user.id;
+        claimsData = userData.user.app_metadata;
+      }
+    } catch {
+      // Ignorar error y probar fallback
     }
 
-    if (!data.claims.sub) {
-      throw new Error('Unauthorized: No user ID found in token');
+    if (!userId) {
+      const { data: claimsRes, error: claimsError } = await supabase.auth.getClaims(token);
+      if (!claimsError && claimsRes?.claims?.sub) {
+        userId = claimsRes.claims.sub as string;
+        claimsData = claimsRes.claims;
+      } else {
+        console.error('[Supabase Auth Middleware] Invalid token error:', claimsError?.message);
+        throw new Error('Unauthorized: Invalid or expired token');
+      }
     }
 
     // Usuarios desactivados por el master no pueden usar la API
@@ -91,7 +107,7 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
         const { data: profile } = await admin
           .from('profiles')
           .select('is_active')
-          .eq('id', data.claims.sub)
+          .eq('id', userId)
           .maybeSingle();
         if (profile && (profile as { is_active?: boolean }).is_active === false) {
           throw new Error('Cuenta desactivada. Contacta al administrador de la plataforma.');
@@ -105,8 +121,8 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
     return next({
       context: {
         supabase,
-        userId: data.claims.sub,
-        claims: data.claims,
+        userId: userId!,
+        claims: claimsData,
       },
     });
   },

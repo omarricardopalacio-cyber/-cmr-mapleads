@@ -63,7 +63,7 @@ function IntegrationsPage() {
   const doExport = useServerFn(exportAiLearning);
   const doImport = useServerFn(importAiLearning);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["ai-config"],
     queryFn: () => fetchCfg(),
   });
@@ -85,8 +85,20 @@ function IntegrationsPage() {
     }
   }, [data, form]);
 
-  if (isLoading || !form) {
+  if (isLoading) {
     return <div className="p-8 text-muted-foreground">Cargando…</div>;
+  }
+
+  if (error || !form) {
+    return (
+      <div className="p-8 space-y-4 max-w-xl mx-auto mt-8">
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-destructive space-y-1">
+          <p className="font-semibold">Error al cargar Integraciones IA</p>
+          <p className="text-sm">{(error as Error)?.message || "No se pudo cargar la configuración de la IA."}</p>
+        </div>
+        <Button onClick={() => refetch()} variant="outline">Reintentar</Button>
+      </div>
+    );
   }
 
   const update = (patch: any) => {

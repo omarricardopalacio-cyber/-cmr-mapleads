@@ -2,19 +2,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { ensureUserOrg } from "@/lib/org-helpers";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 async function getUserOrg(userId: string): Promise<string> {
-  const { data, error } = await supabaseAdmin
-    .from("user_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  if (error || !data) throw new Error("No organization found for user");
-  return data.org_id;
+  return ensureUserOrg(userId);
 }
 
 /** Llama a la REST API del Supabase externo sin auth propia */

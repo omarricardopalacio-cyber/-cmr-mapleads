@@ -2,19 +2,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { ensureUserOrg } from "@/lib/org-helpers";
 
 const dbDyn = () => supabaseAdmin as unknown as { from: (t: string) => any };
 
 async function getUserOrg(userId: string) {
-  const { data } = await supabaseAdmin
-    .from("user_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  if (!data) throw new Error("No organization");
-  return data.org_id;
+  return ensureUserOrg(userId);
 }
 
 // ───── AUTO REPLIES ─────
