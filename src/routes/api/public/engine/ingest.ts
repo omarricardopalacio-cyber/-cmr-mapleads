@@ -2149,7 +2149,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         text: textForAi,
                         delayAfterAutoReplies: totalDelaySec,
                         autoRepliesWereSent,
-                        aiReplyDedupeKey,
+                        aiReplyDedupeKey: aiReplyDedupKey,
                       })
                     }
                   }
@@ -2237,7 +2237,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                         text: textForAi,
                         delayAfterAutoReplies: totalDelaySec,
                         autoRepliesWereSent: totalDelaySec > 0,
-                        aiReplyDedupeKey,
+                        aiReplyDedupeKey: aiReplyDedupKey,
                       })
                     }
                   }
@@ -2721,7 +2721,7 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                     text: textForAiInsert,
                     delayAfterAutoReplies: totalDelaySec,
                     autoRepliesWereSent,
-                    aiReplyDedupeKey,
+                    aiReplyDedupeKey: aiReplyDedupKey,
                   })
                 }
                 if (responder === 'none') responder = 'ai'
