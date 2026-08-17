@@ -21,40 +21,8 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Crear cliente - en Lovable, si no hay service_role, usar el cliente normal
 // Las RLS policies protegen los datos
-export let supabaseAdmin: any;
-const supabaseRealtimeOptions = nodeRealtimeWebSocket ? { realtime: { transport: nodeRealtimeWebSocket } } : {};
-
-try {
-  if (supabaseUrl && supabaseServiceKey) {
-    supabaseAdmin = createClient<Database>(
-      supabaseUrl,
-      supabaseServiceKey,
-      {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-        ...supabaseRealtimeOptions,
-      }
-    );
-  } else if (supabaseUrl) {
-    // Fallback: usar publicKey con RLS protection
-    supabaseAdmin = createClient<Database>(
-      supabaseUrl,
-      process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "placeholder",
-      {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-        ...supabaseRealtimeOptions,
-      }
-    );
-    console.warn("[supabase-admin] Using public key - RLS policies protect data");
-  }
-} catch (err) {
-  console.error("[supabase-admin] Init failed:", err);
-}
+import { supabaseAdmin } from "../integrations/supabase/client.server";
+export { supabaseAdmin };
 
 // ============================================================================
 // HELPER FUNCTIONS - Platform Roles
