@@ -881,18 +881,35 @@ async function scheduleAiReplyFromIngest(params: {
     }
   }
 
-  await scheduleDebouncedAiReply({
-    orgId,
-    sessionId,
-    chatId,
-    contactId,
-    threadId,
-    text,
-    delayAfterAutoReplies,
-    autoRepliesWereSent,
-    aiReplyDedupeKey,
-    waitForFlow: true,
-  })
+  try {
+    const { executeAiReply } = await import('@/lib/ai-reply.server')
+    console.info('[ingest] ejecutando IA de forma síncrona en serverless', { threadId, contactId })
+    await executeAiReply({
+      orgId,
+      sessionId,
+      chatId,
+      contactId,
+      threadId,
+      text,
+      delayAfterAutoReplies,
+      autoRepliesWereSent,
+      aiReplyDedupeKey,
+    })
+  } catch (err: any) {
+    console.error('[ingest] error ejecutando IA síncrona, usando fallback scheduleDebouncedAiReply:', err?.message)
+    await scheduleDebouncedAiReply({
+      orgId,
+      sessionId,
+      chatId,
+      contactId,
+      threadId,
+      text,
+      delayAfterAutoReplies,
+      autoRepliesWereSent,
+      aiReplyDedupeKey,
+      waitForFlow: true,
+    })
+  }
 }
 
 async function hasDuplicateIncomingMessage(
@@ -1631,6 +1648,50 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                       phone,
                     })
                   }
+                }
+              }
+            }
+
+            if (!contactId && phone) {
+              const { data: threadWithLid } = await supabaseAdmin
+                .from('threads')
+                .select('contact_id')
+                .eq('session_id', session.id)
+                .order('last_message_at', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+
+              if (threadWithLid?.contact_id) {
+                const { data: lidContact } = await supabaseAdmin
+                  .from('contacts')
+                  .select('id, wa_id, phone')
+                  .eq('id', threadWithLid.contact_id)
+                  .maybeSingle()
+
+                if (lidContact && (isLidKey(lidContact.wa_id || '') || !lidContact.phone)) {
+                  const safeName = isUsefulDisplayName(
+                    e.contact?.displayName,
+                    phone,
+                    waId,
+                  )
+                    ? e.contact!.displayName
+                    : phone
+
+                  await supabaseAdmin
+                    .from('contacts')
+                    .update({
+                      phone,
+                      display_name: safeName,
+                      profile_picture_url: e.contact?.profilePictureUrl,
+                    })
+                    .eq('id', lidContact.id)
+
+                  contactId = lidContact.id
+                  console.info('[ingest] vinculado teléfono a contacto LID existente (evitó duplicado)', {
+                    contactId,
+                    phone,
+                    waId,
+                  })
                 }
               }
             }
