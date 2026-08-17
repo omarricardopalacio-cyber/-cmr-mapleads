@@ -342,6 +342,19 @@ function tryExtractContactDetailsFromText(text?: string | null): { extractedName
     }
   }
 
+  if (!extractedName) {
+    const parts = text.split(/[\/\n,]+/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length >= 2) {
+      const firstPart = parts[0]
+      if (
+        /^[A-ZÁÉÍÓÚa-záéíóúñÑ]{2,25}(?:\s+[A-ZÁÉÍÓÚa-záéíóúñÑ]{2,25}){0,2}$/.test(firstPart) &&
+        !looksLikeMessageNotPersonName(firstPart)
+      ) {
+        extractedName = firstPart
+      }
+    }
+  }
+
   return { extractedName, extractedPhone }
 }
 
