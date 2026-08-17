@@ -275,7 +275,11 @@ async function getVertexAccessTokenFromJSON(saJson: string): Promise<string> {
     return cachedToken.token;
   }
 
-  const privateKey = await importPKCS8(sa.private_key, "RS256");
+  let pk = sa.private_key;
+  if (typeof pk === "string" && pk.includes("\\n")) {
+    pk = pk.replace(/\\n/g, "\n");
+  }
+  const privateKey = await importPKCS8(pk, "RS256");
   const now = Math.floor(Date.now() / 1000);
   const assertion = await new SignJWT({
     scope: "https://www.googleapis.com/auth/cloud-platform",
