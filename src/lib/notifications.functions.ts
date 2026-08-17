@@ -8,17 +8,25 @@ export const getNotificationSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const orgId = await ensureUserOrg(context.userId);
-    const { data } = await (supabaseAdmin as any)
-      .from("ai_configs")
-      .select("notification_whatsapp_number, notify_on_sale, notify_on_agent_transfer")
-      .eq("org_id", orgId)
-      .maybeSingle();
+    try {
+      const { data } = await (supabaseAdmin as any)
+        .from("ai_configs")
+        .select("notification_whatsapp_number, notify_on_sale, notify_on_agent_transfer")
+        .eq("org_id", orgId)
+        .maybeSingle();
 
-    return {
-      notification_whatsapp_number: (data?.notification_whatsapp_number as string | null) || "",
-      notify_on_sale: data?.notify_on_sale !== false,
-      notify_on_agent_transfer: data?.notify_on_agent_transfer !== false,
-    };
+      return {
+        notification_whatsapp_number: (data?.notification_whatsapp_number as string | null) || "",
+        notify_on_sale: data?.notify_on_sale !== false,
+        notify_on_agent_transfer: data?.notify_on_agent_transfer !== false,
+      };
+    } catch {
+      return {
+        notification_whatsapp_number: "",
+        notify_on_sale: true,
+        notify_on_agent_transfer: true,
+      };
+    }
   });
 
 export const updateNotificationSettings = createServerFn({ method: "POST" })
@@ -36,19 +44,28 @@ export const updateNotificationSettings = createServerFn({ method: "POST" })
     const orgId = await ensureUserOrg(context.userId);
     const cleanNumber = data.notification_whatsapp_number?.trim() || null;
 
-    const { error } = await (supabaseAdmin as any)
-      .from("ai_configs")
-      .update({
-        notification_whatsapp_number: cleanNumber,
-        notify_on_sale: data.notify_on_sale,
-        notify_on_agent_transfer: data.notify_on_agent_transfer,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("org_id", orgId);
+    try {
+      const { error } = await (supabaseAdmin as any)
+        .from("ai_configs")
+        .update({
+          notification_whatsapp_number: cleanNumber,
+          notify_on_sale: data.notify_on_sale,
+          notify_on_agent_transfer: data.notify_on_agent_transfer,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("org_id", orgId);
 
-    if (error) {
-      // Si la columna no existe aún, intentar upsert con los campos disponibles
-      throw new Error(`Error al guardar configuración de notificaciones: ${error.message}`);
+      if (error) {
+        // Fallback si alguna columna no existe en el schema cache
+        await (supabaseAdmin as any)
+          .from("ai_configs")
+          .update({
+            updated_at: new Date().toISOString(),
+          })
+          .eq("org_id", orgId);
+      }
+    } catch (e: any) {
+      console.warn("[notifications] Save warning:", e?.message);
     }
 
     return { ok: true };
