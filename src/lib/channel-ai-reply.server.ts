@@ -321,17 +321,8 @@ export async function runChannelAiReply(
     }
   }
 
-  if (activatedFlow) {
-    try {
-      await supabaseAdmin
-        .from("threads")
-        .update({ ai_enabled: true } as any)
-        .eq("id", threadId)
-        .eq("org_id", orgId);
-    } catch (_) {
-      /* ignore */
-    }
-  }
+  // No forzar IA ON tras activate_flow: el paquete se envía y, si el flujo
+  // no pide IA explícitamente, un humano sigue la conversación.
 
   if (process.env.DISABLE_AI_MEMORY !== "true" && contactId) {
     try {

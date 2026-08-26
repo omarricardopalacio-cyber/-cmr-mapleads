@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { processRunUntilWaitOrCompleted } from "./flow-runner.server";
+import { flowWantsAiAttendance, processRunUntilWaitOrCompleted } from "./flow-runner.server";
 
 const ACTIVE_RUN_STATUSES = ["active", "running", "wait_node", "paused"];
 
@@ -274,7 +274,7 @@ export async function startFlowForContact(params: {
   const { data: flow } = await supabaseAdmin
     .from("flows")
     .select(
-      "id, name, is_active, ai_selectable, max_sends_per_contact, ai_instructions, product_id",
+      "id, name, is_active, ai_selectable, max_sends_per_contact, ai_instructions, product_id, ai_enabled_after_flow, ai_enabled_during_flow, ai_mode",
     )
     .eq("org_id", orgId)
     .eq("id", flowId)
@@ -331,7 +331,8 @@ export async function startFlowForContact(params: {
     processNow: true,
   });
 
-  // La promesa del sistema es seguir atendiendo tras el paquete (dudas / opción del menú).
+  // Tras el paquete: solo dejar IA ON si el flujo lo pide explícitamente.
+  // Por defecto el flujo se envía y la IA no negocia.
   if (result.started || (result as any).alreadyActive || (result as any).alreadyRecent) {
     try {
       const { data: thread } = await supabaseAdmin
@@ -343,14 +344,15 @@ export async function startFlowForContact(params: {
         .limit(1)
         .maybeSingle();
       if (thread?.id) {
+        const wantsAi = flowWantsAiAttendance(flow);
         await supabaseAdmin
           .from("threads")
-          .update({ ai_enabled: true } as unknown as Record<string, unknown>)
+          .update({ ai_enabled: wantsAi } as unknown as Record<string, unknown>)
           .eq("id", thread.id)
           .eq("org_id", orgId);
       }
     } catch (err: any) {
-      console.warn("[startFlowForContact] no se pudo dejar IA activa:", err?.message || err);
+      console.warn("[startFlowForContact] no se pudo aplicar política IA del flujo:", err?.message || err);
     }
   }
 

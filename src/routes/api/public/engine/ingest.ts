@@ -1206,18 +1206,7 @@ async function maybeAiReply(
         chatId,
         actions,
       })
-      // Garantizar IA ON: a veces el modelo llama transfer_to_human en el mismo
-      // turno y deja el toggle apagado aunque el flujo diga "Activar IA".
-      try {
-        await supabaseAdmin
-          .from('threads')
-          .update({ ai_enabled: true } as unknown as Record<string, never>)
-          .eq('id', threadId)
-          .eq('org_id', orgId)
-        console.info('[ai-reply] IA forzada ON tras activate_flow', { threadId, orgId })
-      } catch (reOnErr) {
-        console.warn('[ai-reply] no se pudo forzar IA ON tras flujo:', (reOnErr as Error)?.message)
-      }
+      // No forzar IA ON: el flujo aplica su propia política. Si no pide IA, no negociar.
     }
 
     // === APRENDIZAJE: la IA "aprende" de este contacto a medida que atiende ===
@@ -2464,6 +2453,15 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
               }
 
               const aiEnabledAtStart = (thread as any)?.ai_enabled !== false
+              let orgAiEnabled = false
+              try {
+                const { data: orgAiCfg } = await supabaseAdmin
+                  .from('ai_configs')
+                  .select('enabled')
+                  .eq('org_id', session.org_id)
+                  .maybeSingle()
+                orgAiEnabled = orgAiCfg?.enabled === true
+              } catch (_) { /* si no hay config, la IA no responde */ }
               let focusedProductId = (thread as any)?.focused_product_id
                 ? String((thread as any).focused_product_id)
                 : null
@@ -2619,63 +2617,54 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
               }
 
-              // 4) Flujos keyword (solo producto ligado si hay foco; no en saludo)
+              // 4) Flujos keyword (prioridad sobre IA). Producto ligado si hay foco; no en saludo.
               if (
                 (responder === 'none' || responder === 'product_focus') &&
                 realInboundText &&
                 !greetingOnly
               ) {
                 try {
-                  const { data: aiCfgForFlows } = await supabaseAdmin
-                    .from('ai_configs')
-                    .select('enabled')
+                  const { data: keywordFlows } = await dyn()
+                    .from('flows')
+                    .select('id, trigger_value, max_sends_per_contact, product_id')
                     .eq('org_id', session.org_id)
-                    .maybeSingle()
-                  const aiHandlesFlows = aiCfgForFlows?.enabled === true && !focusedProductId
-
-                  if (!aiHandlesFlows) {
-                    const { data: keywordFlows } = await dyn()
-                      .from('flows')
-                      .select('id, trigger_value, max_sends_per_contact, product_id')
-                      .eq('org_id', session.org_id)
-                      .eq('trigger_type', 'keyword')
-                      .eq('is_active', true)
-                    for (const flow of keywordFlows ?? []) {
-                      const flowPid = (flow as any).product_id
-                        ? String((flow as any).product_id)
-                        : null
-                      if (focusedProductId) {
-                        if (!flowPid || flowPid !== focusedProductId) continue
-                      } else if (flowPid) {
-                        continue
-                      }
-                      const triggerVal = String((flow as any).trigger_value || '')
-                        .toLowerCase()
-                        .trim()
-                      if (!triggerVal || triggerVal.length < 3) continue
-                      if (!realInboundText.toLowerCase().includes(triggerVal)) continue
-                      const { data: firstStep } = await dyn()
-                        .from('flow_steps')
-                        .select('id')
-                        .eq('flow_id', flow.id)
-                        .is('parent_step_id', null)
-                        .order('step_order', { ascending: true })
-                        .limit(1)
-                        .maybeSingle()
-                      if (!firstStep) continue
-                      const fr = await ensureFlowRunForContact({
-                        orgId: session.org_id,
-                        contactId,
-                        flowId: flow.id,
-                        firstStepId: firstStep.id,
-                        maxSends: (flow as any).max_sends_per_contact ?? null,
-                        processNow: true,
-                      })
-                      if (fr.started) {
-                        if (responder === 'none') responder = 'generic_flow'
-                        skipAiThisInbound = true
-                        break
-                      }
+                    .eq('trigger_type', 'keyword')
+                    .eq('is_active', true)
+                  for (const flow of keywordFlows ?? []) {
+                    const flowPid = (flow as any).product_id
+                      ? String((flow as any).product_id)
+                      : null
+                    if (focusedProductId) {
+                      if (!flowPid || flowPid !== focusedProductId) continue
+                    } else if (flowPid) {
+                      continue
+                    }
+                    const triggerVal = String((flow as any).trigger_value || '')
+                      .toLowerCase()
+                      .trim()
+                    if (!triggerVal || triggerVal.length < 3) continue
+                    if (!realInboundText.toLowerCase().includes(triggerVal)) continue
+                    const { data: firstStep } = await dyn()
+                      .from('flow_steps')
+                      .select('id')
+                      .eq('flow_id', flow.id)
+                      .is('parent_step_id', null)
+                      .order('step_order', { ascending: true })
+                      .limit(1)
+                      .maybeSingle()
+                    if (!firstStep) continue
+                    const fr = await ensureFlowRunForContact({
+                      orgId: session.org_id,
+                      contactId,
+                      flowId: flow.id,
+                      firstStepId: firstStep.id,
+                      maxSends: (flow as any).max_sends_per_contact ?? null,
+                      processNow: true,
+                    })
+                    if (fr.started) {
+                      if (responder === 'none') responder = 'generic_flow'
+                      skipAiThisInbound = true
+                      break
                     }
                   }
                 } catch (flowErr: any) {
@@ -2683,8 +2672,10 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 }
               }
 
-              // 5) IA general — solo si nadie tomó el turno y estaba ON al inicio
+              // 5) IA general — solo si nadie tomó el turno, el hilo tenía IA ON
+              // y la org tiene la IA activada. Si hay flujo, la IA no negocia.
               const canAi =
+                orgAiEnabled &&
                 !skipAiThisInbound &&
                 aiEnabledAtStart &&
                 (responder === 'none' || responder === 'product_focus') &&

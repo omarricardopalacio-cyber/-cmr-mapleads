@@ -4,18 +4,17 @@ import { waitMs } from "./flow-blocks";
 import { releaseAiReplyPendingForContact } from "./ai-reply-pending.server";
 
 /** ¿Este flujo espera que la IA siga atendiendo (menú, dudas, siguiente paquete)? */
-function flowWantsAiAttendance(flow: any): boolean {
+export function flowWantsAiAttendance(flow: any): boolean {
   if (!flow) return false;
   const mode = String(flow.ai_mode || "none");
-  const hasInstructions = Boolean(String(flow.ai_instructions || "").trim());
+  // Solo flags explícitos. ai_selectable / instrucciones NO encienden la IA:
+  // el paquete se envía y un humano (o el propio flujo) sigue la conversación.
   return (
     flow.ai_enabled_after_flow === true ||
     flow.ai_enabled_during_flow === true ||
     mode === "on_completion" ||
     mode === "during_flow" ||
-    mode === "on_response" ||
-    flow.ai_selectable === true ||
-    hasInstructions
+    mode === "on_response"
   );
 }
 
@@ -46,29 +45,33 @@ async function setThreadAiEnabled(orgId: string, contactId: string, enabled: boo
   });
 }
 
-/** Reactiva la IA del hilo al completar / esperar un flujo cuando el paquete lo requiere. */
-async function applyFlowAiPolicyOnComplete(params: {
+/**
+ * Aplica la política de IA del flujo al completar / esperar.
+ * Si el flujo NO pide IA, la apaga para que no negocie tras enviar el paquete.
+ */
+export async function applyFlowAiPolicyOnComplete(params: {
   orgId: string;
   contactId: string;
   flowId: string;
   skipAiReenable?: boolean;
   reason?: string;
-}) {
+}): Promise<boolean> {
   const { orgId, contactId, flowId, skipAiReenable, reason } = params;
-  if (skipAiReenable || !orgId || !contactId || !flowId) return;
+  if (skipAiReenable || !orgId || !contactId || !flowId) return false;
 
   try {
     const { data: flow } = await supabaseAdmin
       .from("flows")
-      .select("ai_enabled_after_flow, ai_enabled_during_flow, ai_mode, ai_selectable, ai_instructions")
+      .select("ai_enabled_after_flow, ai_enabled_during_flow, ai_mode")
       .eq("id", flowId)
       .maybeSingle();
 
-    if (!flowWantsAiAttendance(flow)) return;
-
-    await setThreadAiEnabled(orgId, contactId, true, reason || "flow_complete");
+    const wants = flowWantsAiAttendance(flow);
+    await setThreadAiEnabled(orgId, contactId, wants, reason || "flow_complete");
+    return wants;
   } catch (err: any) {
     console.warn("[flow-runner] applyFlowAiPolicyOnComplete failed:", err?.message || err);
+    return false;
   }
 }
 
@@ -294,15 +297,15 @@ export async function processRun(run: any): Promise<FlowRunEffects | undefined> 
       .update({ status: "wait_node", next_execution_at: nextAt })
       .eq("id", run.id);
     if (!skipAiReenable) {
-      await applyFlowAiPolicyOnComplete({
+      const enabledAi = await applyFlowAiPolicyOnComplete({
         orgId: run.org_id,
         contactId: run.contact_id,
         flowId: run.flow_id,
         reason: "flow_wait_node",
       });
-      // Política del flujo encendió IA al llegar a wait: diferir respuesta este turno.
-      effects.enabledAi = true;
+      // El flujo ya envió contenido: no dejar que la IA escriba en este mismo turno.
       effects.deferAiReply = true;
+      if (enabledAi) effects.enabledAi = true;
       if (run.contact_id) {
         void releaseAiReplyPendingForContact(run.contact_id).catch((err) => {
           console.warn("[flow-runner] releaseAiReplyPending wait_node failed:", (err as Error)?.message);

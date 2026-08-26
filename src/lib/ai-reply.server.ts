@@ -341,19 +341,7 @@ export async function executeAiReply(params: {
         chatId,
         actions,
       });
-      try {
-        await supabaseAdmin
-          .from("threads")
-          .update({ ai_enabled: true } as unknown as Record<string, never>)
-          .eq("id", threadId)
-          .eq("org_id", orgId);
-        console.info("[ai-reply] IA forzada ON tras activate_flow", { threadId, orgId });
-      } catch (reOnErr) {
-        console.warn(
-          "[ai-reply] no se pudo forzar IA ON tras flujo:",
-          (reOnErr as Error)?.message,
-        );
-      }
+      // No forzar IA ON: el flujo aplica su propia política. Si no pide IA, no negociar.
     }
 
     if (process.env.DISABLE_AI_MEMORY !== "true" && contactId) {
