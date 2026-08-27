@@ -47,7 +47,7 @@ async function setThreadAiEnabled(orgId: string, contactId: string, enabled: boo
 
 /**
  * Aplica la política de IA del flujo al completar / esperar.
- * Si el flujo NO pide IA, la apaga para que no negocie tras enviar el paquete.
+ * Si el flujo pide IA, la enciende. Si no, no toca el hilo (no la apaga).
  */
 export async function applyFlowAiPolicyOnComplete(params: {
   orgId: string;
@@ -67,8 +67,9 @@ export async function applyFlowAiPolicyOnComplete(params: {
       .maybeSingle();
 
     const wants = flowWantsAiAttendance(flow);
-    await setThreadAiEnabled(orgId, contactId, wants, reason || "flow_complete");
-    return wants;
+    if (!wants) return false;
+    await setThreadAiEnabled(orgId, contactId, true, reason || "flow_complete");
+    return true;
   } catch (err: any) {
     console.warn("[flow-runner] applyFlowAiPolicyOnComplete failed:", err?.message || err);
     return false;

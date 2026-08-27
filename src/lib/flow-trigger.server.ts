@@ -331,25 +331,25 @@ export async function startFlowForContact(params: {
     processNow: true,
   });
 
-  // Tras el paquete: solo dejar IA ON si el flujo lo pide explícitamente.
-  // Por defecto el flujo se envía y la IA no negocia.
+  // Tras el paquete: encender IA solo si el flujo lo pide. No apagar el hilo.
   if (result.started || (result as any).alreadyActive || (result as any).alreadyRecent) {
     try {
-      const { data: thread } = await supabaseAdmin
-        .from("threads")
-        .select("id")
-        .eq("org_id", orgId)
-        .eq("contact_id", contactId)
-        .order("last_message_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (thread?.id) {
-        const wantsAi = flowWantsAiAttendance(flow);
-        await supabaseAdmin
+      if (flowWantsAiAttendance(flow)) {
+        const { data: thread } = await supabaseAdmin
           .from("threads")
-          .update({ ai_enabled: wantsAi } as unknown as Record<string, unknown>)
-          .eq("id", thread.id)
-          .eq("org_id", orgId);
+          .select("id")
+          .eq("org_id", orgId)
+          .eq("contact_id", contactId)
+          .order("last_message_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (thread?.id) {
+          await supabaseAdmin
+            .from("threads")
+            .update({ ai_enabled: true } as unknown as Record<string, unknown>)
+            .eq("id", thread.id)
+            .eq("org_id", orgId);
+        }
       }
     } catch (err: any) {
       console.warn("[startFlowForContact] no se pudo aplicar política IA del flujo:", err?.message || err);
