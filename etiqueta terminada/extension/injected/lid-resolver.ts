@@ -11,10 +11,15 @@ import {
   isGroupJid,
   isLidJid,
   isRealPhoneDigits,
+  peerProfilePictureUrl,
+  sameProfilePicture,
   sanitizePhoneForIngest,
 } from "../shared/wa-identity";
 
 const PHONE_CACHE = new Map<string, string>();
+const OWN_JIDS = new Set<string>();
+const OWN_AVATAR_URLS: string[] = [];
+let ownIdentityAt = 0;
 
 export type ContactCard = {
   waId: string;
@@ -265,50 +270,188 @@ function thumbUrl(source: any): string | undefined {
   );
 }
 
-/** Foto de perfil. Prueba el `@c.us` resuelto y el `@lid`: el thumb a veces vive en uno solo. */
+function serializedId(value: any): string {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value._serialized === "string") return value._serialized;
+  if (value.user && value.server) return `${value.user}@${value.server}`;
+  return "";
+}
+
+function noteOwnJid(value: unknown): void {
+  if (value == null) return;
+  if (typeof value === "string" && !value.includes("@")) {
+    const digits = value.replace(/\D/g, "");
+    if (digits.length >= 8 && digits.length <= 15) OWN_JIDS.add(`${digits}@c.us`);
+    return;
+  }
+  const raw = serializedId(value).trim();
+  if (!raw || isGroupJid(raw)) return;
+  OWN_JIDS.add(raw);
+}
+
+export function noteOwnAvatar(value: unknown): void {
+  const url = httpProfileUrl(value);
+  if (!url) return;
+  if (OWN_AVATAR_URLS.some((known) => known === url || sameProfilePicture(known, url))) return;
+  OWN_AVATAR_URLS.push(url);
+  if (OWN_AVATAR_URLS.length > 8) OWN_AVATAR_URLS.splice(0, OWN_AVATAR_URLS.length - 8);
+}
+
+export function getOwnAvatarUrls(): string[] {
+  return OWN_AVATAR_URLS.slice();
+}
+
+export function ownAvatarPayload(): { meProfilePictureUrl?: string; meProfilePictureUrls?: string[] } {
+  const urls = getOwnAvatarUrls();
+  if (!urls.length) return {};
+  return { meProfilePictureUrl: urls[0], meProfilePictureUrls: urls };
+}
+
+function isOwnJid(jid?: string | null): boolean {
+  if (!jid) return false;
+  if (OWN_JIDS.has(jid)) return true;
+  const digits = digitsOnly(jid);
+  if (!digits) return false;
+  const me = String((window as any).__MAPLE_ME_PHONE__ || "").replace(/\D/g, "");
+  if (me && me === digits) return true;
+  for (const own of OWN_JIDS) {
+    if (digitsOnly(own) === digits) return true;
+  }
+  return false;
+}
+
+function sameUser(a?: string | null, b?: string | null): boolean {
+  const da = digitsOnly(a);
+  const db = digitsOnly(b);
+  return !!da && da === db;
+}
+
+/** El thumb tiene que ser de ese jid. Un modelo sin id, o el de la sesión, no vale para un peer. */
+function thumbBelongsTo(thumb: any, jid: string): boolean {
+  const id = serializedId(thumb?.id) || serializedId(thumb?.wid);
+  if (!id) return false;
+  if (isOwnJid(id) && !isOwnJid(jid)) return false;
+  return sameUser(id, jid);
+}
+
+export async function refreshOwnIdentity(): Promise<void> {
+  if (ownIdentityAt && Date.now() - ownIdentityAt < 60_000 && OWN_AVATAR_URLS.length) return;
+  const WPP = getWPP();
+  if (!WPP) return;
+  const prefs = WPP.whatsapp?.UserPrefs;
+  const conn = WPP.whatsapp?.Conn;
+  const sources = [
+    prefs?.getMaybeMeUser?.(),
+    prefs?.getMaybeMePnUser?.(),
+    prefs?.getMaybeMeLidUser?.(),
+    prefs?.getMe?.(),
+    conn?.wid,
+    conn?.me,
+    (window as any).__MAPLE_ME_PHONE__,
+  ];
+  for (const source of sources) {
+    try {
+      noteOwnJid(await Promise.resolve(source));
+    } catch {
+      /* siguiente fuente */
+    }
+  }
+  const ownJids = [...OWN_JIDS].filter(
+    (jid) => jid.endsWith("@c.us") || jid.endsWith("@lid") || jid.endsWith("@s.whatsapp.net"),
+  );
+  for (const jid of ownJids.slice(0, 4)) {
+    const url = await readPictureUrl(jid, true);
+    if (url) noteOwnAvatar(url);
+  }
+  try {
+    const meJid = ownJids.find((j) => j.endsWith("@c.us")) || ownJids[0];
+    const meContact = meJid ? await WPP.contact?.get?.(meJid) : null;
+    for (const thumb of [meContact?.profilePicThumb, meContact?.profilePicThumbObj]) {
+      if (thumb && meJid && thumbBelongsTo(thumb, meJid)) noteOwnAvatar(thumbUrl(thumb));
+    }
+  } catch {
+    /* ignore */
+  }
+  if (OWN_AVATAR_URLS.length || OWN_JIDS.size) ownIdentityAt = Date.now();
+}
+
+async function readPictureUrl(jid: string, own: boolean): Promise<string | undefined> {
+  const WPP = getWPP();
+  if (!WPP || !jid || isGroupJid(jid)) return undefined;
+  if (!own && isOwnJid(jid)) return undefined;
+
+  const accept = (value: unknown, thumb?: any): string | undefined => {
+    if (thumb && !thumbBelongsTo(thumb, jid)) return undefined;
+    const http = httpProfileUrl(value);
+    if (!http) return undefined;
+    return own ? http : peerProfilePictureUrl(http, OWN_AVATAR_URLS);
+  };
+
+  try {
+    if (typeof WPP.contact?.getProfilePictureUrl === "function") {
+      const full = accept(await WPP.contact.getProfilePictureUrl(jid, true));
+      if (full) return full;
+      const small = accept(await WPP.contact.getProfilePictureUrl(jid, false));
+      if (small) return small;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const store = WPP.whatsapp?.ProfilePicThumbStore;
+    const cached = typeof store?.get === "function" ? store.get(jid) : null;
+    const cachedUrl = accept(thumbUrl(cached), cached);
+    if (cachedUrl) return cachedUrl;
+    const found = typeof store?.find === "function" ? await store.find(jid) : null;
+    const foundUrl = accept(thumbUrl(found), found);
+    if (foundUrl) return foundUrl;
+  } catch {
+    /* ignore */
+  }
+
+  if (!own) {
+    try {
+      const loaded = await WPP.contact?.get?.(jid);
+      const thumb = loaded?.profilePicThumb || loaded?.profilePicThumbObj;
+      const url = accept(thumbUrl(thumb), thumb);
+      if (url) return url;
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Foto del peer de este chat. Nunca la del negocio / yo, ni un badge de no leídos.
+ * Solo prueba los jid de ese contacto (`@c.us` resuelto y su `@lid`).
+ */
 export async function fetchProfilePictureUrl(
   jids: Array<string | undefined | null>,
   contact?: any,
 ): Promise<string | undefined> {
-  const fromContact =
-    thumbUrl(contact?.profilePicThumb) ||
-    thumbUrl(contact?.profilePicThumbObj) ||
-    httpProfileUrl(contact?.profilePictureThumb);
-  if (fromContact) return fromContact;
+  await refreshOwnIdentity();
+  const peers = [
+    ...new Set(
+      jids.filter((j): j is string => typeof j === "string" && j.includes("@") && !isGroupJid(j) && !isOwnJid(j)),
+    ),
+  ];
+  if (!peers.length) return undefined;
 
-  const WPP = getWPP();
-  const unique = [...new Set(jids.filter((j): j is string => typeof j === "string" && j.includes("@")))];
-  for (const jid of unique) {
-    if (!WPP) break;
-    try {
-      if (typeof WPP.contact?.getProfilePictureUrl === "function") {
-        const full = await WPP.contact.getProfilePictureUrl(jid, true);
-        const fullUrl = httpProfileUrl(full);
-        if (fullUrl) return fullUrl;
-        const small = await WPP.contact.getProfilePictureUrl(jid, false);
-        const smallUrl = httpProfileUrl(small);
-        if (smallUrl) return smallUrl;
-      }
-    } catch {
-      /* ignore */
+  const contactId = serializedId(contact?.id);
+  if (contactId && !isOwnJid(contactId) && peers.some((jid) => sameUser(jid, contactId))) {
+    const thumb = contact?.profilePicThumb || contact?.profilePicThumbObj;
+    if (thumb && thumbBelongsTo(thumb, contactId)) {
+      const fromContact = peerProfilePictureUrl(thumbUrl(thumb), OWN_AVATAR_URLS);
+      if (fromContact) return fromContact;
     }
-    try {
-      const store = WPP.whatsapp?.ProfilePicThumbStore;
-      const thumb =
-        (typeof store?.get === "function" ? store.get(jid) : null) ||
-        (typeof store?.find === "function" ? await store.find(jid) : null);
-      const url = thumbUrl(thumb);
-      if (url) return url;
-    } catch {
-      /* ignore */
-    }
-    try {
-      const loaded = await WPP.contact?.get?.(jid);
-      const url = thumbUrl(loaded?.profilePicThumb) || thumbUrl(loaded?.profilePicThumbObj);
-      if (url) return url;
-    } catch {
-      /* ignore */
-    }
+  }
+
+  for (const jid of peers) {
+    const url = await readPictureUrl(jid, false);
+    if (url) return url;
   }
   return undefined;
 }
@@ -376,7 +519,7 @@ export async function resolveContactCard(
 
   const displayName = pickDisplayName(contact, chat, phone, chatId);
   const profilePictureUrl = await fetchProfilePictureUrl(
-    [waId, phone ? `${phone}@s.whatsapp.net` : undefined, chatId],
+    [chatId, waId, phone ? `${phone}@s.whatsapp.net` : undefined],
     contact || chat?.contact,
   );
 
@@ -453,13 +596,19 @@ export async function applyIdentityToMessage(msg: any, base: any, budgetMs = 250
   );
   const waId = phone ? `${phone}@c.us` : canonicalWaId(counterpart) || canonicalWaId(chatId) || chatId;
 
-  let profilePictureUrl = httpProfileUrl(base?.profilePictureUrl);
+  if (left() > 200) await withTimeout(refreshOwnIdentity(), Math.min(800, left()));
+
+  const sender = msg?.sender;
+  const senderId = serializedId(sender?.id);
+  const peerContact = senderId && !isOwnJid(senderId) ? sender : undefined;
+  let profilePictureUrl = peerProfilePictureUrl(base?.profilePictureUrl, getOwnAvatarUrls());
   if (!profilePictureUrl && left() > 200) {
     profilePictureUrl = await withTimeout(
-      fetchProfilePictureUrl([waId, counterpart, base?.chatId, from, to], msg?.sender),
+      fetchProfilePictureUrl([counterpart, waId, base?.chatId], peerContact),
       left(),
     );
   }
+  profilePictureUrl = peerProfilePictureUrl(profilePictureUrl, getOwnAvatarUrls());
 
   const displayName = base?.displayName || base?.pushname || base?.notifyName;
   return {
@@ -468,6 +617,7 @@ export async function applyIdentityToMessage(msg: any, base: any, budgetMs = 250
     from,
     to,
     profilePictureUrl,
+    ...ownAvatarPayload(),
     contact: {
       waId,
       phone: phone || undefined,

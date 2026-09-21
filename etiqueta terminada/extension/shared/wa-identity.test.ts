@@ -3,6 +3,8 @@ import {
   buildIngestContact,
   canonicalWaId,
   looksLikeLidDigits,
+  peerProfilePictureUrl,
+  sameProfilePicture,
   sanitizePhoneForIngest,
 } from "./wa-identity.ts";
 
@@ -96,6 +98,33 @@ test("CONTACT_INFO keeps the @lid key and the real phone", () => {
   assert.equal(built.contact?.waId, "559591234567890@lid");
   assert.equal(built.phone, "573001234567");
   assert.equal(built.contact?.profilePictureUrl, "https://pps.whatsapp.net/v/t61/example.jpg");
+});
+
+test("does not attach the session avatar to a peer", () => {
+  const me = "https://pps.whatsapp.net/v/t61.24694-24/421234567890_n.jpg?ccb=11-4&oh=abc&oe=def";
+  const meSignedAgain = "https://pps.whatsapp.net/v/t61.24694-24/421234567890_n.jpg?ccb=99&oh=zzz&oe=yyy";
+  const peer = "https://pps.whatsapp.net/v/t61.24694-24/999888777666_n.jpg?ccb=11-4&oh=peer";
+  assert.equal(sameProfilePicture(me, meSignedAgain), true);
+  assert.equal(sameProfilePicture(me, peer), false);
+  assert.equal(peerProfilePictureUrl(meSignedAgain, [me]), undefined);
+  assert.equal(peerProfilePictureUrl(peer, [me]), peer);
+  assert.equal(peerProfilePictureUrl("https://static.whatsapp.net/rsrc/icon-unread-count.svg", [me]), undefined);
+  const built = buildIngestContact({
+    counterpartJid: "573027879979@c.us",
+    contactWaId: "573027879979@c.us",
+    contactPhone: "573027879979",
+    profilePictureUrl: meSignedAgain,
+    ownProfilePictureUrls: [me],
+  });
+  assert.equal(built.phone, "573027879979");
+  assert.equal(built.contact?.profilePictureUrl, undefined);
+  const kept = buildIngestContact({
+    counterpartJid: "573027879979@c.us",
+    contactPhone: "573027879979",
+    profilePictureUrl: peer,
+    ownProfilePictureUrls: [me],
+  });
+  assert.equal(kept.contact?.profilePictureUrl, peer);
 });
 
 test("14-digit numbers starting with 1 are not phones", () => {

@@ -6,8 +6,8 @@
 import { API_ENDPOINTS } from "../shared/contracts";
 import {
   canonicalWaId,
-  httpProfileUrl,
   looksLikeLidDigits,
+  peerProfilePictureUrl,
   sanitizePhoneForIngest,
 } from "../shared/wa-identity";
 
@@ -127,11 +127,27 @@ async function ensureBackendPermission(backendUrl: string): Promise<void> {
   }
 }
 
+async function withoutSessionAvatar(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const contact = body.contact;
+  if (!contact || typeof contact !== "object") return body;
+  const storedOwn = await chrome.storage.local.get("meProfilePictureUrls");
+  const ownPics = Array.isArray(storedOwn.meProfilePictureUrls) ? storedOwn.meProfilePictureUrls : [];
+  const record = contact as Record<string, unknown>;
+  return {
+    ...body,
+    contact: {
+      ...record,
+      profilePictureUrl: peerProfilePictureUrl(record.profilePictureUrl, ownPics),
+    },
+  };
+}
+
 async function postImportHistory(
   backendUrl: string,
   sessionToken: string,
   body: Record<string, unknown>,
 ): Promise<any> {
+  body = await withoutSessionAvatar(body);
   const base = backendUrl.replace(/\/$/, "");
   const url = `${base}${API_ENDPOINTS.POST_IMPORT_HISTORY}`;
   let res: Response;
@@ -178,6 +194,9 @@ async function postImportViaIngest(
   const contact = (body.contact || {}) as Record<string, unknown>;
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const labels = Array.isArray(body.labels) ? body.labels : [];
+  const storedOwn = await chrome.storage.local.get("meProfilePictureUrls");
+  const ownPics = Array.isArray(storedOwn.meProfilePictureUrls) ? storedOwn.meProfilePictureUrls : [];
+  const profilePictureUrl = peerProfilePictureUrl(contact.profilePictureUrl, ownPics);
 
   const events = messages.map((m: any, idx: number) => {
     const fromMe = m.fromMe === true || m.direction === "out";
@@ -195,7 +214,7 @@ async function postImportViaIngest(
         waId: contact.waId || canonicalWaId(chatId) || chatId,
         displayName: contact.displayName || undefined,
         phone: sanitizePhoneForIngest(contact.phone, contact.waId || chatId),
-        profilePictureUrl: httpProfileUrl(contact.profilePictureUrl),
+        profilePictureUrl,
       },
       labels,
     };
@@ -330,7 +349,11 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
               });
               if (resolvedPhone) phone = resolvedPhone;
               if (resolved.displayName) displayName = String(resolved.displayName);
-              const pic = httpProfileUrl(resolved.profilePictureUrl);
+              const storedOwn = await chrome.storage.local.get("meProfilePictureUrls");
+              const ownPics = Array.isArray(storedOwn.meProfilePictureUrls)
+                ? storedOwn.meProfilePictureUrls
+                : [];
+              const pic = peerProfilePictureUrl(resolved.profilePictureUrl, ownPics);
               if (pic) profilePictureUrl = pic;
             }
           } catch {

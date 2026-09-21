@@ -4,6 +4,7 @@
 // ============================================================
 
 import { waitForWPP, isWPPReady, patchWhatsAppCompat, getWPP } from "./wpp-bootstrap";
+import { ownAvatarPayload, refreshOwnIdentity } from "./lid-resolver";
 import { initEventEngine } from "./event-engine";
 import { senderEngine } from "./sender-engine";
 import { resolveCommandMedia } from "./command-media";
@@ -56,6 +57,8 @@ async function init(): Promise<void> {
     const WPP = getWPP() || (window as any).WPP;
     const myDevice = await WPP.whatsapp.Browser?.id?.();
     const phone = myDevice?.user || "";
+    await refreshOwnIdentity().catch(() => {});
+    const ownAvatar = ownAvatarPayload();
 
     postFromInjected("WA_EVENT", {
       event: "SESSION_READY",
@@ -65,6 +68,8 @@ async function init(): Promise<void> {
         deviceId: phone,
         phoneNumber: phone,
         profileName: document.querySelector('[data-testid="user-profile"]')?.textContent || "",
+        profilePicture: ownAvatar.meProfilePictureUrl,
+        meProfilePictureUrls: ownAvatar.meProfilePictureUrls,
         isReady: true,
         connectedAt: Date.now(),
       },
