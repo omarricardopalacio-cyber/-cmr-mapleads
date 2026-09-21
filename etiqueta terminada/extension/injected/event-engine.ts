@@ -8,6 +8,13 @@ import { getMessageById } from "./message-detector";
 import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
 import { sanitizeMessageBody, isWhatsAppSystemText } from "../shared/message-text";
+import { canonicalWaId, sanitizePhoneForIngest } from "../shared/wa-identity";
+import {
+  applyIdentityToMessage,
+  fetchProfilePictureUrl,
+  resolveContactCard,
+  resolveLidToPhoneDigits,
+} from "./lid-resolver";
 
 declare global {
   interface Window {
@@ -134,6 +141,23 @@ function registerActiveChat(WPP: NonNullable<typeof window.WPP>): void {
     try {
       const normalized = normalizeChat(chat);
       emit("ACTIVE_CHAT_CHANGED", normalized);
+      const chatId = String(normalized?.chatId || "");
+      if (!chatId || chatId.endsWith("@g.us")) return;
+      // Al abrir el chat WhatsApp hidrata LID→teléfono y la foto. Enriquecer
+      // después de un breve respiro para no competir con el render del chat.
+      setTimeout(() => {
+        void resolveContactCard(chatId, { chat })
+          .then((card) => {
+            if (!card) return;
+            const lidKey = chatId.endsWith("@lid") ? canonicalWaId(chatId) : "";
+            emit("CONTACT_INFO", {
+              ...card,
+              waId: lidKey || card.waId,
+              chatId: lidKey || card.chatId,
+            });
+          })
+          .catch(() => {});
+      }, 600);
     } catch (err) {
       console.error("[EventEngine] Error normalizando chat activo:", err);
     }
@@ -201,19 +225,6 @@ function getMyPhoneNumber(): string | undefined {
     return undefined;
   } catch {
     return undefined;
-  }
-}
-
-function createWidSafely(WPP: any, jid: string): any {
-  try {
-    if (WPP.whatsapp?.createWid) return WPP.whatsapp.createWid(jid);
-    if (WPP.whatsapp?.WidFactory?.createWid) return WPP.whatsapp.WidFactory.createWid(jid);
-    if (WPP.whatsapp?.Wid?.create) return WPP.whatsapp.Wid.create(jid);
-    // Fallback: construir manualmente el objeto Wid mínimo
-    const [user, server] = jid.split("@");
-    return { user, server, _serialized: jid };
-  } catch (e) {
-    return null;
   }
 }
 
@@ -367,11 +378,16 @@ async function processNewMessage(msg: any): Promise<void> {
     return;
   }
 
-  const normalized = buildMessageFast(msg);
-  if (isWhatsAppSystemText(normalized.text || normalized.body)) {
+  const fast = buildMessageFast(msg);
+  if (isWhatsAppSystemText(fast.text || fast.body)) {
     console.warn("[EventEngine] skip system banner text");
     return;
   }
+
+  // Resolver @lid → celular y foto ANTES de encolar el ingest.
+  // Si WA no responde, se emite el @lid con phone vacío (nunca dígitos crudos).
+  const identified = await applyIdentityToMessage(msg, fast).catch(() => undefined);
+  const normalized = identified || fast;
 
   // Nunca automatizar chat consigo mismo
   const me = getMyPhoneNumber();
@@ -422,9 +438,9 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
       realTo = (await resolveLidJid(WPP, realTo)) ?? realTo;
     }
 
-    // En salientes el contacto relevante es el destinatario (to), no nosotros
+    // El contacto relevante es el interlocutor (en salientes, el destinatario).
     const contactJid = fromMe ? realTo || realChatId : realFrom || realChatId;
-    if (contactJid && !fromMe) {
+    if (contactJid && !String(contactJid).endsWith("@g.us")) {
       try {
         const contactObj = await WPP.contact.get(contactJid);
         if (contactObj) {
@@ -436,23 +452,12 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
             contactObj.pushname ||
             contactObj.formattedName ||
             displayName;
-          profilePictureUrl =
-            contactObj.profilePicThumb?.imgFull ||
-            contactObj.profilePicThumb?.img ||
-            contactObj.profilePictureThumb ||
-            contactObj.profilePicThumbObj?.eurl ||
-            undefined;
-          if (!profilePictureUrl && typeof WPP.contact.getProfilePictureUrl === "function") {
-            try {
-              const picUrl = await WPP.contact.getProfilePictureUrl(contactJid);
-              if (typeof picUrl === "string" && picUrl.startsWith("http")) {
-                profilePictureUrl = picUrl;
-              }
-            } catch {
-              /* ignorar */
-            }
-          }
         }
+        profilePictureUrl =
+          (await fetchProfilePictureUrl(
+            [contactJid, realChatId, base.chatId],
+            contactObj,
+          )) || profilePictureUrl;
       } catch {
         /* ignorar */
       }
@@ -478,19 +483,16 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
     !!profilePictureUrl;
   const mediaRecovered = !!media?.base64 && base.media?.missing_media;
 
-  const phoneFromResolved = (() => {
-    const jid = fromMe ? realTo || realChatId : realFrom || realChatId;
-    if (!jid || typeof jid !== "string" || jid.endsWith("@lid") || jid.endsWith("@g.us")) {
-      return undefined;
-    }
-    const d = jid.split("@")[0].replace(/\D/g, "");
-    return d.length >= 8 && d.length <= 15 ? d : undefined;
-  })();
+  const counterpartJid = String((fromMe ? realTo || realChatId : realFrom || realChatId) || "");
+  const phoneFromResolved = sanitizePhoneForIngest(
+    counterpartJid.endsWith("@lid") || counterpartJid.endsWith("@g.us") ? undefined : counterpartJid,
+    counterpartJid,
+    { verifiedCus: counterpartJid.endsWith("@c.us") || counterpartJid.endsWith("@s.whatsapp.net") },
+  );
+  const unresolvedWaId = canonicalWaId(counterpartJid) || canonicalWaId(base.chatId) || counterpartJid;
 
   const contactPayload = {
-    waId: phoneFromResolved
-      ? `${phoneFromResolved}@c.us`
-      : String((fromMe ? realTo || realChatId : realFrom || realChatId) || base.chatId || ""),
+    waId: phoneFromResolved ? `${phoneFromResolved}@c.us` : unresolvedWaId,
     phone: phoneFromResolved,
     displayName: displayName || pushname || notifyName,
     profilePictureUrl,
@@ -505,9 +507,28 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
     return mediaRecovered;
   }
 
+  // El reenvío del mensaje puede caer en el dedupe. CONTACT_INFO sí actualiza
+  // teléfono y foto de la ficha (incluido el @lid original).
+  if (phoneFromResolved || (profilePictureUrl && profilePictureUrl !== base.profilePictureUrl)) {
+    const lidSource = [base.chatId, base.from, base.to].find(
+      (jid) => typeof jid === "string" && jid.endsWith("@lid"),
+    );
+    const infoWaId = typeof lidSource === "string" ? canonicalWaId(lidSource) : contactPayload.waId;
+    if (infoWaId) {
+      emit("CONTACT_INFO", {
+        waId: infoWaId,
+        chatId: infoWaId,
+        phone: phoneFromResolved,
+        displayName: contactPayload.displayName,
+        pushname,
+        profilePictureUrl,
+      });
+    }
+  }
+
   emit(eventType, {
     ...base,
-    chatId: phoneFromResolved ? `${phoneFromResolved}@c.us` : realChatId,
+    chatId: phoneFromResolved ? `${phoneFromResolved}@c.us` : canonicalWaId(realChatId) || realChatId,
     from: realFrom,
     to: realTo,
     pushname,
@@ -564,101 +585,10 @@ function scheduleMediaRetry(msg: any, base: any, eventType: WAEventType): void {
 
 async function resolveLidJid(WPP: any, jid: string): Promise<string | undefined> {
   if (!jid || typeof jid !== "string") return undefined;
-  if (!jid.endsWith("@lid")) return jid;
-
-  const digitsOnly = (v: any): string | null => {
-    if (v == null) return null;
-    const s = String(v).split("@")[0].replace(/\D/g, "");
-    return s || null;
-  };
-  const looksLikePhone = (d: string | null) => {
-    if (!d || d.length < 8 || d.length > 15) return false;
-    const lidDigits = digitsOnly(jid);
-    if (lidDigits && d === lidDigits) return false;
-    return true;
-  };
-
-  let phone: string | null = null;
-
-  // 1) ApiContact.getPhoneNumber
-  try {
-    const wid = createWidSafely(WPP, jid);
-    if (wid && WPP.whatsapp?.ApiContact?.getPhoneNumber) {
-      const numObj = await WPP.whatsapp.ApiContact.getPhoneNumber(wid);
-      const d = digitsOnly(numObj?._serialized || numObj?.user || numObj);
-      if (looksLikePhone(d)) phone = d;
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // 2) contact.get — campos phoneNumber / phone / wid
-  if (!phone) {
-    try {
-      const c = await WPP.contact?.get?.(jid);
-      const candidates = [
-        c?.phoneNumber?._serialized,
-        c?.phoneNumber?.user,
-        c?.phoneNumber,
-        c?.phone?._serialized,
-        c?.phone?.user,
-        c?.phone,
-        c?.id?._serialized,
-        c?.wid?._serialized,
-        c?.wid?.user,
-      ];
-      for (const x of candidates) {
-        const d = digitsOnly(x);
-        // Evitar devolver el propio LID numérico como "teléfono"
-        if (looksLikePhone(d) && !String(x || "").includes("@lid")) {
-          phone = d;
-          break;
-        }
-        if (looksLikePhone(d) && typeof x === "string" && x.includes("@c.us")) {
-          phone = d;
-          break;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // 3) LidToPnMap / LidUtils
-  if (!phone) {
-    try {
-      const map =
-        WPP.whatsapp?.LidToPnMap ||
-        WPP.whatsapp?.LidUtils ||
-        WPP.whatsapp?.LidPnMap ||
-        WPP.whatsapp?.SignalDeviceLidPnMap;
-      const fnName = ["findPnForLid", "getPhoneNumber", "getPn", "getPhoneForLid", "lidToPn"].find(
-        (n) => map && typeof map[n] === "function",
-      );
-      if (fnName) {
-        const pn = await (map as any)[fnName](jid);
-        const d = digitsOnly(pn?._serialized || pn?.user || pn);
-        if (looksLikePhone(d)) phone = d;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // 4) queryExists
-  if (!phone) {
-    try {
-      const r = await WPP.contact?.queryExists?.(jid);
-      const widSer = r?.wid?._serialized || r?.wid?.user || r?.wid || r;
-      if (typeof widSer === "string" && widSer.includes("@c.us")) {
-        const d = digitsOnly(widSer);
-        if (looksLikePhone(d)) phone = d;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
+  if (!jid.endsWith("@lid")) return canonicalWaId(jid) || jid;
+  // WPP se lee dentro del resolver; el argumento se conserva para el caller histórico.
+  void WPP;
+  const phone = await resolveLidToPhoneDigits(jid);
   return phone ? `${phone}@c.us` : undefined;
 }
 
@@ -904,10 +834,8 @@ export function destroyEventEngine(): void {
   if (window.__MAPLE_CONTACT_ENRICHER_LOADED) return;
   window.__MAPLE_CONTACT_ENRICHER_LOADED = true;
 
-  const LID_CACHE = new Map();   // waId(lid) -> phone(digits)
   const SENT_CACHE = new Map();  // waId -> timestamp last emit
-  const MIN_PHONE_LEN = 8;
-  const MAX_PHONE_LEN = 15;
+  const COMPLETE_CACHE = new Map(); // waId -> ficha con teléfono (si aplica) y foto
 
   function digitsOnly(v: any): string | null {
     if (v == null) return null;
@@ -915,162 +843,17 @@ export function destroyEventEngine(): void {
     return s || null;
   }
 
-  function looksLikePhone(d: string | null): boolean {
-    return !!d && d.length >= MIN_PHONE_LEN && d.length <= MAX_PHONE_LEN;
-  }
-
-  /** Rechaza el propio LID cuando se intenta usar como teléfono. */
-  function looksLikeRealPhone(d: string | null, lidJid?: string): boolean {
-    if (!looksLikePhone(d)) return false;
-    if (lidJid && lidJid.endsWith("@lid")) {
-      const lidDigits = digitsOnly(lidJid);
-      if (lidDigits && d === lidDigits) return false;
-    }
-    return true;
-  }
-
-  function pickPhoneCandidate(x: any, lid?: string): string | null {
-    if (x == null) return null;
-    const ser = typeof x === 'string' ? x : String(x?._serialized || x?.user || '');
-    if (!ser || ser.includes('@lid') || ser.includes('@g.us')) return null;
-    const d = digitsOnly(ser.includes('@') ? ser : x?.user || ser);
-    return looksLikeRealPhone(d, lid) ? d : null;
-  }
-
   async function resolveLidToPhone(lid: string): Promise<string | null> {
-    if (!lid || typeof lid !== 'string') return null;
-    if (!lid.endsWith('@lid')) {
-      const d = digitsOnly(lid);
-      return looksLikeRealPhone(d) ? d : null;
-    }
-    if (LID_CACHE.has(lid)) return LID_CACHE.get(lid) || null;
-
-    const WPP = (window as any).WPP;
-    if (!WPP) return null;
-    let phone: string | null = null;
-
-    // Estrategia 1: contact.get(lid) y campos PN / peer
-    try {
-      const c = await WPP.contact.get(lid);
-      const candidates = [
-        c?.phoneNumber, c?.phoneNumber?._serialized, c?.phoneNumber?.user,
-        c?.pnJid, c?.pnUser, c?.peerPhoneNumber, c?.phone,
-        c?.userid, c?.formattedPhone, c?.searchName,
-        c?.id?._serialized, c?.wid?._serialized, c?.wid?.user,
-      ];
-      for (const x of candidates) {
-        phone = pickPhoneCandidate(x, lid);
-        if (phone) break;
-      }
-    } catch(e){}
-
-    // Estrategia 2: chat.contact del modelo Chat
-    if (!phone) {
-      try {
-        const chat = await WPP.chat?.get?.(lid) || await WPP.chat?.find?.(lid);
-        const c = chat?.contact;
-        const candidates = [
-          c?.phoneNumber, c?.pnJid, c?.pnUser, c?.peerPhoneNumber,
-          chat?.peerPhoneNumber, chat?.id?._serialized,
-        ];
-        for (const x of candidates) {
-          phone = pickPhoneCandidate(x, lid);
-          if (phone) break;
-        }
-      } catch(e){}
-    }
-
-    // Estrategia 3: WidFactory + ApiContact.getPhoneNumber
-    if (!phone) {
-      try {
-        const wf = WPP.whatsapp?.WidFactory?.createWid || WPP.whatsapp?.createWid;
-        const Wid = wf ? wf(lid) : null;
-        if (Wid && WPP.whatsapp?.ApiContact?.getPhoneNumber) {
-          const pn = await WPP.whatsapp.ApiContact.getPhoneNumber(Wid);
-          phone = pickPhoneCandidate(pn, lid);
-        }
-      } catch(e){}
-    }
-
-    // Estrategia 4: mapas LID→PN (nombres varían por build de WA)
-    if (!phone) {
-      try {
-        const maps = [
-          WPP.whatsapp?.LidToPnMap,
-          WPP.whatsapp?.LidUtils,
-          WPP.whatsapp?.LidPnMap,
-          WPP.whatsapp?.SignalDeviceLidPnMap,
-          WPP.whatsapp?.Lid1X1MigrationUtils,
-          WPP.contact,
-        ].filter(Boolean);
-        const fnNames = [
-          'findPnForLid', 'getPnForLid', 'getPhoneNumber', 'getPn',
-          'getPhoneForLid', 'lidToPn', 'getDisplayNameOrPnForLid',
-          'getFormattedPhone', 'queryPhone',
-        ];
-        for (const map of maps) {
-          for (const n of fnNames) {
-            if (typeof (map as any)[n] !== 'function') continue;
-            try {
-              const pn = await (map as any)[n](lid);
-              phone = pickPhoneCandidate(pn, lid);
-              if (phone) break;
-            } catch { /* next */ }
-          }
-          if (phone) break;
-        }
-      } catch(e){}
-    }
-
-    // Estrategia 5: queryExists / getPnLidEntry
-    if (!phone) {
-      try {
-        const r = await WPP.contact?.queryExists?.(lid);
-        phone = pickPhoneCandidate(r?.wid || r, lid);
-      } catch(e){}
-    }
-    if (!phone) {
-      try {
-        const entry = await WPP.contact?.getPnLidEntry?.(lid);
-        phone = pickPhoneCandidate(entry?.phoneNumber || entry?.pn || entry, lid);
-      } catch(e){}
-    }
-
-    if (phone) LID_CACHE.set(lid, phone);
-    return phone;
+    return resolveLidToPhoneDigits(lid);
   }
 
   async function getProfilePicUrl(waId: string, contact?: any): Promise<string | null> {
-    const WPP = (window as any).WPP;
-    const tryUrl = (u: any): string | null =>
-      typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null;
-
-    try {
-      const url = await WPP?.contact?.getProfilePictureUrl?.(waId);
-      const ok = tryUrl(url);
-      if (ok) return ok;
-    } catch(e){}
-
-    try {
-      const thumb =
-        contact?.profilePicThumb?.eurl ||
-        contact?.profilePicThumb?.imgFull ||
-        contact?.profilePicThumb?.img ||
-        contact?.profilePicThumbObj?.eurl ||
-        contact?.profilePicThumbObj?.imgFull;
-      const ok = tryUrl(thumb);
-      if (ok) return ok;
-    } catch(e){}
-
-    try {
-      const c = contact || (await WPP?.contact?.get?.(waId).catch(() => null));
-      const thumb =
-        c?.profilePicThumb?.eurl ||
-        c?.profilePicThumb?.imgFull ||
-        c?.profilePicThumb?.img;
-      return tryUrl(thumb);
-    } catch(e){}
-    return null;
+    const phone = waId.endsWith("@lid") ? await resolveLidToPhone(waId) : sanitizePhoneForIngest(waId, waId, { verifiedCus: waId.endsWith("@c.us") });
+    const url = await fetchProfilePictureUrl(
+      [phone ? `${phone}@c.us` : undefined, phone ? `${phone}@s.whatsapp.net` : undefined, waId],
+      contact,
+    );
+    return url || null;
   }
 
   function pickDisplayName(contact: any, chat: any, phone: string | null, cid: string): string | null {
@@ -1122,31 +905,41 @@ export function destroyEventEngine(): void {
       if (!cid || typeof cid !== 'string') return;
       if (cid.endsWith('@g.us')) return;       // skip grupos
 
-      // Throttling: no reemitir el mismo waId en menos de 60 minutos
-      // (salvo force, o si aún no teníamos teléfono y ahora sí)
+      // Ficha completa: no repetir en 1 h. LID sin celular o sin foto: reintentar a los 3 min.
       const last = SENT_CACHE.get(cid) || 0;
-      if (!force && Date.now() - last < 60 * 60 * 1000) return;
+      const complete = COMPLETE_CACHE.get(cid) === true;
+      if (!force && last && Date.now() - last < (complete ? 60 * 60 * 1000 : 3 * 60 * 1000)) return;
 
       let phone: string | null = null;
       if (cid.endsWith('@lid')) {
         phone = await resolveLidToPhone(cid);
       } else if (cid.endsWith('@c.us')) {
-        phone = digitsOnly(cid);
+        phone = sanitizePhoneForIngest(cid, cid, { verifiedCus: true }) || null;
       }
 
       const contact = (chat.contact) || (await (window as any).WPP.contact.get(cid).catch(()=>null));
       const displayName = pickDisplayName(contact, chat, phone, cid);
       const pushname = contact?.pushname || contact?.notifyName || null;
-      const pic = await getProfilePicUrl(cid, contact);
+      const pic = await getProfilePicUrl(phone ? `${phone}@c.us` : cid, contact);
+      // La ficha LID se actualiza por su @lid; el celular va aparte (no como +1…).
+      const waId = cid.endsWith("@lid")
+        ? canonicalWaId(cid)
+        : phone
+          ? `${phone}@c.us`
+          : canonicalWaId(cid);
 
       // Sin nombre ni teléfono ni foto: no ensuciar el CRM
       if (!phone && !displayName && !pic) return;
+      if (!waId) return;
 
+      const incomplete = (cid.endsWith("@lid") && !phone) || !pic;
+      COMPLETE_CACHE.set(cid, !incomplete);
       SENT_CACHE.set(cid, Date.now());
 
       emit('CONTACT_INFO', {
-        waId: cid,
-        phone,
+        waId,
+        chatId: waId,
+        phone: phone || undefined,
         displayName,
         pushname,
         profilePictureUrl: pic,

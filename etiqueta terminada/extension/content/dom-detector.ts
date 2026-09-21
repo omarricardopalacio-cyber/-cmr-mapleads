@@ -6,6 +6,7 @@
 
 import { sendToBackground } from "../bridge/postmessage";
 import { isBase64Thumbnail, isWhatsAppSystemText } from "../shared/message-text";
+import { canonicalWaId, looksLikeLidDigits, sanitizePhoneForIngest } from "../shared/wa-identity";
 
 const SEEN = new Map<string, number>();
 const TTL_MS = 120_000;
@@ -82,8 +83,8 @@ function parseListItemChatId(dataTestId: string): string | null {
   }
   // A veces viene solo el número
   const digits = chatIdMatch.replace(/\D/g, "");
-  if (digits.length >= 8 && digits.length <= 15 && !chatIdMatch.includes("@")) {
-    return `${digits}@c.us`;
+  if (digits.length >= 8 && !chatIdMatch.includes("@")) {
+    return canonicalWaId(digits) || null;
   }
   return null;
 }
@@ -100,9 +101,8 @@ function phoneFromHeaderText(): string | null {
       text.match(/\b(\d{10,15})\b/);
     if (!m?.[1]) return null;
     const digits = m[1].replace(/\D/g, "");
-    if (digits.length < 8 || digits.length > 15) return null;
-    // Evitar timestamps tipo 0814
-    if (digits.length < 10) return null;
+    if (digits.length < 10 || digits.length > 13) return null;
+    if (looksLikeLidDigits(digits)) return null;
     return digits;
   } catch {
     return null;
@@ -164,7 +164,7 @@ function getChatId(): string {
       const src = headerAvatar.getAttribute("src") || "";
       const phoneMatch = src.match(/[?&]u=(\d+)/);
       if (phoneMatch?.[1]) {
-        return `${phoneMatch[1]}@c.us`;
+        return canonicalWaId(phoneMatch[1]) || `${phoneMatch[1]}@c.us`;
       }
     }
 
@@ -301,17 +301,20 @@ function parseMessageNode(node: HTMLElement): any {
     }
   } catch {}
 
-  const phone =
-    headerPhone ||
-    (chatId.endsWith("@c.us") ? chatId.split("@")[0].replace(/\D/g, "") : undefined);
+  const phone = sanitizePhoneForIngest(
+    headerPhone || (String(chatId).endsWith("@c.us") ? chatId : undefined),
+    chatId,
+    { verifiedCus: String(chatId).endsWith("@c.us") || !!headerPhone },
+  );
+  const waId = phone ? `${phone}@c.us` : canonicalWaId(chatId);
 
   return {
     id: dataId,
-    chatId,
+    chatId: waId || chatId,
     phone,
-    contact: phone
+    contact: waId
       ? {
-          waId: `${phone}@c.us`,
+          waId,
           phone,
         }
       : undefined,

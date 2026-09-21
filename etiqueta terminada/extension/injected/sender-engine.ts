@@ -5,6 +5,7 @@
 
 import { getWPP } from "./wpp-bootstrap";
 import { postFromInjected } from "../bridge/postmessage";
+import { canonicalWaId, looksLikeLidDigits, sanitizePhoneForIngest } from "../shared/wa-identity";
 
 interface SendTask {
   taskId: string;
@@ -115,8 +116,10 @@ class SenderEngine {
   private normalizeChatId(chatId: string): string {
     if (!chatId) return chatId;
     if (chatId.includes("@")) return chatId;
-    // Por defecto asumimos @c.us si no tiene sufijo
-    return `${chatId}@c.us`;
+    const digits = chatId.replace(/\D/g, "");
+    // Ids largos / estilo LID no son celulares: no inventar @c.us (+1…).
+    if (looksLikeLidDigits(digits) || digits.length > 13) return `${digits}@lid`;
+    return `${digits || chatId}@c.us`;
   }
 
   private extractVerifiedChatId(queryResult: unknown, fallback: string): string {
@@ -411,15 +414,19 @@ class SenderEngine {
     messageId?: string,
     error?: string
   ): void {
-    const phone = String(task.chatId || "")
-      .split("@")[0]
-      .replace(/\D/g, "");
+    const rawChatId = String(task.chatId || "");
+    const phone = sanitizePhoneForIngest(
+      rawChatId.toLowerCase().endsWith("@lid") ? undefined : rawChatId,
+      rawChatId,
+      { verifiedCus: rawChatId.toLowerCase().endsWith("@c.us") || rawChatId.toLowerCase().endsWith("@s.whatsapp.net") },
+    );
+    const waId = phone ? `${phone}@c.us` : canonicalWaId(rawChatId);
 
     postFromInjected("WA_EVENT", {
       event: status === "sent" ? "MESSAGE_SENT" : status === "failed" ? "MESSAGE_FAILED" : "MESSAGE_ACK",
       payload: {
         taskId: task.taskId,
-        chatId: task.chatId,
+        chatId: waId || rawChatId,
         text: task.caption || task.text,
         fromMe: true,
         direction: "out",
@@ -428,10 +435,10 @@ class SenderEngine {
         waMessageId: messageId,
         error,
         timestamp: Date.now(),
-        contact: phone
+        contact: waId
           ? {
-              waId: phone.length >= 8 ? `${phone}@c.us` : task.chatId,
-              phone: phone.length >= 8 ? phone : undefined,
+              waId,
+              phone,
             }
           : undefined,
         // Incluir media en el payload para que el backend pueda actualizar el mensaje
@@ -447,9 +454,10 @@ class SenderEngine {
 
     // Vincular LID ↔ teléfono cuando WA responde con …@lid en el messageId
     // (necesario para que los mensajes entrantes del mismo chat no se descarten).
-    if (status === "sent" && messageId && phone.length >= 8) {
+    // El CRM fusiona la ficha @lid cuando CONTACT_INFO trae ese waId y el celular real.
+    if (status === "sent" && messageId && phone) {
       const lidMatch = String(messageId).match(/(\d+@lid)/);
-      if (lidMatch?.[1]) {
+      if (lidMatch?.[1] && !lidMatch[1].startsWith(`${phone}@`)) {
         postFromInjected("WA_EVENT", {
           event: "CONTACT_INFO",
           payload: {
