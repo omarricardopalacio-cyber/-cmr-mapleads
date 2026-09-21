@@ -89,6 +89,31 @@ function parseListItemChatId(dataTestId: string): string | null {
   return null;
 }
 
+/** El círculo verde «36» y el avatar del negocio en el drawer no son la foto del peer. */
+function isUnreadBadge(el: Element | null): boolean {
+  if (!el) return false;
+  const badge = el.closest(
+    '[data-testid="icon-unread-count"], [data-testid*="unread"], [aria-label*="unread" i], [aria-label*="no leído" i], [aria-label*="no leidos" i], [aria-label*="mensajes no" i]',
+  );
+  if (badge) return true;
+  const label = (el.getAttribute("aria-label") || el.textContent || "").trim();
+  return /^\d{1,4}$/.test(label);
+}
+
+function isSelfPaneNode(el: Element): boolean {
+  return !!el.closest('#side header, [data-testid="drawer-left"] header, header [data-testid="menu-bar-menu"]');
+}
+
+function peerHeaderAvatar(): HTMLImageElement | null {
+  const imgs = document.querySelectorAll('#main header img[src*="u="]');
+  for (const img of imgs) {
+    if (!(img instanceof HTMLImageElement)) continue;
+    if (isUnreadBadge(img) || isSelfPaneNode(img)) continue;
+    return img;
+  }
+  return null;
+}
+
 /** Extrae teléfono visible del header del chat (+57 322 …). */
 function phoneFromHeaderText(): string | null {
   try {
@@ -156,10 +181,8 @@ function getChatId(): string {
       }
     }
 
-    // === MÉTODO 2: Parsing de la URL de Avatar en el Header Activo ===
-    const headerAvatar = document.querySelector(
-      '#main header img[src*="u="], header img[src*="u="]'
-    );
+    // === MÉTODO 2: Avatar del chat abierto (#main), nunca el del panel «yo» ni un badge ===
+    const headerAvatar = peerHeaderAvatar();
     if (headerAvatar) {
       const src = headerAvatar.getAttribute("src") || "";
       const phoneMatch = src.match(/[?&]u=(\d+)/);

@@ -59,7 +59,7 @@ En `chrome://extensions` → modo desarrollador → Cargar descomprimida → ele
 
 ## LID y foto de perfil
 
-WhatsApp a veces identifica un chat como `…@lid` (no es un celular). Antes de ingerir, la extensión pide el número real (`getPnLidEntry` / caché LID↔PN). Si lo resuelve, manda el celular en `phone`. Si no, manda `wa_id` terminado en `@lid` y deja `phone` vacío: no se inventa un `+1…` con los dígitos del LID. Al abrir o enriquecer el chat también se adjunta `profilePictureUrl` cuando WhatsApp Web la tiene.
+WhatsApp a veces identifica un chat como `…@lid` (no es un celular). Antes de ingerir, la extensión pide el número real (`getPnLidEntry` / caché LID↔PN). Si lo resuelve, manda el celular en `phone`. Si no, manda `wa_id` terminado en `@lid` y deja `phone` vacío: no se inventa un `+1…` con los dígitos del LID. Al abrir o enriquecer el chat se adjunta `profilePictureUrl` solo si es la foto de ese peer. La foto del negocio / «yo» (mismo archivo del CDN, aunque cambie la firma) y los badges de no leídos no se envían.
 
 ## Configuración
 

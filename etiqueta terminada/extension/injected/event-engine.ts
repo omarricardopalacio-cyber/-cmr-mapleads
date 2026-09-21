@@ -12,6 +12,7 @@ import { canonicalWaId, sanitizePhoneForIngest } from "../shared/wa-identity";
 import {
   applyIdentityToMessage,
   fetchProfilePictureUrl,
+  ownAvatarPayload,
   resolveContactCard,
   resolveLidToPhoneDigits,
 } from "./lid-resolver";
@@ -152,6 +153,7 @@ function registerActiveChat(WPP: NonNullable<typeof window.WPP>): void {
             const lidKey = chatId.endsWith("@lid") ? canonicalWaId(chatId) : "";
             emit("CONTACT_INFO", {
               ...card,
+              ...ownAvatarPayload(),
               waId: lidKey || card.waId,
               chatId: lidKey || card.chatId,
             });
@@ -516,6 +518,7 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
     const infoWaId = typeof lidSource === "string" ? canonicalWaId(lidSource) : contactPayload.waId;
     if (infoWaId) {
       emit("CONTACT_INFO", {
+        ...ownAvatarPayload(),
         waId: infoWaId,
         chatId: infoWaId,
         phone: phoneFromResolved,
@@ -528,6 +531,7 @@ async function enrichMessageInBackground(msg: any, base: any, eventType: WAEvent
 
   emit(eventType, {
     ...base,
+    ...ownAvatarPayload(),
     chatId: phoneFromResolved ? `${phoneFromResolved}@c.us` : canonicalWaId(realChatId) || realChatId,
     from: realFrom,
     to: realTo,
@@ -937,6 +941,7 @@ export function destroyEventEngine(): void {
       SENT_CACHE.set(cid, Date.now());
 
       emit('CONTACT_INFO', {
+        ...ownAvatarPayload(),
         waId,
         chatId: waId,
         phone: phone || undefined,

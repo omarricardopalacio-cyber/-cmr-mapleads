@@ -118,6 +118,63 @@ export function httpProfileUrl(value: unknown): string | undefined {
   return url;
 }
 
+/**
+ * Id estable del archivo en el CDN de WhatsApp (sin query firmada).
+ * Dos URLs con el mismo archivo son la misma foto aunque cambien oh/oe.
+ */
+export function profilePictureMediaId(value: unknown): string | undefined {
+  const http = httpProfileUrl(value);
+  if (!http) return undefined;
+  let file = "";
+  try {
+    const path = new URL(http).pathname.replace(/\/+$/, "");
+    file = path.split("/").filter(Boolean).pop() || "";
+  } catch {
+    return undefined;
+  }
+  const bare = file.replace(/\.[a-z0-9]{2,5}$/i, "").toLowerCase();
+  if (bare.length < 8) return undefined;
+  if (/^\d{1,4}$/.test(bare)) return undefined;
+  return bare;
+}
+
+export function sameProfilePicture(a: unknown, b: unknown): boolean {
+  const idA = profilePictureMediaId(a);
+  const idB = profilePictureMediaId(b);
+  return !!idA && idA === idB;
+}
+
+/** Badges de no leídos («36») e iconos de la UI no son fotos de perfil. */
+export function isUnreadOrIconUrl(value: unknown): boolean {
+  const http = httpProfileUrl(value);
+  if (!http) return true;
+  const lower = http.toLowerCase();
+  if (/\b(unread|badge|status-unread|icon-unread)\b/.test(lower)) return true;
+  if (/\.svg(\?|$)/.test(lower)) return true;
+  if (/static\.whatsapp\.net\/.*(icon|badge|emoji)/.test(lower)) return true;
+  let file = "";
+  try {
+    file = new URL(http).pathname.split("/").filter(Boolean).pop() || "";
+  } catch {
+    return true;
+  }
+  const bare = file.replace(/\.[a-z0-9]{2,5}$/i, "");
+  return /^\d{1,4}$/.test(bare);
+}
+
+/**
+ * Foto usable para un contacto que no es la sesión.
+ * Descarta la del negocio / «yo» (misma URL o mismo id de archivo) y los badges.
+ */
+export function peerProfilePictureUrl(value: unknown, ownUrls?: Array<unknown>): string | undefined {
+  const http = httpProfileUrl(value);
+  if (!http || isUnreadOrIconUrl(http)) return undefined;
+  for (const own of ownUrls || []) {
+    if (sameProfilePicture(http, own)) return undefined;
+  }
+  return http;
+}
+
 export type IngestContact = {
   waId: string;
   phone?: string;
@@ -142,6 +199,8 @@ export function buildIngestContact(opts: {
   displayName?: unknown;
   profilePictureUrl?: unknown;
   extraProfilePictureUrl?: unknown;
+  /** URLs de la foto de la sesión (negocio / yo). No se copian a un peer. */
+  ownProfilePictureUrls?: Array<unknown>;
   /**
    * CONTACT_INFO: conservar el `@lid` como wa_id y mandar el celular en `phone`,
    * para que el CRM actualice la ficha LID en lugar de crear un +1….
@@ -177,8 +236,10 @@ export function buildIngestContact(opts: {
         : canonicalWaId(seed || rawCounterpart || rawWa);
   if (!waId) return {};
 
+  const ownPics = opts.ownProfilePictureUrls || [];
   const profilePictureUrl =
-    httpProfileUrl(opts.profilePictureUrl) || httpProfileUrl(opts.extraProfilePictureUrl);
+    peerProfilePictureUrl(opts.profilePictureUrl, ownPics) ||
+    peerProfilePictureUrl(opts.extraProfilePictureUrl, ownPics);
   const displayName =
     typeof opts.displayName === "string" && opts.displayName.trim() ? opts.displayName.trim() : undefined;
 

@@ -5,7 +5,7 @@
 
 import { BackgroundBridge } from "../bridge/bridge";
 import { API_ENDPOINTS, CONSTANTS, canonicalizeBackendUrl } from "../shared/contracts";
-import { buildIngestContact } from "../shared/wa-identity";
+import { buildIngestContact, httpProfileUrl, sameProfilePicture } from "../shared/wa-identity";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
   saveSession,
@@ -23,6 +23,23 @@ import {
 let sessionToken: string | null = null;
 let backendUrl: string | null = null;
 let activeSessions: Map<string, SessionInfo> = new Map();
+/** Fotos de la sesión (negocio / yo). No se adjuntan a contactos peer. */
+let ownProfilePictureUrls: string[] = [];
+
+function rememberOwnAvatars(values: unknown[]): void {
+  let changed = false;
+  for (const value of values) {
+    const url = httpProfileUrl(value);
+    if (!url) continue;
+    if (ownProfilePictureUrls.some((known) => sameProfilePicture(known, url) || known === url)) continue;
+    ownProfilePictureUrls.push(url);
+    changed = true;
+  }
+  if (ownProfilePictureUrls.length > 8) ownProfilePictureUrls = ownProfilePictureUrls.slice(-8);
+  if (changed) {
+    void chrome.storage.local.set({ meProfilePictureUrls: ownProfilePictureUrls });
+  }
+}
 
 // Inicializar bridge
 const bridge = new BackgroundBridge();
@@ -58,6 +75,10 @@ async function loadConfig(): Promise<void> {
   const canonical = canonicalizeBackendUrl(cfg.backendUrl);
   backendUrl = canonical;
   sessionToken = cfg.sessionToken || null;
+  const avatars = await chrome.storage.local.get("meProfilePictureUrls");
+  if (Array.isArray(avatars.meProfilePictureUrls)) {
+    rememberOwnAvatars(avatars.meProfilePictureUrls);
+  }
   if (canonical && canonical !== storedUrl) {
     await chrome.storage.local.set({ backendUrl: canonical });
   }
@@ -555,6 +576,14 @@ async function flushIngestQueue(): Promise<void> {
         (flat.pushname as string | undefined) ||
         (flat.notifyName as string | undefined);
 
+      const eventOwnAvatars = [
+        ...ownProfilePictureUrls,
+        flat.meProfilePictureUrl,
+        ...(Array.isArray(flat.meProfilePictureUrls) ? flat.meProfilePictureUrls : []),
+        activeSession?.profilePicture,
+      ];
+      rememberOwnAvatars(eventOwnAvatars);
+
       const identity = buildIngestContact({
         counterpartJid,
         contactWaId: existingContact?.waId || flat.chatId || flat.waId,
@@ -562,6 +591,7 @@ async function flushIngestQueue(): Promise<void> {
         displayName,
         profilePictureUrl: existingContact?.profilePictureUrl,
         extraProfilePictureUrl: flat.profilePictureUrl,
+        ownProfilePictureUrls: ownProfilePictureUrls,
         keepLidKey: e.type === "CONTACT_INFO" || inferredType === "CONTACT_INFO",
       });
       const chatId = identity.chatId;
@@ -932,13 +962,19 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
 
   // Si es SESSION_READY, registrar sesión activa
   if (event.type === "SESSION_READY" && event.payload) {
+    const ownPics = [
+      event.payload.profilePicture,
+      event.payload.meProfilePictureUrl,
+      ...(Array.isArray(event.payload.meProfilePictureUrls) ? event.payload.meProfilePictureUrls : []),
+    ];
+    rememberOwnAvatars(ownPics);
     const session: SessionInfo = {
       sessionId: event.payload.sessionId,
       browserId: event.payload.browserId,
       deviceId: event.payload.deviceId,
       phoneNumber: event.payload.phoneNumber,
       profileName: event.payload.profileName,
-      profilePicture: event.payload.profilePicture,
+      profilePicture: ownPics.map((url) => httpProfileUrl(url)).find(Boolean) || event.payload.profilePicture,
       isReady: true,
       connectedAt: event.payload.connectedAt || Date.now(),
       lastHeartbeat: Date.now(),
