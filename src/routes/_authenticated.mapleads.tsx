@@ -26,6 +26,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { useExtensionBackendUrl } from "@/lib/extension-backend";
 import {
   Download,
   Edit,
@@ -84,8 +85,7 @@ function MapleadsContent() {
     queryFn: () => tokenFn({}),
   });
 
-  const backendUrl =
-    typeof window !== "undefined" ? window.location.origin : "";
+  const backendUrl = useExtensionBackendUrl();
 
   const handleDownloadCsv = () => {
     const rows = data?.items ?? [];

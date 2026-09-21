@@ -4,7 +4,7 @@
 // ============================================================
 
 import { BackgroundBridge } from "../bridge/bridge";
-import { API_ENDPOINTS, CONSTANTS, normalizeBackendUrl } from "../shared/contracts";
+import { API_ENDPOINTS, CONSTANTS, canonicalizeBackendUrl } from "../shared/contracts";
 import { buildIngestContact } from "../shared/wa-identity";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
@@ -54,13 +54,13 @@ chrome.runtime.onConnect.addListener((port) => {
 
 async function loadConfig(): Promise<void> {
   const cfg = await chrome.storage.local.get(["backendUrl", "sessionToken"]);
-  const normalized = normalizeBackendUrl(cfg.backendUrl);
-  const stored = typeof cfg.backendUrl === "string" ? cfg.backendUrl.trim().replace(/\/$/, "") : "";
-  if (normalized !== stored) {
-    await chrome.storage.local.set({ backendUrl: normalized });
-  }
-  backendUrl = normalized;
+  const storedUrl = typeof cfg.backendUrl === "string" ? cfg.backendUrl.trim().replace(/\/$/, "") : "";
+  const canonical = canonicalizeBackendUrl(cfg.backendUrl);
+  backendUrl = canonical;
   sessionToken = cfg.sessionToken || null;
+  if (canonical && canonical !== storedUrl) {
+    await chrome.storage.local.set({ backendUrl: canonical });
+  }
   console.log("[ServiceWorker] Config cargada:", { backendUrl, hasToken: !!sessionToken });
   await restoreSession();
 }

@@ -37,22 +37,6 @@ export const CONSTANTS = {
   BRIDGE_RESPONSE_CHANNEL: "WA_RESPONSE",
 } as const;
 
-/** CRM de producción. No sustituir por hosts viejos (cmrmaleads / lovable). */
-export const PRODUCTION_BACKEND_URL = "https://creadorpaginasmapleads.netlify.app/crm";
-
-export const LEGACY_BACKEND_URLS = [
-  "https://cmrmaleads.netlify.app",
-  "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app",
-] as const;
-
-export function normalizeBackendUrl(url: unknown): string {
-  const clean = typeof url === "string" ? url.trim().replace(/\/$/, "") : "";
-  if (!clean || (LEGACY_BACKEND_URLS as readonly string[]).includes(clean)) {
-    return PRODUCTION_BACKEND_URL;
-  }
-  return clean;
-}
-
 export const API_ENDPOINTS = {
   GET_COMMANDS: "/api/public/engine/commands",
   POST_INGEST: "/api/public/engine/ingest",
@@ -60,6 +44,29 @@ export const API_ENDPOINTS = {
   POST_UPLOAD_MEDIA: "/api/public/engine/upload-media",
   POST_HEARTBEAT: "/api/public/engine/heartbeat",
 } as const;
+
+/**
+ * CRM is mounted at /crm on the page builder. The extension appends
+ * API_ENDPOINTS to this base, so the prefix must be included.
+ * https://creadorpaginasmapleads.netlify.app/api/* is the page builder and 404s.
+ */
+export const PRODUCTION_BACKEND_URL = "https://creadorpaginasmapleads.netlify.app/crm";
+
+const LEGACY_BACKEND_URLS = new Set([
+  "https://cmrmaleads.netlify.app",
+  "https://cmrmapleads.netlify.app",
+  "https://creadorpaginasmapleads.netlify.app",
+  "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app",
+  "https://project-289483ef-62cc-4bc6-91f6-2ef8e90b8d34.dev.lovable.app",
+]);
+
+/** Rewrite retired hosts to the live CRM base. Empty stays unset. Custom URLs are kept. */
+export function canonicalizeBackendUrl(raw: unknown): string | null {
+  const clean = typeof raw === "string" ? raw.trim().replace(/\/$/, "") : "";
+  if (!clean) return null;
+  if (LEGACY_BACKEND_URLS.has(clean)) return PRODUCTION_BACKEND_URL;
+  return clean;
+}
 
 export const HEADERS = {
   CONTENT_TYPE: "application/json",

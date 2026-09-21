@@ -14,7 +14,7 @@ function storePublicOrigin(): string {
     process.env.SITE_URL ||
     "";
   if (fromEnv.trim()) return fromEnv.replace(/\/$/, "");
-  return "https://cmrmaleads.netlify.app";
+  return "https://creadorpaginasmapleads.netlify.app/crm";
 }
 
 export const Route = createFileRoute("/store/$token")({
