@@ -4,6 +4,8 @@
 // ============================================================
 
 import { getWPP } from "./wpp-bootstrap";
+import { canonicalWaId } from "../shared/wa-identity";
+import { fetchProfilePictureUrl, resolveContactCard, resolveLidToPhoneDigits } from "./lid-resolver";
 
 export async function getContactList(): Promise<any[]> {
   const WPP = getWPP();
@@ -34,73 +36,33 @@ export async function resolveContactForImport(chatId: string): Promise<{
   const WPP = getWPP();
   if (!WPP || !chatId) return null;
 
+  try {
+    const card = await resolveContactCard(chatId);
+    if (card) return card;
+  } catch {
+    /* seguir con fallback mínimo */
+  }
+
   let phone: string | undefined;
   try {
-    const resolveLid = (window as any).__MAPLE_RESOLVE_LID as
-      | ((id: string) => Promise<string | null>)
-      | undefined;
-    if (chatId.endsWith("@lid") && typeof resolveLid === "function") {
-      phone = (await resolveLid(chatId)) || undefined;
-    } else if (chatId.endsWith("@c.us")) {
-      const d = chatId.split("@")[0].replace(/\D/g, "");
-      if (d.length >= 8 && d.length <= 15) phone = d;
+    if (chatId.endsWith("@lid")) {
+      phone = (await resolveLidToPhoneDigits(chatId)) || undefined;
     }
   } catch {
     /* ignore */
   }
 
-  let contact: any = null;
-  let chat: any = null;
-  try {
-    contact = await WPP.contact.get(chatId);
-  } catch {
-    /* ignore */
-  }
-  try {
-    chat = typeof (WPP.chat as any).get === "function"
-      ? await (WPP.chat as any).get(chatId)
-      : await WPP.chat.find(chatId);
-  } catch {
-    /* ignore */
-  }
-
-  const nameCandidates = [
-    contact?.name,
-    contact?.verifiedName,
-    contact?.displayName,
-    contact?.pushname,
-    contact?.formattedName,
-    chat?.name,
-    chat?.formattedTitle,
-  ];
-  let displayName: string | undefined;
-  for (const raw of nameCandidates) {
-    if (typeof raw !== "string") continue;
-    const n = raw.trim();
-    if (!n || /^cliente\s*\d+/i.test(n) || n.toLowerCase() === "unknown") continue;
-    displayName = n;
-    break;
-  }
-
+  const waId = phone ? `${phone}@c.us` : canonicalWaId(chatId) || chatId;
   let profilePictureUrl: string | undefined;
   try {
-    const url = await WPP.contact.getProfilePictureUrl(chatId);
-    if (typeof url === "string" && url.startsWith("http")) profilePictureUrl = url;
+    profilePictureUrl = await fetchProfilePictureUrl([waId, chatId]);
   } catch {
     /* ignore */
-  }
-  if (!profilePictureUrl) {
-    const thumb =
-      contact?.profilePicThumb?.eurl ||
-      contact?.profilePicThumb?.imgFull ||
-      contact?.profilePicThumb?.img;
-    if (typeof thumb === "string" && thumb.startsWith("http")) profilePictureUrl = thumb;
   }
 
   return {
-    waId: chatId,
+    waId,
     phone,
-    displayName: displayName || (phone ? `+${phone}` : undefined),
     profilePictureUrl,
   };
 }
@@ -110,7 +72,7 @@ export async function getProfilePictureUrl(contactId: string): Promise<string | 
   if (!WPP) throw new Error("WPP no disponible");
 
   try {
-    return await WPP.contact.getProfilePictureUrl(contactId);
+    return (await fetchProfilePictureUrl([contactId])) || null;
   } catch {
     return null;
   }

@@ -4,6 +4,12 @@
 // ============================================================
 
 import { API_ENDPOINTS } from "../shared/contracts";
+import {
+  canonicalWaId,
+  httpProfileUrl,
+  looksLikeLidDigits,
+  sanitizePhoneForIngest,
+} from "../shared/wa-identity";
 
 export type HistoryImportStatus = {
   running: boolean;
@@ -86,11 +92,11 @@ function phoneFromChat(chat: any): string | undefined {
 
   if (chat?.server === "c.us" && chat?.user) {
     const d = String(chat.user).replace(/\D/g, "");
-    if (d.length >= 8 && d.length <= 15 && d !== lidDigits) return d;
+    if (d.length >= 8 && d.length <= 13 && d !== lidDigits && !looksLikeLidDigits(d, chatId)) return d;
   }
   if (chatId.endsWith("@c.us")) {
     const d = chatId.split("@")[0].replace(/\D/g, "");
-    if (d.length >= 8 && d.length <= 15) return d;
+    if (d.length >= 8 && d.length <= 13 && !looksLikeLidDigits(d)) return d;
   }
   // @lid: el "user" NO es teléfono
   if (chatId.endsWith("@lid")) return undefined;
@@ -99,7 +105,7 @@ function phoneFromChat(chat: any): string | undefined {
   const m = name.match(/\+?\s*(\d{1,3}(?:[\s-]?\d{2,4}){2,5})\b/) || name.match(/\b(\d{10,15})\b/);
   if (m?.[1]) {
     const d = m[1].replace(/\D/g, "");
-    if (d.length >= 8 && d.length <= 15 && d !== lidDigits) return d;
+    if (d.length >= 8 && d.length <= 13 && d !== lidDigits && !looksLikeLidDigits(d, chatId)) return d;
   }
   return undefined;
 }
@@ -185,10 +191,11 @@ async function postImportViaIngest(
       sentAt: m.sentAt,
       historical: true,
       historicalClassify: isLast,
-      contact: {
-        waId: contact.waId || chatId,
+        contact: {
+        waId: contact.waId || canonicalWaId(chatId) || chatId,
         displayName: contact.displayName || undefined,
-        phone: contact.phone || undefined,
+        phone: sanitizePhoneForIngest(contact.phone, contact.waId || chatId),
+        profilePictureUrl: httpProfileUrl(contact.profilePictureUrl),
       },
       labels,
     };
@@ -310,23 +317,33 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
           if (msgsRaw?.error) throw new Error(String(msgsRaw.error));
           const msgs = Array.isArray(msgsRaw) ? msgsRaw : [];
 
-          let phone = phoneFromChat(chat);
+          let phone = sanitizePhoneForIngest(phoneFromChat(chat), chatId);
           let displayName = chat.name || undefined;
           let profilePictureUrl: string | undefined;
 
-          // Resolver LID → celular + nombre + foto (enricher inyectado)
+          // Resolver LID → celular + nombre + foto antes de importar.
           try {
             const resolved = await opts.sendWaCommand("RESOLVE_CONTACT", { chatId });
             if (resolved && !resolved.error) {
-              if (resolved.phone) phone = String(resolved.phone).replace(/\D/g, "") || phone;
+              const resolvedPhone = sanitizePhoneForIngest(resolved.phone, chatId, {
+                verifiedCus: true,
+              });
+              if (resolvedPhone) phone = resolvedPhone;
               if (resolved.displayName) displayName = String(resolved.displayName);
-              if (resolved.profilePictureUrl) {
-                profilePictureUrl = String(resolved.profilePictureUrl);
-              }
+              const pic = httpProfileUrl(resolved.profilePictureUrl);
+              if (pic) profilePictureUrl = pic;
             }
           } catch {
             /* seguir con datos slim del chat */
           }
+
+          // Chat @lid: la clave sigue siendo el LID; el celular va en phone.
+          // Nunca promover los dígitos del LID a un @c.us falso.
+          const waId = chatId.endsWith("@lid")
+            ? canonicalWaId(chatId)
+            : phone
+              ? `${phone}@c.us`
+              : canonicalWaId(chatId) || chatId;
 
           const cleanMsgs = msgs.slice(0, 200).map((m: any) => {
             const idRaw = m.messageId || m.id;
@@ -348,17 +365,12 @@ export async function startHistoryImport(opts: ImportOptions): Promise<HistoryIm
           });
 
           const payload = {
-            chatId: chatId.slice(0, 200),
+            chatId: String(waId || chatId).slice(0, 200),
             contact: {
-              waId: chatId.slice(0, 200),
+              waId: String(waId || chatId).slice(0, 200),
               displayName: displayName ? String(displayName).slice(0, 255) : undefined,
               phone: phone || undefined,
-              profilePictureUrl:
-                profilePictureUrl &&
-                profilePictureUrl.startsWith("http") &&
-                profilePictureUrl.length <= 2000
-                  ? profilePictureUrl
-                  : undefined,
+              profilePictureUrl: profilePictureUrl,
             },
             labels: Array.isArray(chat.labels)
               ? chat.labels.map((l: any) => String(l).slice(0, 80)).filter(Boolean).slice(0, 10)

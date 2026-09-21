@@ -4,7 +4,8 @@
 // ============================================================
 
 import { BackgroundBridge } from "../bridge/bridge";
-import { API_ENDPOINTS, CONSTANTS } from "../shared/contracts";
+import { API_ENDPOINTS, CONSTANTS, normalizeBackendUrl } from "../shared/contracts";
+import { buildIngestContact } from "../shared/wa-identity";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
   saveSession,
@@ -53,7 +54,12 @@ chrome.runtime.onConnect.addListener((port) => {
 
 async function loadConfig(): Promise<void> {
   const cfg = await chrome.storage.local.get(["backendUrl", "sessionToken"]);
-  backendUrl = (cfg.backendUrl || "").replace(/\/$/, "") || null;
+  const normalized = normalizeBackendUrl(cfg.backendUrl);
+  const stored = typeof cfg.backendUrl === "string" ? cfg.backendUrl.trim().replace(/\/$/, "") : "";
+  if (normalized !== stored) {
+    await chrome.storage.local.set({ backendUrl: normalized });
+  }
+  backendUrl = normalized;
   sessionToken = cfg.sessionToken || null;
   console.log("[ServiceWorker] Config cargada:", { backendUrl, hasToken: !!sessionToken });
   await restoreSession();
@@ -505,13 +511,6 @@ async function flushIngestQueue(): Promise<void> {
     }
   }
 
-  function phoneDigitsFromJid(jid?: unknown): string | undefined {
-    if (typeof jid !== "string" || !jid) return undefined;
-    if (jid.endsWith("@lid") || jid.endsWith("@g.us")) return undefined;
-    const d = jid.split("@")[0].replace(/\D/g, "");
-    return d.length >= 8 && d.length <= 15 ? d : undefined;
-  }
-
   let activeSession = activeSessions.values().next().value;
   if (!activeSession) {
     const restored = await getActiveSession();
@@ -549,17 +548,6 @@ async function flushIngestQueue(): Promise<void> {
           : fromMe === false
             ? flat.from || flat.chatId
             : flat.chatId;
-      const phone =
-        (typeof existingContact?.phone === "string" && existingContact.phone.replace(/\D/g, "")) ||
-        phoneDigitsFromJid(counterpartJid) ||
-        phoneDigitsFromJid(existingContact?.waId) ||
-        undefined;
-
-      let chatId = (counterpartJid || flat.chatId) as string | undefined;
-      // Preferir @c.us cuando ya tenemos teléfono (evita que ingest descarte @lid)
-      if (phone && (!chatId || String(chatId).endsWith("@lid"))) {
-        chatId = `${phone}@c.us`;
-      }
 
       const displayName =
         (existingContact?.displayName as string | undefined) ||
@@ -567,14 +555,18 @@ async function flushIngestQueue(): Promise<void> {
         (flat.pushname as string | undefined) ||
         (flat.notifyName as string | undefined);
 
-      const contact = {
-        waId: phone ? `${phone}@c.us` : String(chatId || existingContact?.waId || ""),
-        displayName: displayName || undefined,
-        phone: phone || undefined,
-        profilePictureUrl:
-          (existingContact?.profilePictureUrl as string | undefined) ||
-          (flat.profilePictureUrl as string | undefined),
-      };
+      const identity = buildIngestContact({
+        counterpartJid,
+        contactWaId: existingContact?.waId || flat.chatId || flat.waId,
+        contactPhone: existingContact?.phone ?? flat.phone,
+        displayName,
+        profilePictureUrl: existingContact?.profilePictureUrl,
+        extraProfilePictureUrl: flat.profilePictureUrl,
+        keepLidKey: e.type === "CONTACT_INFO" || inferredType === "CONTACT_INFO",
+      });
+      const chatId = identity.chatId;
+      const phone = identity.phone;
+      const contact = identity.contact;
 
       return {
         id: `${e.id}`,
@@ -586,7 +578,7 @@ async function flushIngestQueue(): Promise<void> {
           (typeof fromMe === "boolean" ? (fromMe ? "out" : "in") : undefined),
         text: (flat.text ?? flat.body) as string | undefined,
         media: slimMediaForIngest(flat.media as Record<string, unknown> | undefined),
-        contact: contact.waId ? contact : undefined,
+        contact: contact?.waId ? contact : undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
         mediaRecovery: flat.mediaRecovery as boolean | undefined,
         payload: {
@@ -600,10 +592,10 @@ async function flushIngestQueue(): Promise<void> {
           pushname: flat.pushname as string | undefined,
           notifyName: flat.notifyName as string | undefined,
           displayName,
-          profilePictureUrl: flat.profilePictureUrl as string | undefined,
+          profilePictureUrl: contact?.profilePictureUrl,
           messageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
           type: flat.type as string | undefined,
-          waId: contact.waId,
+          waId: contact?.waId,
         },
         timestamp: e.timestamp,
       };

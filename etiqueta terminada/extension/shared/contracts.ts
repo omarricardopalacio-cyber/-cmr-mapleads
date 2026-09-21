@@ -37,6 +37,22 @@ export const CONSTANTS = {
   BRIDGE_RESPONSE_CHANNEL: "WA_RESPONSE",
 } as const;
 
+/** CRM de producción. No sustituir por hosts viejos (cmrmaleads / lovable). */
+export const PRODUCTION_BACKEND_URL = "https://creadorpaginasmapleads.netlify.app/crm";
+
+export const LEGACY_BACKEND_URLS = [
+  "https://cmrmaleads.netlify.app",
+  "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app",
+] as const;
+
+export function normalizeBackendUrl(url: unknown): string {
+  const clean = typeof url === "string" ? url.trim().replace(/\/$/, "") : "";
+  if (!clean || (LEGACY_BACKEND_URLS as readonly string[]).includes(clean)) {
+    return PRODUCTION_BACKEND_URL;
+  }
+  return clean;
+}
+
 export const API_ENDPOINTS = {
   GET_COMMANDS: "/api/public/engine/commands",
   POST_INGEST: "/api/public/engine/ingest",

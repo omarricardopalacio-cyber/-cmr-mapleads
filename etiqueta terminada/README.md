@@ -36,19 +36,30 @@ npm install
 npm run dev
 ```
 
-### Build de producción
+### Build de producción (extensión descomprimida)
+
+La carpeta que se carga en Chrome es `etiqueta terminada/extension/dist`.
 
 ```bash
-cd extension
+cd "etiqueta terminada/extension"
+npm install
 npm run build
 ```
+
+`npm run build` ejecuta `tsc` y después `node build.js` (descarga WA-JS y empaqueta popup, service worker, content e injected). También se puede lanzar solo el empaquetado con `node build.js` desde esa misma carpeta, después de que `tsc` haya pasado.
+
+En `chrome://extensions` → modo desarrollador → Cargar descomprimida → elegir `etiqueta terminada/extension/dist`. Si la extensión ya estaba cargada, pulsar Recargar.
 
 ### Cargar en Chrome
 
 1. Abrir `chrome://extensions/`
 2. Activar "Modo desarrollador"
 3. Click en "Cargar descomprimida"
-4. Seleccionar la carpeta `extension/dist/`
+4. Seleccionar la carpeta `etiqueta terminada/extension/dist/`
+
+## LID y foto de perfil
+
+WhatsApp a veces identifica un chat como `…@lid` (no es un celular). Antes de ingerir, la extensión pide el número real (`getPnLidEntry` / caché LID↔PN). Si lo resuelve, manda el celular en `phone`. Si no, manda `wa_id` terminado en `@lid` y deja `phone` vacío: no se inventa un `+1…` con los dígitos del LID. Al abrir o enriquecer el chat también se adjunta `profilePictureUrl` cuando WhatsApp Web la tiene.
 
 ## Configuración
 
@@ -56,7 +67,7 @@ npm run build
 2. Click en el icono de la extensión
 3. Ir a la tab "Config"
 4. Ingresar:
-   - **Backend URL**: URL de tu CRM (`https://api.tu-crm.com`)
+   - **Backend URL**: por defecto `https://creadorpaginasmapleads.netlify.app/crm`
    - **Session Token**: Token de autenticación
 5. Guardar
 
