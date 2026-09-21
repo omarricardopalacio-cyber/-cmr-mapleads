@@ -6,6 +6,7 @@
 import { BackgroundBridge } from "../bridge/bridge";
 import { API_ENDPOINTS, CONSTANTS, canonicalizeBackendUrl } from "../shared/contracts";
 import { buildIngestContact, httpProfileUrl, sameProfilePicture } from "../shared/wa-identity";
+import { linkIsUp, presentConnection, shouldMarkLinkDown } from "../shared/link-status";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
   saveSession,
@@ -25,6 +26,13 @@ let backendUrl: string | null = null;
 let activeSessions: Map<string, SessionInfo> = new Map();
 /** Fotos de la sesión (negocio / yo). No se adjuntan a contactos peer. */
 let ownProfilePictureUrls: string[] = [];
+/** Enlace con el backend. Un 504 suelto no pasa wsStatus a disconnected. */
+let linkFailStreak = 0;
+let lastLinkOkAt = 0;
+let lastEngineOkAt = 0;
+let lastSessionOkAt = 0;
+let lastBridgeOkAt = 0;
+let lastContentHealAt = 0;
 
 function rememberOwnAvatars(values: unknown[]): void {
   let changed = false;
@@ -70,11 +78,29 @@ chrome.runtime.onConnect.addListener((port) => {
 // ============================================================
 
 async function loadConfig(): Promise<void> {
-  const cfg = await chrome.storage.local.get(["backendUrl", "sessionToken"]);
+  const cfg = await chrome.storage.local.get([
+    "backendUrl",
+    "sessionToken",
+    "lastLinkOkAt",
+    "linkFailStreak",
+    "lastEngineOkAt",
+    "lastSessionOkAt",
+    "lastBridgeOkAt",
+    "wsStatus",
+    "lastPoll",
+  ]);
   const storedUrl = typeof cfg.backendUrl === "string" ? cfg.backendUrl.trim().replace(/\/$/, "") : "";
   const canonical = canonicalizeBackendUrl(cfg.backendUrl);
   backendUrl = canonical;
   sessionToken = cfg.sessionToken || null;
+  lastLinkOkAt = Number(cfg.lastLinkOkAt) || 0;
+  if (!lastLinkOkAt && cfg.wsStatus === "connected") {
+    lastLinkOkAt = Number(cfg.lastPoll) || Date.now();
+  }
+  linkFailStreak = Number(cfg.linkFailStreak) || 0;
+  lastEngineOkAt = Number(cfg.lastEngineOkAt) || 0;
+  lastSessionOkAt = Number(cfg.lastSessionOkAt) || 0;
+  lastBridgeOkAt = Number(cfg.lastBridgeOkAt) || 0;
   const avatars = await chrome.storage.local.get("meProfilePictureUrls");
   if (Array.isArray(avatars.meProfilePictureUrls)) {
     rememberOwnAvatars(avatars.meProfilePictureUrls);
@@ -134,6 +160,7 @@ async function startFastPolling(): Promise<void> {
     }
     try {
       await pollCommands();
+      await ensureWhatsAppContentScript();
     } catch (e) {
       console.warn("[FastPolling] Loop error:", e);
     }
@@ -249,9 +276,46 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // Polling — Obtener comandos del backend
 // ============================================================
 
+function linkConfigured(): boolean {
+  return !!(backendUrl && sessionToken);
+}
+
+async function markLinkOk(extra?: Record<string, unknown>): Promise<void> {
+  linkFailStreak = 0;
+  lastLinkOkAt = Date.now();
+  await chrome.storage.local.set({
+    wsStatus: "connected",
+    lastLinkOkAt,
+    linkFailStreak: 0,
+    lastError: null,
+    ...extra,
+  });
+}
+
+async function markLinkFail(reason: string): Promise<void> {
+  const configured = linkConfigured();
+  if (!configured) {
+    linkFailStreak = 0;
+    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: reason, linkFailStreak: 0 });
+    return;
+  }
+  linkFailStreak += 1;
+  const down = shouldMarkLinkDown({
+    configured: true,
+    failStreak: linkFailStreak,
+    lastOkAt: lastLinkOkAt,
+    now: Date.now(),
+  });
+  await chrome.storage.local.set({
+    lastError: reason,
+    linkFailStreak,
+    ...(down ? { wsStatus: "disconnected" } : {}),
+  });
+}
+
 async function pollCommands(): Promise<void> {
-  if (!backendUrl || !sessionToken) {
-    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: "not_configured" });
+  if (!linkConfigured()) {
+    await markLinkFail("not_configured");
     return;
   }
 
@@ -261,16 +325,48 @@ async function pollCommands(): Promise<void> {
       headers: { "X-Session-Token": sessionToken || "" },
     });
     if (!res.ok) {
-      await chrome.storage.local.set({ wsStatus: "disconnected", lastError: `commands ${res.status}` });
+      await markLinkFail(`commands ${res.status}`);
       return;
     }
-    await chrome.storage.local.set({ wsStatus: "connected", lastPoll: Date.now(), lastError: null });
+    await markLinkOk({ lastPoll: Date.now() });
     const { commands = [] } = await res.json();
     for (const cmd of commands) {
       await dispatchCommand(cmd);
     }
   } catch (e: any) {
-    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: String(e?.message || e) });
+    await markLinkFail(String(e?.message || e));
+  }
+}
+
+/** Si el content script murió (navegación de WA Web) lo reinyecta sin marcar el enlace caído. */
+async function ensureWhatsAppContentScript(): Promise<void> {
+  if (Date.now() - lastContentHealAt < 20_000) return;
+  let tabs: chrome.tabs.Tab[] = [];
+  try {
+    tabs = await chrome.tabs.query({ url: "https://web.whatsapp.com/*" });
+  } catch {
+    return;
+  }
+  for (const tab of tabs) {
+    if (!tab.id) continue;
+    let alive = false;
+    try {
+      const res = await chrome.tabs.sendMessage(tab.id, { source: "MAPLE_WA_POPUP_PING" });
+      alive = !!res?.contentScript;
+    } catch {
+      alive = false;
+    }
+    if (alive) continue;
+    lastContentHealAt = Date.now();
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content/index.js"],
+      });
+      console.log("[ServiceWorker] Content script reinjectado en", tab.id);
+    } catch (err) {
+      console.warn("[ServiceWorker] No se pudo reinjectar el content script:", err);
+    }
   }
 }
 
@@ -470,8 +566,9 @@ async function sendHeartbeat(): Promise<void> {
   if (!backendUrl || !sessionToken) return;
 
   for (const [sessionId, session] of activeSessions) {
-    if (Date.now() - session.lastHeartbeat > CONSTANTS.HEARTBEAT_TIMEOUT_MS) {
-      console.warn(`[ServiceWorker] Sesión ${sessionId} timeout, marcando como perdida`);
+    // 45s era poco: un SW dormido o un POST fallido borraba la sesión y el punto Session se apagaba.
+    if (Date.now() - session.lastHeartbeat > 3 * 60_000) {
+      console.warn(`[ServiceWorker] Sesión ${sessionId} sin heartbeat local 3 min, soltando memoria`);
       activeSessions.delete(sessionId);
       continue;
     }
@@ -649,15 +746,16 @@ async function flushIngestQueue(): Promise<void> {
       // Remover eventos enviados de la cola
       const remaining = queue.slice(batch.length);
       await chrome.storage.local.set({ eventQueue: remaining });
-      await chrome.storage.local.set({ wsStatus: "connected", lastFlush: Date.now() });
+      await markLinkOk({ lastFlush: Date.now() });
       console.log(`[ServiceWorker] Ingest: ${batch.length} eventos sincronizados, ${remaining.length} restantes`);
     } else {
       const errText = await response.text().catch(() => "");
       console.warn(`[ServiceWorker] Ingest error ${response.status}:`, errText.substring(0, 500));
-      await chrome.storage.local.set({ lastError: `ingest ${response.status}: ${errText.substring(0, 200)}` });
+      // 504/5xx no pisa un poll sano: solo cuenta si se sostiene. El poll exitoso lo perdona.
+      await markLinkFail(`ingest ${response.status}: ${errText.substring(0, 180)}`);
     }
   } catch (err: any) {
-    await chrome.storage.local.set({ wsStatus: "disconnected", lastError: String(err?.message || err) });
+    await markLinkFail(String(err?.message || err));
   }
 }
 
@@ -1000,20 +1098,67 @@ async function handleRequest(message: any): Promise<any> {
         "eventQueue",
         "lastKeepAlive",
         "wsStatus",
+        "lastEngineOkAt",
+        "lastSessionOkAt",
+        "lastBridgeOkAt",
+        "lastLinkOkAt",
+        "linkFailStreak",
       ]);
       const health = stored.bridgeHealth || {};
       const q = stored.eventQueue || [];
+      const now = Date.now();
+      if (Number(stored.lastEngineOkAt) > lastEngineOkAt) lastEngineOkAt = Number(stored.lastEngineOkAt);
+      if (Number(stored.lastSessionOkAt) > lastSessionOkAt) lastSessionOkAt = Number(stored.lastSessionOkAt);
+      if (Number(stored.lastBridgeOkAt) > lastBridgeOkAt) lastBridgeOkAt = Number(stored.lastBridgeOkAt);
+      if (Number(stored.lastLinkOkAt) > lastLinkOkAt) lastLinkOkAt = Number(stored.lastLinkOkAt);
+      const healthUpdatedAt = Number(health.updatedAt) || 0;
+      const healthFresh = healthUpdatedAt > 0 && now - healthUpdatedAt < 70_000;
+      const engineRaw = healthFresh && (!!health.wppReady || !!health.engineReady);
+      const sessionRaw = activeSessions.size > 0 || engineRaw;
+      const bridgeRaw =
+        healthFresh && health.phase === "ok" && health.healthy !== false && engineRaw;
+      if (engineRaw) lastEngineOkAt = now;
+      if (sessionRaw) lastSessionOkAt = now;
+      if (bridgeRaw) lastBridgeOkAt = now;
+      const streak = linkFailStreak;
+      const view = presentConnection({
+        now,
+        configured: linkConfigured(),
+        failStreak: streak,
+        lastLinkOkAt,
+        engineRaw,
+        sessionRaw,
+        bridgeRaw,
+        lastEngineOkAt,
+        lastSessionOkAt,
+        lastBridgeOkAt,
+      });
+      if (engineRaw || sessionRaw || bridgeRaw) {
+        void chrome.storage.local.set({
+          lastEngineOkAt,
+          lastSessionOkAt,
+          lastBridgeOkAt,
+        });
+      }
       return {
-        wppReady: !!health.wppReady || !!health.engineReady,
-        sessionReady: activeSessions.size > 0 || !!health.engineReady,
-        backendConnected: !!(backendUrl && sessionToken),
+        wppReady: view.wppReady,
+        sessionReady: view.sessionReady,
+        backendConnected: view.backendConnected,
+        uiConnected: view.uiConnected,
         queueSize: Array.isArray(q) ? q.length : 0,
         pollingLatency: 0,
         lastMessage: health.message || null,
         lastCommand: health.lastError || null,
         bridge: health,
         lastKeepAlive: stored.lastKeepAlive || null,
-        wsStatus: stored.wsStatus || null,
+        wsStatus: linkIsUp({
+          configured: linkConfigured(),
+          failStreak: streak,
+          lastOkAt: lastLinkOkAt,
+          now,
+        })
+          ? "connected"
+          : stored.wsStatus || "disconnected",
       };
     }
     case "GET_CONFIG":

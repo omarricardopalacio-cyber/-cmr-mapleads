@@ -22,6 +22,10 @@ const CHECK_MS = 45_000;
 const HEAL_COOLDOWN_MS = 120_000;
 const MAX_HEALS_PER_HOUR = 6;
 const SILENCE_WARN_MS = 12 * 60_000; // sin eventos con engine listo
+/** Un probe fallido no apaga el popup si WhatsApp sigue con sesión. */
+const PROBE_MISSES_BEFORE_HEAL = 2;
+
+let probeMisses = 0;
 
 let started = false;
 let healTimes: number[] = [];
@@ -47,9 +51,24 @@ function injectInline(code: string): void {
   script.remove();
 }
 
+function waLooksLoggedIn(): boolean {
+  return !!(
+    document.querySelector("#pane-side") ||
+    document.querySelector("#side") ||
+    document.querySelector('[data-testid="chat-list"]')
+  );
+}
+
 async function persist(health: BridgeHealth): Promise<void> {
   try {
-    await chrome.storage.local.set({ bridgeHealth: health });
+    const stamp = Date.now();
+    const up = !!health.wppReady || !!health.engineReady || (health.phase === "ok" && health.healthy);
+    await chrome.storage.local.set({
+      bridgeHealth: health,
+      ...(up
+        ? { lastEngineOkAt: stamp, lastBridgeOkAt: stamp, lastSessionOkAt: stamp }
+        : {}),
+    });
   } catch {
     /* ignore */
   }
@@ -92,18 +111,21 @@ async function heal(bridge: ContentBridge, reason: string): Promise<void> {
     return;
   }
 
-  phase = "healing";
+  phase = waLooksLoggedIn() ? "ok" : "healing";
   lastHealAt = now;
   healTimes.push(now);
   lastError = reason;
-  await persist(
-    buildHealth(bridge, {
-      healthy: false,
-      wppReady: false,
-      message: `Auto-reparando: ${reason}`,
-      lastError: reason,
-    }),
-  );
+  // Con la sesión de WA abierta no se publica «caído»: el popup sigue en CONECTADO mientras reinyectamos.
+  if (!waLooksLoggedIn()) {
+    await persist(
+      buildHealth(bridge, {
+        healthy: false,
+        wppReady: false,
+        message: `Auto-reparando: ${reason}`,
+        lastError: reason,
+      }),
+    );
+  }
   console.warn("[VigilanteBridge] Reinyectando engine:", reason);
 
   try {
@@ -137,7 +159,7 @@ async function heal(bridge: ContentBridge, reason: string): Promise<void> {
         }),
       );
       console.log("[VigilanteBridge] Recuperación OK");
-    } else {
+    } else if (!waLooksLoggedIn()) {
       phase = "degraded";
       lastError = probe.error || "WPP no responde tras heal";
       await persist(
@@ -148,18 +170,23 @@ async function heal(bridge: ContentBridge, reason: string): Promise<void> {
           lastError,
         }),
       );
+    } else {
+      lastError = probe.error || "WPP no responde tras heal";
+      console.warn("[VigilanteBridge] Heal incompleto pero WA sigue con sesión; no se marca desconectado");
     }
   } catch (err: any) {
-    phase = "critical";
+    phase = waLooksLoggedIn() ? "ok" : "critical";
     lastError = err?.message || String(err);
-    await persist(
-      buildHealth(bridge, {
-        healthy: false,
-        wppReady: false,
-        message: "Fallo en auto-reparación",
-        lastError,
-      }),
-    );
+    if (!waLooksLoggedIn()) {
+      await persist(
+        buildHealth(bridge, {
+          healthy: false,
+          wppReady: false,
+          message: "Fallo en auto-reparación",
+          lastError,
+        }),
+      );
+    }
   }
 }
 
@@ -171,36 +198,45 @@ async function tick(bridge: ContentBridge): Promise<void> {
     bridge.lastEventAt > 0 &&
     now - bridge.lastEventAt > SILENCE_WARN_MS;
 
-  if (!probe.ready && !bridge.engineReady) {
+  if (!probe.ready) {
+    probeMisses += 1;
+    lastError = probe.error || (bridge.engineReady ? "probe_failed" : "WPP no listo");
+    const loggedIn = waLooksLoggedIn();
+    if (loggedIn && bridge.engineReady) {
+      // La lista de chats sigue en pantalla: renovar el OK para que el popup no caduque
+      // en los 15s de gracia y reinyectar solo si el probe falla otra vez.
+      phase = "ok";
+      await persist(
+        buildHealth(bridge, {
+          healthy: true,
+          wppReady: true,
+          message: "Bridge OK — mensajes entrando/saliendo",
+          lastError,
+        }),
+      );
+      if (probeMisses >= PROBE_MISSES_BEFORE_HEAL) {
+        await heal(bridge, String(lastError));
+      }
+      return;
+    }
+    if (loggedIn && probeMisses < PROBE_MISSES_BEFORE_HEAL) {
+      return;
+    }
     phase = "degraded";
-    lastError = probe.error || "WPP no listo";
     await persist(
       buildHealth(bridge, {
         healthy: false,
         wppReady: false,
-        message: "Sin WPP — intentando recuperar",
-        lastError,
-      }),
-    );
-    await heal(bridge, lastError);
-    return;
-  }
-
-  if (!probe.ready && bridge.engineReady) {
-    // Engine creyó estar listo pero probe falla → reinyectar
-    phase = "degraded";
-    lastError = probe.error || "probe_failed";
-    await persist(
-      buildHealth(bridge, {
-        healthy: false,
-        wppReady: false,
-        message: "Probe WPP falló",
+        message: bridge.engineReady ? "Probe WPP falló" : "Sin WPP — intentando recuperar",
         lastError,
       }),
     );
     await heal(bridge, String(lastError));
     return;
   }
+
+  probeMisses = 0;
+  if (probe.ready) bridge.engineReady = true;
 
   if (silence) {
     phase = "degraded";
@@ -247,13 +283,19 @@ export function startBridgeWatchdog(bridge: ContentBridge): void {
   started = true;
   console.log("[VigilanteBridge] Activo");
 
-  void persist(
-    buildHealth(bridge, {
-      healthy: false,
-      wppReady: false,
-      message: "Iniciando vigilante…",
-    }),
-  );
+  void chrome.storage.local.get("bridgeHealth").then((stored) => {
+    const prev = stored.bridgeHealth as BridgeHealth | undefined;
+    const fresh = !!prev?.updatedAt && Date.now() - prev.updatedAt < 60_000 && (!!prev.wppReady || !!prev.engineReady);
+    if (fresh) return;
+    phase = bridge.engineReady ? "ok" : "degraded";
+    void persist(
+      buildHealth(bridge, {
+        healthy: bridge.engineReady,
+        wppReady: bridge.engineReady,
+        message: bridge.engineReady ? "Bridge OK — mensajes entrando/saliendo" : "Iniciando vigilante…",
+      }),
+    );
+  });
 
   // Primera chequeo tras dar tiempo al engine
   setTimeout(() => void tick(bridge), 20_000);
