@@ -1,13 +1,10 @@
 import { useState, useEffect } from "react";
+import { canonicalizeBackendUrl, PRODUCTION_BACKEND_URL } from "../../shared/contracts";
 
 const STORAGE_KEYS = ["backendUrl", "sessionToken"] as const;
-const PRODUCTION_BACKEND = "https://cmrmaleads.netlify.app";
-const LEGACY_BACKENDS = new Set([
-  "https://project--289483ef-62cc-4bc6-91f6-2ef8e90b8d34.lovable.app",
-]);
 
 export default function ConfigPanel() {
-  const [backendUrl, setBackendUrl] = useState(PRODUCTION_BACKEND);
+  const [backendUrl, setBackendUrl] = useState(PRODUCTION_BACKEND_URL);
   const [sessionToken, setSessionToken] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -17,10 +14,7 @@ export default function ConfigPanel() {
         typeof stored.backendUrl === "string"
           ? stored.backendUrl.trim().replace(/\/$/, "")
           : "";
-      const backend =
-        !storedUrl || LEGACY_BACKENDS.has(storedUrl)
-          ? PRODUCTION_BACKEND
-          : storedUrl;
+      const backend = canonicalizeBackendUrl(stored.backendUrl) ?? PRODUCTION_BACKEND_URL;
       setBackendUrl(backend);
       if (backend !== storedUrl) {
         void chrome.storage.local.set({ backendUrl: backend });
@@ -30,7 +24,8 @@ export default function ConfigPanel() {
   }, []);
 
   const save = async () => {
-    const cleanUrl = backendUrl.trim().replace(/\/$/, "");
+    const cleanUrl = canonicalizeBackendUrl(backendUrl) ?? PRODUCTION_BACKEND_URL;
+    setBackendUrl(cleanUrl);
     await chrome.storage.local.set({
       backendUrl: cleanUrl,
       sessionToken: sessionToken.trim(),

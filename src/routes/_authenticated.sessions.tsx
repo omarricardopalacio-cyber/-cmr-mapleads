@@ -31,6 +31,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { toast } from "sonner";
+import { useExtensionBackendUrl } from "@/lib/extension-backend";
 import {
   Copy,
   Smartphone,
@@ -98,7 +99,7 @@ function SessionsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const backendBase = "https://cmrmaleads.netlify.app";
+  const backendBase = useExtensionBackendUrl();
 
   return (
     <div className="space-y-6">
