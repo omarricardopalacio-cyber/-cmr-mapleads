@@ -7,6 +7,7 @@ import { BackgroundBridge } from "../bridge/bridge";
 import { API_ENDPOINTS, CONSTANTS, canonicalizeBackendUrl } from "../shared/contracts";
 import { buildIngestContact, httpProfileUrl, sameProfilePicture } from "../shared/wa-identity";
 import { linkIsUp, presentConnection, shouldMarkLinkDown } from "../shared/link-status";
+import { describeTransportError, interpretCommandsResponse, unavailableMedia } from "../shared/backend-response";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
   saveSession,
@@ -319,22 +320,32 @@ async function pollCommands(): Promise<void> {
     return;
   }
 
+  const url = `${backendUrl}${API_ENDPOINTS.GET_COMMANDS}`;
   try {
-    const res = await fetch(`${backendUrl}${API_ENDPOINTS.GET_COMMANDS}`, {
+    const res = await fetch(url, {
       method: "GET",
       headers: { "X-Session-Token": sessionToken || "" },
     });
-    if (!res.ok) {
-      await markLinkFail(`commands ${res.status}`);
+    const body = await res.text();
+    const parsed = interpretCommandsResponse({
+      url,
+      status: res.status,
+      ok: res.ok,
+      contentType: res.headers.get("content-type"),
+      body,
+    });
+    if (!parsed.ok) {
+      // Un HTML 200 no es enlace sano: cuenta como fallo, pero el debounce de 1.0.13
+      // no pasa a DESCONECTADO hasta que se sostenga.
+      await markLinkFail(parsed.message);
       return;
     }
     await markLinkOk({ lastPoll: Date.now() });
-    const { commands = [] } = await res.json();
-    for (const cmd of commands) {
-      await dispatchCommand(cmd);
+    for (const cmd of parsed.commands) {
+      await dispatchCommand(cmd as BackendCommand);
     }
   } catch (e: any) {
-    await markLinkFail(String(e?.message || e));
+    await markLinkFail(describeTransportError(url, e));
   }
 }
 
@@ -752,10 +763,12 @@ async function flushIngestQueue(): Promise<void> {
       const errText = await response.text().catch(() => "");
       console.warn(`[ServiceWorker] Ingest error ${response.status}:`, errText.substring(0, 500));
       // 504/5xx no pisa un poll sano: solo cuenta si se sostiene. El poll exitoso lo perdona.
-      await markLinkFail(`ingest ${response.status}: ${errText.substring(0, 180)}`);
+      await markLinkFail(
+        describeTransportError(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, `HTTP ${response.status}`),
+      );
     }
   } catch (err: any) {
-    await markLinkFail(String(err?.message || err));
+    await markLinkFail(describeTransportError(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, err));
   }
 }
 
@@ -843,7 +856,9 @@ function slimMediaForIngest(
     delete out.base64;
     delete out.body;
     delete out.data;
-    out.missing_media = true;
+    Object.assign(out, unavailableMedia(out));
+  } else if (out.missing_media === true && !out.label && typeof b64 !== "string") {
+    Object.assign(out, unavailableMedia(out));
   }
   return out;
 }
@@ -1193,24 +1208,29 @@ async function handleRequest(message: any): Promise<any> {
     case "FETCH_MEDIA": {
       const url = message.payload?.url;
       if (!url || typeof url !== "string") {
-        throw new Error("FETCH_MEDIA requires a valid url");
+        return { error: "Multimedia no disponible", unavailable: true };
       }
-      console.log("[ServiceWorker] FETCH_MEDIA url:", url);
-      const resp = await fetch(url);
-      console.log("[ServiceWorker] FETCH_MEDIA http status:", resp.status, resp.statusText);
-      if (!resp.ok) {
-        throw new Error(`Failed to fetch media: ${resp.status}`);
+      try {
+        console.log("[ServiceWorker] FETCH_MEDIA url:", url);
+        const resp = await fetch(url);
+        console.log("[ServiceWorker] FETCH_MEDIA http status:", resp.status, resp.statusText);
+        if (!resp.ok) {
+          return { error: "Multimedia no disponible", unavailable: true, url };
+        }
+        const arrayBuffer = await resp.arrayBuffer();
+        const mimeType =
+          resp.headers.get("content-type") || message.payload?.mimeType || "application/octet-stream";
+        const base64 = arrayBufferToBase64(arrayBuffer);
+        const dataUri = `data:${mimeType};base64,${base64}`;
+        console.log("[ServiceWorker] FETCH_MEDIA convertido a dataUri, size:", dataUri.length, "mimeType:", mimeType);
+        return {
+          dataUri,
+          mimeType,
+        };
+      } catch (err) {
+        console.warn("[ServiceWorker] FETCH_MEDIA sin bytes:", url, err);
+        return { error: "Multimedia no disponible", unavailable: true, url };
       }
-      const arrayBuffer = await resp.arrayBuffer();
-      const mimeType =
-        resp.headers.get("content-type") || message.payload?.mimeType || "application/octet-stream";
-      const base64 = arrayBufferToBase64(arrayBuffer);
-      const dataUri = `data:${mimeType};base64,${base64}`;
-      console.log("[ServiceWorker] FETCH_MEDIA convertido a dataUri, size:", dataUri.length, "mimeType:", mimeType);
-      return {
-        dataUri,
-        mimeType,
-      };
     }
     default:
       return null;

@@ -8,6 +8,7 @@ import { getMessageById } from "./message-detector";
 import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
 import { sanitizeMessageBody, isWhatsAppSystemText } from "../shared/message-text";
+import { unavailableMedia } from "../shared/backend-response";
 import { canonicalWaId, sanitizePhoneForIngest } from "../shared/wa-identity";
 import {
   applyIdentityToMessage,
@@ -331,7 +332,7 @@ function buildMessageFast(msg: any): any {
   const hasMediaIndicators =
     msg.isMedia || msg.mediaKey || msg.clientUrl || msg.deprecatedMms3Url || msg.mediaData;
   if (media && hasMediaIndicators) {
-    media.missing_media = true;
+    Object.assign(media, unavailableMedia(media));
   }
 
   const cleanBody = sanitizeMessageBody({
@@ -749,7 +750,7 @@ async function downloadMessageMedia(
               validation.detectedType !== "unknown/encrypted"
                 ? validation.detectedType
                 : msg.mimetype || media.mimetype || (isAudio ? "audio/ogg" : undefined);
-            return {
+            const ready = {
               ...media,
               base64: base64Data,
               type: msg.type,
@@ -757,6 +758,9 @@ async function downloadMessageMedia(
               mimeType: mime,
               missing_media: false,
             };
+            delete ready.label;
+            delete ready.extraction_error;
+            return ready;
           }
           return media;
         }
@@ -767,6 +771,7 @@ async function downloadMessageMedia(
     }
   } catch (err) {
     console.warn("[MAPLE MULTIMEDIA] Error descargando media en background:", err);
+    return unavailableMedia(media);
   }
 
   if (isAudio) {
@@ -780,7 +785,7 @@ async function downloadMessageMedia(
       hasDownloadMediaCrypted: typeof msg.downloadMediaCrypted === "function",
     });
   }
-  return null;
+  return unavailableMedia(media);
 }
 
 function fromMeSafe(msg: any): boolean {
