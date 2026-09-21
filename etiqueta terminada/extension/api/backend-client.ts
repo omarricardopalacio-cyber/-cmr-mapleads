@@ -3,7 +3,8 @@
 // Cliente HTTP para comunicación con el CRM Backend
 // ============================================================
 
-import { API_ENDPOINTS, HEADERS, CONSTANTS } from "../shared/contracts";
+import { describeTransportError, interpretCommandsResponse } from "../shared/backend-response";
+import { API_ENDPOINTS, HEADERS } from "../shared/contracts";
 import type { BackendCommand, IngestPayload, SessionInfo } from "../shared/types";
 
 interface BackendConfig {
@@ -34,19 +35,27 @@ class BackendClient {
   async getCommands(): Promise<BackendCommand[]> {
     if (!this.config) throw new Error("Backend no configurado");
 
-    const response = await fetch(
-      `${this.config.baseUrl}${API_ENDPOINTS.GET_COMMANDS}`,
-      {
+    const url = `${this.config.baseUrl}${API_ENDPOINTS.GET_COMMANDS}`;
+    let response: Response;
+    try {
+      response = await fetch(url, {
         method: "GET",
         headers: this.getHeaders(),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`GET commands failed: ${response.status}`);
+      });
+    } catch (err) {
+      throw new Error(describeTransportError(url, err));
     }
 
-    return response.json();
+    const body = await response.text();
+    const parsed = interpretCommandsResponse({
+      url,
+      status: response.status,
+      ok: response.ok,
+      contentType: response.headers.get("content-type"),
+      body,
+    });
+    if (!parsed.ok) throw new Error(parsed.message);
+    return parsed.commands as BackendCommand[];
   }
 
   async sendIngest(payload: IngestPayload): Promise<{ ok: boolean }> {
