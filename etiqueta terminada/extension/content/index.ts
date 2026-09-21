@@ -145,8 +145,13 @@ async function init(): Promise<void> {
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
+if ((globalThis as any).__MAPLE_CONTENT_SCRIPT_INIT) {
+  console.log("[ContentScript] Ya activo en este mundo; se ignora la reinyección");
 } else {
-  init();
+  (globalThis as any).__MAPLE_CONTENT_SCRIPT_INIT = true;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 }

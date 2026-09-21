@@ -1,24 +1,6 @@
-import { useEffect, useState } from "react";
+import type { PopupStatus } from "../App";
 
-interface Status {
-  wppReady: boolean;
-  sessionReady: boolean;
-  lastMessage: string | null;
-  lastCommand: string | null;
-  queueSize: number;
-  backendConnected: boolean;
-  pollingLatency: number;
-  bridge?: {
-    healthy?: boolean;
-    phase?: string;
-    message?: string;
-    lastError?: string | null;
-    lastHealAt?: number | null;
-    healCount?: number;
-    lastEventAt?: number | null;
-    updatedAt?: number;
-  };
-}
+type Status = PopupStatus;
 
 function ago(ts?: number | null): string {
   if (!ts) return "—";
@@ -28,8 +10,8 @@ function ago(ts?: number | null): string {
   return `${Math.floor(s / 3600)}h`;
 }
 
-export default function StatusPanel() {
-  const [status, setStatus] = useState<Status>({
+export default function StatusPanel({ status }: { status: Status | null }) {
+  const view: Status = status || {
     wppReady: false,
     sessionReady: false,
     lastMessage: null,
@@ -37,31 +19,10 @@ export default function StatusPanel() {
     queueSize: 0,
     backendConnected: false,
     pollingLatency: 0,
-  });
+  };
 
-  useEffect(() => {
-    const pull = () => {
-      chrome.runtime.sendMessage(
-        {
-          source: "MAPLE_WA_POPUP",
-          channel: "WA_REQUEST",
-          event: "GET_STATUS",
-          payload: { type: "GET_STATUS" },
-        },
-        (response) => {
-          const payload = response?.payload ?? response;
-          if (payload && typeof payload === "object") {
-            setStatus((prev) => ({ ...prev, ...payload }));
-          }
-        },
-      );
-    };
-    pull();
-    const interval = setInterval(pull, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const phase = status.bridge?.phase || (status.wppReady ? "ok" : "degraded");
+  const pending = !status;
+  const phase = view.bridge?.phase || (pending ? "…" : view.wppReady ? "ok" : "degraded");
   const phaseColor =
     phase === "ok"
       ? "text-emerald-400"
@@ -72,9 +33,9 @@ export default function StatusPanel() {
           : "text-amber-400";
 
   const indicators = [
-    { label: "WPP Engine", ready: status.wppReady },
-    { label: "Session", ready: status.sessionReady },
-    { label: "Backend", ready: status.backendConnected },
+    { label: "WPP Engine", ready: view.wppReady },
+    { label: "Session", ready: view.sessionReady },
+    { label: "Backend", ready: view.backendConnected },
   ];
 
   return (
@@ -83,7 +44,9 @@ export default function StatusPanel() {
         {indicators.map((ind) => (
           <div key={ind.label} className="bg-slate-800 rounded p-2 text-center">
             <div
-              className={`w-3 h-3 rounded-full mx-auto mb-1 ${ind.ready ? "bg-emerald-400" : "bg-red-400"}`}
+              className={`w-3 h-3 rounded-full mx-auto mb-1 ${
+                pending ? "bg-slate-500" : ind.ready ? "bg-emerald-400" : "bg-red-400"
+              }`}
             />
             <div className="text-[10px] text-slate-300">{ind.label}</div>
           </div>
@@ -96,21 +59,21 @@ export default function StatusPanel() {
           <span className={`font-mono uppercase ${phaseColor}`}>{phase}</span>
         </div>
         <p className="text-slate-400 leading-relaxed">
-          {status.bridge?.message ||
-            status.lastMessage ||
+          {view.bridge?.message ||
+            view.lastMessage ||
             "Health-check cada 45s. Si no entran/salen mensajes, reinyecta el engine solo."}
         </p>
         <div className="grid grid-cols-2 gap-y-1 text-slate-300">
           <span className="text-slate-500">Último evento</span>
-          <span className="text-right font-mono">{ago(status.bridge?.lastEventAt)}</span>
+          <span className="text-right font-mono">{ago(view.bridge?.lastEventAt)}</span>
           <span className="text-slate-500">Auto-reparaciones</span>
-          <span className="text-right font-mono">{status.bridge?.healCount ?? 0}</span>
+          <span className="text-right font-mono">{view.bridge?.healCount ?? 0}</span>
           <span className="text-slate-500">Última reparación</span>
-          <span className="text-right font-mono">{ago(status.bridge?.lastHealAt)}</span>
+          <span className="text-right font-mono">{ago(view.bridge?.lastHealAt)}</span>
         </div>
-        {status.bridge?.lastError || status.lastCommand ? (
+        {view.bridge?.lastError || view.lastCommand ? (
           <p className="text-amber-400/90 text-[10px] break-words">
-            {status.bridge?.lastError || status.lastCommand}
+            {view.bridge?.lastError || view.lastCommand}
           </p>
         ) : null}
       </div>
@@ -118,15 +81,15 @@ export default function StatusPanel() {
       <div className="bg-slate-800 rounded p-3 text-xs space-y-2">
         <div className="flex justify-between">
           <span className="text-slate-400">Queue</span>
-          <span className="text-emerald-400 font-mono">{status.queueSize}</span>
+          <span className="text-emerald-400 font-mono">{view.queueSize}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-slate-400">Latency</span>
-          <span className="text-emerald-400 font-mono">{status.pollingLatency}ms</span>
+          <span className="text-emerald-400 font-mono">{view.pollingLatency}ms</span>
         </div>
         <div className="flex justify-between">
           <span className="text-slate-400">Last Msg</span>
-          <span className="text-slate-300 truncate max-w-[140px]">{status.lastMessage || "-"}</span>
+          <span className="text-slate-300 truncate max-w-[140px]">{view.lastMessage || "-"}</span>
         </div>
       </div>
     </div>
