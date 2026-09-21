@@ -4,7 +4,7 @@
 // ============================================================
 
 import { BackgroundBridge } from "../bridge/bridge";
-import { API_ENDPOINTS, CONSTANTS } from "../shared/contracts";
+import { API_ENDPOINTS, CONSTANTS, canonicalizeBackendUrl } from "../shared/contracts";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
   saveSession,
@@ -53,8 +53,13 @@ chrome.runtime.onConnect.addListener((port) => {
 
 async function loadConfig(): Promise<void> {
   const cfg = await chrome.storage.local.get(["backendUrl", "sessionToken"]);
-  backendUrl = (cfg.backendUrl || "").replace(/\/$/, "") || null;
+  const storedUrl = typeof cfg.backendUrl === "string" ? cfg.backendUrl.trim().replace(/\/$/, "") : "";
+  const canonical = canonicalizeBackendUrl(cfg.backendUrl);
+  backendUrl = canonical;
   sessionToken = cfg.sessionToken || null;
+  if (canonical && canonical !== storedUrl) {
+    await chrome.storage.local.set({ backendUrl: canonical });
+  }
   console.log("[ServiceWorker] Config cargada:", { backendUrl, hasToken: !!sessionToken });
   await restoreSession();
 }
