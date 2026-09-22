@@ -3,6 +3,7 @@ import {
   commandsRoutingError,
   describeTransportError,
   interpretCommandsResponse,
+  interpretIngestResponse,
   unavailableMedia,
 } from "./backend-response.ts";
 
@@ -62,6 +63,42 @@ test("Failed to fetch names the URL and is not the raw browser message", () => {
   const message = describeTransportError(url, new TypeError("Failed to fetch"));
   assert.equal(message.includes("Failed to fetch"), false);
   assert.equal(message.includes(url), true);
+});
+
+test("ingest 400 JSON for an empty batch is not a fatal non-JSON error", () => {
+  const ingestUrl = "https://creadorpaginasmapleads.netlify.app/crm/api/public/engine/ingest";
+  const read = interpretIngestResponse({
+    url: ingestUrl,
+    status: 400,
+    ok: false,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "Invalid payload" }),
+  });
+  assert.equal(read.action, "ignore");
+  if (read.action === "ignore") {
+    assert.equal(read.message.includes("no devolvió JSON"), false);
+    assert.equal(read.message, "Invalid payload");
+  }
+});
+
+test("ingest HTML is a real failure", () => {
+  const read = interpretIngestResponse({
+    url: "https://crm.example/ingest",
+    status: 200,
+    ok: true,
+    contentType: "text/html",
+    body: "<!DOCTYPE html><html></html>",
+  });
+  assert.equal(read.action, "fail");
+});
+
+test("a network miss does not claim the CRM returned non-JSON", () => {
+  const message = describeTransportError(
+    "https://creadorpaginasmapleads.netlify.app/crm/api/public/engine/ingest",
+    new TypeError("Failed to fetch"),
+  );
+  assert.equal(message.includes("no devolvió JSON"), false);
+  assert.equal(message.includes("Sin respuesta de red"), true);
 });
 
 test("missing media is labeled without throwing", () => {

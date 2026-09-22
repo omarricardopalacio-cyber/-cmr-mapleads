@@ -4,6 +4,7 @@
 // ============================================================
 
 import { eventBus } from "./event-bus";
+import { noteDetectedPeer } from "../content/recent-detect";
 import { postFromContent, postFromInjected, sendToBackground, broadcastToTabs } from "./postmessage";
 import type { BridgeMessage, WAEvent, WAEventType } from "../shared/types";
 import { CONSTANTS } from "../shared/contracts";
@@ -59,6 +60,22 @@ export class ContentBridge {
         payload: bridgeMsg.payload,
         timestamp: Date.now(),
       };
+
+      if (bridgeMsg.event === "NEW_MESSAGE" || bridgeMsg.event === "MESSAGE_SENT") {
+        const body = (bridgeMsg.payload || {}) as Record<string, unknown>;
+        const inner =
+          body.payload && typeof body.payload === "object"
+            ? (body.payload as Record<string, unknown>)
+            : body;
+        noteDetectedPeer([
+          inner.chatId,
+          inner.lid,
+          inner.from,
+          inner.to,
+          (inner.contact as { phone?: string; waId?: string } | undefined)?.phone,
+          (inner.contact as { waId?: string } | undefined)?.waId,
+        ]);
+      }
 
       // Emitir localmente en el content script (para debug / UI)
       eventBus.emit(bridgeMsg.event as WAEventType, bridgeMsg.payload);

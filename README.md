@@ -45,10 +45,22 @@ npm run build
 
 ### Cargar en Chrome
 
+La extensión empaquetada no está en `extension/dist` (esa carpeta no existe en este repo). El build escribe en `etiqueta terminada/extension/dist`.
+
+```bash
+cd "etiqueta terminada/extension"
+npm install
+npm run build
+```
+
 1. Abrir `chrome://extensions/`
 2. Activar "Modo desarrollador"
 3. Click en "Cargar descomprimida"
-4. Seleccionar la carpeta `extension/dist/`
+4. Seleccionar la carpeta `etiqueta terminada/extension/dist/`
+5. Si la tarjeta dice **Reinicia para actualizar**, cerrar Chrome por completo y volver a abrirlo
+6. Recargar `https://web.whatsapp.com` para que el content script nuevo quede inyectado
+
+El detector lee la **lista** de chats, no solo la conversación abierta. Un inbound nuevo debe verse en el popup (Debug → Último mensaje) y en el CRM a los pocos segundos.
 
 ## Configuración
 

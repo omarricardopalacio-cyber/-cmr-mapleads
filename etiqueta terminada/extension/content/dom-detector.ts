@@ -5,8 +5,16 @@
 // ============================================================
 
 import { sendToBackground } from "../bridge/postmessage";
+import { noteDetectedPeer, wasRecentlyDetected } from "./recent-detect";
 import { isBase64Thumbnail, isWhatsAppSystemText } from "../shared/message-text";
 import { canonicalWaId, looksLikeLidDigits, sanitizePhoneForIngest } from "../shared/wa-identity";
+import {
+  listPreviewMessageId,
+  listRowSignature,
+  shouldEmitListRow,
+  snapshotFromRowParts,
+  type ListRowSnapshot,
+} from "../shared/chat-list-preview";
 
 const SEEN = new Map<string, number>();
 const TTL_MS = 120_000;
@@ -53,22 +61,12 @@ function direction(node: HTMLElement): "in" | "out" | null {
   if (node.querySelector?.(".message-out")) return "out";
   if (node.querySelector?.(".message-in")) return "in";
 
-  // Iconos de estado (solo salientes)
-  const hasChecks = node.querySelector?.('[data-icon*="check"]');
-  if (hasChecks) return "out";
-
   // Atributos de testid
   if (node.getAttribute?.("data-testid")?.includes("own")) return "out";
   if (node.getAttribute?.("data-testid")?.includes("foreign")) return "in";
 
-  // Estilo (flex-end = saliente en WA Web)
-  try {
-    const parent = node.parentElement;
-    const style = parent ? getComputedStyle(parent) : null;
-    if (style && (style.alignSelf === "flex-end" || style.justifyContent === "flex-end")) return "out";
-  } catch {}
-
-  // NUNCA asumir "in": banners del sistema / nodos raros disparaban la IA.
+  // No usar el check ni flex-end: un entrante que cita un saliente trae esos
+  // iconos y el CRM lo guardaba como direction out.
   return null;
 }
 
@@ -421,6 +419,7 @@ async function emitFromNode(node: HTMLElement) {
 
     SEEN.set(id, Date.now());
     gc();
+    noteDetectedPeer([parsed.chatId, parsed.phone, parsed.contact?.waId]);
 
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
     const payload: any = {
@@ -558,10 +557,200 @@ function attach(): boolean {
   return true;
 }
 
+const LIST_BASELINE = new Map<string, string>();
+let listPrimed = false;
+let listWatcherStarted = false;
+const listPending = new Set<string>();
+
+function listRoots(): HTMLElement[] {
+  const selectors = [
+    "#pane-side",
+    "#side",
+    '[aria-label="Lista de chats"]',
+    '[aria-label="Chat list"]',
+  ];
+  const found: HTMLElement[] = [];
+  for (const selector of selectors) {
+    const el = document.querySelector(selector);
+    if (el instanceof HTMLElement) found.push(el);
+  }
+  return found;
+}
+
+function listRows(): HTMLElement[] {
+  const roots = listRoots();
+  if (!roots.length) return [];
+  const found: HTMLElement[] = [];
+  for (const root of roots) {
+    root.querySelectorAll('[role="listitem"], [role="row"]').forEach((el) => {
+      if (!(el instanceof HTMLElement)) return;
+      if (el.closest("#pane-side, #side, [aria-label='Lista de chats'], [aria-label='Chat list']")) {
+        found.push(el);
+      }
+    });
+  }
+  // La fila de chat es el contenedor externo. Un role=row interno es solo una celda.
+  return found.filter((el) => !found.some((other) => other !== el && other.contains(el)));
+}
+
+function rowIdentitySnippet(row: HTMLElement): string {
+  const bits: string[] = [];
+  const take = (el: Element) => {
+    for (const name of ["data-id", "data-testid"]) {
+      const value = el.getAttribute(name);
+      if (value) bits.push(value);
+    }
+  };
+  take(row);
+  row.querySelectorAll("[data-id], [data-testid]").forEach(take);
+  if (bits.length) return bits.join(" ");
+  return row.innerHTML.slice(0, 8000);
+}
+
+function readListRow(row: HTMLElement): ListRowSnapshot | null {
+  const titles: string[] = [];
+  row.querySelectorAll("[title]").forEach((el) => {
+    const title = el.getAttribute("title")?.trim();
+    if (title && title.length < 300) titles.push(title);
+  });
+  const lines = (row.innerText || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  const unreadEl = row.querySelector(
+    '[aria-label*="no leíd" i], [aria-label*="no leidos" i], [aria-label*="unread" i]',
+  );
+  const hasOutgoingTick = !!row.querySelector(
+    '[data-icon*="check"], [data-icon*="msg-dblcheck"], [aria-label="Enviado"], [aria-label="Entregado"], [aria-label="Leído"], [aria-label="Read"], [aria-label="Sent"], [aria-label="Delivered"], [data-testid*="msg-check"], [data-testid*="status-check"], [data-testid*="msg-dblcheck"]',
+  );
+  return snapshotFromRowParts({
+    titles,
+    lines,
+    htmlSnippet: rowIdentitySnippet(row),
+    unreadLabel: unreadEl?.getAttribute("aria-label") || "",
+    hasOutgoingTick,
+  });
+}
+
+function emitListRow(row: ListRowSnapshot): void {
+  const id = listPreviewMessageId(row);
+  if (SEEN.has(id)) return;
+  if (isWhatsAppSystemText(row.text)) return;
+  const me = String((window as any).__MAPLE_ME_PHONE__ || "").replace(/\D/g, "");
+  if (me && row.phone === me) return;
+
+  SEEN.set(id, Date.now());
+  gc();
+  noteDetectedPeer([row.chatId, row.phone, row.lid]);
+
+  const evtType = row.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
+  const payload: Record<string, unknown> = {
+    type: row.direction === "out" ? "message-out" : "message-in",
+    chatId: row.chatId,
+    waMessageId: id,
+    direction: row.direction,
+    text: row.text,
+    sentAt: row.sentAt || new Date().toISOString(),
+    fromMe: row.direction === "out",
+    from: row.direction === "in" ? row.chatId : undefined,
+    to: row.direction === "out" ? row.chatId : undefined,
+    lid: row.lid,
+    contact: row.chatId
+      ? { waId: row.chatId, phone: row.phone }
+      : undefined,
+    phoneNumber: row.phone,
+    listPreview: true,
+  };
+
+  console.log("[DOMDetector] Lista:", evtType, row.chatId, row.text.slice(0, 40));
+  sendToBackground("WA_EVENT", {
+    event: evtType,
+    payload: {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      type: evtType,
+      payload,
+      timestamp: Date.now(),
+    },
+  }).catch(() => {});
+
+  chrome.storage.local.set({
+    lastDomEvent: {
+      type: evtType,
+      text: row.text.slice(0, 60),
+      direction: row.direction,
+      chatId: row.chatId,
+      at: Date.now(),
+    },
+  }).catch(() => {});
+}
+
+function scheduleListRow(row: ListRowSnapshot): void {
+  const id = listPreviewMessageId(row);
+  if (listPending.has(id) || SEEN.has(id)) return;
+  listPending.add(id);
+  // Darle 4s a WPP. Si el store ya emitió este peer, no duplicar desde la lista.
+  setTimeout(() => {
+    listPending.delete(id);
+    if ([row.phone, row.lid, row.chatId].some((id) => wasRecentlyDetected(id))) return;
+    emitListRow(row);
+  }, 4000);
+}
+
+function scanChatList(): void {
+  const rows = listRows();
+  let parsed = 0;
+  for (const node of rows) {
+    const row = readListRow(node);
+    if (!row) continue;
+    parsed += 1;
+    const signature = listRowSignature(row);
+    const previous = LIST_BASELINE.get(row.key);
+    LIST_BASELINE.set(row.key, signature);
+    if (
+      shouldEmitListRow({
+        previous,
+        next: signature,
+        primed: listPrimed,
+        unread: row.unread,
+        sentAt: row.sentAt,
+      })
+    ) {
+      scheduleListRow(row);
+    }
+  }
+  // Si el DOM aún no trae título/hora, seguir en la primera pasada.
+  if (parsed > 0) listPrimed = true;
+}
+
+function startListWatcher(): void {
+  if (listWatcherStarted) return;
+  listWatcherStarted = true;
+  (window as any).__MAPLE_DOM_DETECTOR_ACTIVE = true;
+
+  const tick = () => {
+    scanChatList();
+  };
+  tick();
+  setInterval(tick, 2000);
+
+  const root = () => listRoots()[0] || document.body;
+  const observer = new MutationObserver(() => tick());
+  const arm = () => {
+    observer.disconnect();
+    observer.observe(root(), { childList: true, subtree: true, characterData: true });
+  };
+  arm();
+  setInterval(arm, 8000);
+  console.log("[DOMDetector] Lista de chats en observación");
+}
+
 export function startDomDetector(): void {
+  // La lista se observa aunque el panel del chat abierto ya esté enganchado.
+  startListWatcher();
   if (active) return;
   console.log("[DOMDetector] Iniciando v2...");
-  (window as any).__MAPLE_DOM_DETECTOR_ACTIVE = false;
+  (window as any).__MAPLE_DOM_DETECTOR_ACTIVE = true;
 
   let attempts = 0;
   const boot = setInterval(() => {

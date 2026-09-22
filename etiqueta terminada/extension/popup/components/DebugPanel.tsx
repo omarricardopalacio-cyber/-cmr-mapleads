@@ -96,7 +96,7 @@ export default function DebugPanel() {
 
       <div className="bg-slate-800 rounded p-2 space-y-1">
         <div className="flex justify-between text-slate-400">
-          <span>Último evento DOM:</span>
+          <span>Último mensaje:</span>
           <span className="text-slate-500">{state.lastEvent ? new Date(state.lastEvent.at).toLocaleTimeString() : "—"}</span>
         </div>
         {state.lastEvent ? (
@@ -108,7 +108,7 @@ export default function DebugPanel() {
         )}
       </div>
 
-      {state.lastError && (
+      {state.lastError && state.wsStatus !== "connected" && (
         <div className="bg-red-500/10 border border-red-500/20 rounded p-2 text-red-400">
           Error: {state.lastError}
         </div>
