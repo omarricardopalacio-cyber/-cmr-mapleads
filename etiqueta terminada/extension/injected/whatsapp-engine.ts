@@ -134,6 +134,7 @@ async function handleCommands(event: MessageEvent): Promise<void> {
 
         console.log("[WhatsAppEngine] Calling senderEngine.send with chatId:", cmdPayload.chatId);
         const sendResult = await senderEngine.send({
+          commandId: typeof id === "string" ? id : undefined,
           chatId: cmdPayload.chatId as string,
           text: cmdPayload.text as string | undefined,
           media: resolved.dataUri,
@@ -197,6 +198,7 @@ async function handleCommands(event: MessageEvent): Promise<void> {
           break;
         }
         const sendResult = await senderEngine.send({
+          commandId: typeof id === "string" ? id : undefined,
           chatId: payload.chatId,
           text: payload.caption || payload.text,
           media: finalMedia,

@@ -9,6 +9,7 @@ import { canonicalWaId, looksLikeLidDigits, sanitizePhoneForIngest } from "../sh
 
 interface SendTask {
   taskId: string;
+  commandId?: string;
   chatId: string;
   text?: string;
   media?: string | Blob; // base64 data URL or binary blob
@@ -426,6 +427,7 @@ class SenderEngine {
       event: status === "sent" ? "MESSAGE_SENT" : status === "failed" ? "MESSAGE_FAILED" : "MESSAGE_ACK",
       payload: {
         taskId: task.taskId,
+        commandId: status === "sent" ? task.commandId : undefined,
         chatId: waId || rawChatId,
         text: task.caption || task.text,
         fromMe: true,

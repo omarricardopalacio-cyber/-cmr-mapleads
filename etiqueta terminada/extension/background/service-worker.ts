@@ -7,7 +7,8 @@ import { BackgroundBridge } from "../bridge/bridge";
 import { API_ENDPOINTS, CONSTANTS, canonicalizeBackendUrl } from "../shared/contracts";
 import { buildIngestContact, httpProfileUrl, sameProfilePicture } from "../shared/wa-identity";
 import { linkIsUp, presentConnection, shouldMarkLinkDown } from "../shared/link-status";
-import { describeTransportError, interpretCommandsResponse, unavailableMedia } from "../shared/backend-response";
+import { describeTransportError, interpretCommandsResponse, looksLikeHtml, unavailableMedia } from "../shared/backend-response";
+import { buildCommandIngestEvents, isCommandUuid } from "../shared/command-ack";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
   saveSession,
@@ -508,65 +509,64 @@ async function dispatchCommand(cmd: BackendCommand): Promise<void> {
       direction: "BACKGROUND_TO_CONTENT",
       channel: "WA_COMMAND",
       id: cmd.id,
-      event: cmd.type,
-      payload: payload,
+      event: command.type,
+      payload,
     });
 
-    console.log("[ServiceWorker] Comando ejecutado:", cmd.id, "respuesta:", JSON.stringify(response));
+    console.log("[ServiceWorker] Comando ejecutado:", command.id, "respuesta:", JSON.stringify(response));
 
-    // Enviar ACK al backend como evento de ingest
-    await sendCommandAck(cmd, response);
+    await sendCommandAck(command, response ?? { error: "empty_command_response" });
   } catch (err) {
     console.warn("[ServiceWorker] Error enviando comando a tab:", err);
-    // Enviar NACK (fallo) al backend
-    await sendCommandAck(cmd, { error: String(err) });
+    await sendCommandAck(command, { error: String(err) });
   }
 }
 
 async function sendCommandAck(cmd: BackendCommand, result: any): Promise<void> {
-  if (!backendUrl || !sessionToken) return;
+  if (!backendUrl || !sessionToken) {
+    console.error("[ServiceWorker] ACK omitido: sin backend o token", cmd.id);
+    return;
+  }
 
-  const ackStatus = result?.error ? "error" : "ok";
   const ackSessionId =
     cmd.targetSessionId || activeSessions.values().next().value?.sessionId || "default";
+  const events = buildCommandIngestEvents({
+    commandId: cmd.id,
+    commandType: cmd.type,
+    payload: cmd.payload,
+    result,
+  });
   const ackEvent = {
     sessionId: ackSessionId,
     browserId: "chrome",
     deviceId: "",
-    events: [{
-      id: `ack-${cmd.id}-${Date.now()}`,
-      type: "ack",
-      commandId: cmd.id,
-      ackStatus: ackStatus,
-      payload: {
-        commandId: cmd.id,
-        commandType: cmd.type,
-        status: ackStatus,
-        result: result?.error ? undefined : result,
-        error: result?.error,
-        executedAt: Date.now(),
-      },
-      timestamp: Date.now(),
-    }],
+    events,
   };
 
-  try {
-    const res = await fetch(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Session-Token": sessionToken || "",
-      },
-      body: JSON.stringify(ackEvent),
-    });
-    if (res.ok) {
-      console.log("[ServiceWorker] ACK enviado al backend:", cmd.id);
-    } else {
-      console.warn("[ServiceWorker] ACK falló:", res.status);
+  const url = `${backendUrl}${API_ENDPOINTS.POST_INGEST}`;
+  const delays = [0, 500, 1500];
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    if (delays[attempt]) await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-Token": sessionToken || "",
+        },
+        body: JSON.stringify(ackEvent),
+      });
+      const body = await res.text().catch(() => "");
+      if (res.ok && !looksLikeHtml(body, res.headers.get("content-type"))) {
+        console.log("[ServiceWorker] ACK enviado al backend:", cmd.id, events.map((e) => e.type).join("+"));
+        return;
+      }
+      console.warn("[ServiceWorker] ACK no aceptado:", res.status, body.slice(0, 180));
+    } catch (e) {
+      console.warn("[ServiceWorker] Error enviando ACK:", e);
     }
-  } catch (e) {
-    console.warn("[ServiceWorker] Error enviando ACK:", e);
   }
+  console.error("[ServiceWorker] ACK agotó reintentos; el comando puede quedar delivered sin ack:", cmd.id);
 }
 
 // ============================================================
@@ -718,6 +718,7 @@ async function flushIngestQueue(): Promise<void> {
         media: slimMediaForIngest(flat.media as Record<string, unknown> | undefined),
         contact: contact?.waId ? contact : undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
+        commandId: isCommandUuid(flat.commandId) ? flat.commandId.trim() : undefined,
         mediaRecovery: flat.mediaRecovery as boolean | undefined,
         payload: {
           fromMe: flat.fromMe as boolean | undefined,
