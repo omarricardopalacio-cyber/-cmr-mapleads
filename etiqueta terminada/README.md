@@ -48,7 +48,16 @@ npm run build
 
 `npm run build` ejecuta `tsc` y después `node build.js` (descarga WA-JS y empaqueta popup, service worker, content e injected). También se puede lanzar solo el empaquetado con `node build.js` desde esa misma carpeta, después de que `tsc` haya pasado.
 
-En `chrome://extensions` → modo desarrollador → Cargar descomprimida → elegir `etiqueta terminada/extension/dist`. Si la extensión ya estaba cargada, pulsar Recargar.
+En `chrome://extensions` → modo desarrollador → Cargar descomprimida → elegir `etiqueta terminada/extension/dist`.
+
+### Recargar en el navegador que ya tiene la extensión
+
+1. `chrome://extensions` → en MAPLE WA Engine pulsar **Recargar** (o Quitar y volver a **Cargar descomprimida** apuntando a `etiqueta terminada/extension/dist`).
+2. Si Chrome muestra **Reinicia para actualizar**, cerrar Chrome por completo y abrirlo de nuevo. Hasta ese reinicio el content script viejo sigue en WhatsApp y el detector no ve mensajes nuevos.
+3. Recargar la pestaña `https://web.whatsapp.com` (F5). El script de contenido solo se inyecta al cargar la página.
+4. Abrir el popup → Debug. Tras un mensaje nuevo (aunque el chat no esté abierto: basta con que cambie la lista) debe aparecer el texto en **Último mensaje** y, en unos segundos, el hilo del CRM.
+
+No hace falta una carpeta `extension/dist` en la raíz del repo: el build deja la extensión descomprimida en `etiqueta terminada/extension/dist`.
 
 ### Cargar en Chrome
 

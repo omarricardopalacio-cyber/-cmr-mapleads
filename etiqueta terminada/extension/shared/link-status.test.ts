@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   LINK_FAILS_TO_DOWN,
   LINK_GRACE_MS,
+  ingestFailureShouldStick,
   presentConnection,
   shouldMarkLinkDown,
 } from "./link-status.ts";
@@ -36,6 +37,12 @@ test("sustained failures after the grace mark the link down", () => {
     }),
     true,
   );
+});
+
+test("a fresh commands poll swallows a noisy ingest failure", () => {
+  assert.equal(ingestFailureShouldStick(now - 1_500, now), false);
+  assert.equal(ingestFailureShouldStick(0, now), true);
+  assert.equal(ingestFailureShouldStick(now - 30_000, now), true);
 });
 
 test("missing config is down immediately", () => {

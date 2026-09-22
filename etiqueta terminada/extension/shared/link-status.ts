@@ -20,6 +20,15 @@ export function shouldMarkLinkDown(opts: {
   return opts.now - opts.lastOkAt >= LINK_GRACE_MS;
 }
 
+/**
+ * Poll de comandos reciente: un POST /ingest vacío o sin red no debe
+ * dejar el error rojo pegado bajo OK BACKEND.
+ */
+export function ingestFailureShouldStick(lastLinkOkAt: number, now: number, graceMs = 20_000): boolean {
+  if (!lastLinkOkAt) return true;
+  return now - lastLinkOkAt >= graceMs;
+}
+
 /** Hubo al menos un OK y el fallo todavía no es sostenido. */
 export function linkIsUp(opts: {
   configured: boolean;

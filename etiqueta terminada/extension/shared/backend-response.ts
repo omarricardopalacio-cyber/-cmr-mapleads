@@ -14,10 +14,55 @@ export function describeTransportError(url: string, error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error || "");
   const generic = /failed to fetch|networkerror|load failed/i.test(raw);
   if (generic || !raw) {
-    return `No se pudo contactar ${url}. El CRM no devolvió JSON.`;
+    return `No se pudo contactar ${url}. Sin respuesta de red.`;
   }
   if (raw.includes(url)) return raw;
   return `${raw} (${url})`;
+}
+
+export type IngestRead =
+  | { action: "ok" }
+  | { action: "ignore"; message: string }
+  | { action: "fail"; message: string };
+
+/**
+ * Un POST /ingest vacío recibe 400 JSON `Invalid payload`. Eso no es
+ * «el CRM no devolvió JSON» y no debe pintar el error rojo si el poll está sano.
+ */
+export function interpretIngestResponse(input: {
+  url: string;
+  status: number;
+  ok: boolean;
+  contentType?: string | null;
+  body: string;
+}): IngestRead {
+  const body = input.body || "";
+  if (looksLikeHtml(body, input.contentType)) {
+    return { action: "fail", message: `La ruta de ingest respondió HTML, no JSON: ${input.url}` };
+  }
+  if (input.ok) return { action: "ok" };
+
+  let parsed: unknown;
+  try {
+    parsed = body.trim() ? JSON.parse(body) : undefined;
+  } catch {
+    return {
+      action: "fail",
+      message: `Ingest HTTP ${input.status} sin JSON en ${input.url}`,
+    };
+  }
+
+  const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined;
+  const serverMessage = String(record?.error || record?.message || `HTTP ${input.status}`);
+  const emptyPayload =
+    input.status === 400 && /invalid payload|events|empty/i.test(serverMessage);
+  if (emptyPayload || (input.status === 400 && record)) {
+    return { action: "ignore", message: serverMessage };
+  }
+  if (input.status >= 500) {
+    return { action: "fail", message: `Ingest HTTP ${input.status} en ${input.url}` };
+  }
+  return { action: "ignore", message: serverMessage };
 }
 
 export function commandsRoutingError(url: string): string {

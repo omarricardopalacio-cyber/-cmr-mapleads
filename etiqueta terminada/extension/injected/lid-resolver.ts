@@ -587,8 +587,14 @@ export async function applyIdentityToMessage(msg: any, base: any, budgetMs = 250
     if (to) to = canonicalWaId(to) || to;
   }
 
-  const fromMe = !!base?.fromMe;
-  const counterpart = (fromMe ? to || chatId : from || chatId) || chatId;
+  const fromMe = base?.fromMe === true;
+  const originalChatId = typeof base?.chatId === "string" ? base.chatId : "";
+  // chatId ya pasó por LID→teléfono. Si esa resolución nos devolvió NUESTRO número, volver al peer.
+  const counterpart = !isOwnJid(chatId)
+    ? chatId
+    : originalChatId && !isOwnJid(originalChatId)
+      ? originalChatId
+      : (fromMe ? to || originalChatId : from || originalChatId) || originalChatId || chatId;
   const phone = sanitizePhoneForIngest(
     isLidJid(counterpart) ? undefined : counterpart,
     counterpart,

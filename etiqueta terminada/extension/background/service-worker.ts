@@ -6,8 +6,9 @@
 import { BackgroundBridge } from "../bridge/bridge";
 import { API_ENDPOINTS, CONSTANTS, canonicalizeBackendUrl } from "../shared/contracts";
 import { buildIngestContact, httpProfileUrl, sameProfilePicture } from "../shared/wa-identity";
-import { linkIsUp, presentConnection, shouldMarkLinkDown } from "../shared/link-status";
-import { describeTransportError, interpretCommandsResponse, looksLikeHtml, unavailableMedia } from "../shared/backend-response";
+import { ingestFailureShouldStick, linkIsUp, presentConnection, shouldMarkLinkDown } from "../shared/link-status";
+import { describeTransportError, interpretCommandsResponse, interpretIngestResponse, looksLikeHtml, unavailableMedia } from "../shared/backend-response";
+import { coerceFromMe } from "../shared/live-message";
 import { buildCommandIngestEvents, isCommandUuid } from "../shared/command-ack";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
@@ -659,9 +660,21 @@ async function flushIngestQueue(): Promise<void> {
     deviceId: phoneNumber,
     events: batch.map((e) => {
       const flat = eventPayloadRecord(e as WAEvent);
-      const fromMe = flat.fromMe as boolean | undefined;
-      const inferredType =
-        e.type === "NEW_MESSAGE" && fromMe ? "message-out" : mapEventType(e.type);
+      const fromMeFlag = coerceFromMe(flat.fromMe);
+      const explicitDir = flat.direction === "in" || flat.direction === "out" ? flat.direction : undefined;
+      const direction =
+        explicitDir ?? (fromMeFlag === true ? "out" : fromMeFlag === false ? "in" : undefined);
+      // El detector de la lista manda type "message-in"/"message-out" además de NEW_MESSAGE.
+      const rawType = String(e.type || "");
+      const isChatMessage =
+        rawType === "NEW_MESSAGE" ||
+        rawType === "MESSAGE_SENT" ||
+        rawType === "message-in" ||
+        rawType === "message-out";
+      const inferredType = isChatMessage && direction
+        ? direction === "in" ? "message-in" : "message-out"
+        : mapEventType(rawType);
+      const fromMe = fromMeFlag;
 
       const existingContact =
         flat.contact && typeof flat.contact === "object"
@@ -671,12 +684,10 @@ async function flushIngestQueue(): Promise<void> {
       // El teléfono siempre debe salir del interlocutor. En mensajes entrantes
       // `to` somos nosotros; usarlo como fallback creaba un contacto con el
       // número de la sesión y hacía que los flujos se enviaran al chat "(Tú)".
-      const counterpartJid =
-        fromMe === true
-          ? flat.to || flat.chatId
-          : fromMe === false
-            ? flat.from || flat.chatId
-            : flat.chatId;
+      const outgoing = direction === "out";
+      const counterpartJid = outgoing
+        ? flat.to || flat.chatId || flat.lid || flat.from
+        : flat.chatId || flat.lid || flat.from || flat.to;
 
       const displayName =
         (existingContact?.displayName as string | undefined) ||
@@ -711,9 +722,8 @@ async function flushIngestQueue(): Promise<void> {
         type: inferredType as any,
         chatId,
         waMessageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
-        direction:
-          (flat.direction as "in" | "out" | undefined) ??
-          (typeof fromMe === "boolean" ? (fromMe ? "out" : "in") : undefined),
+        direction,
+        lid: typeof flat.lid === "string" ? flat.lid : undefined,
         text: (flat.text ?? flat.body) as string | undefined,
         media: slimMediaForIngest(flat.media as Record<string, unknown> | undefined),
         contact: contact?.waId ? contact : undefined,
@@ -741,11 +751,30 @@ async function flushIngestQueue(): Promise<void> {
     }),
   };
 
+  const liveEvents = (payload.events || []).filter(
+    (event) => event && typeof event.type === "string" && event.type.length > 0,
+  );
+  if (liveEvents.length === 0) {
+    // No postear events:[] — el CRM responde 400 JSON y no es un corte de red.
+    await chrome.storage.local.set({ eventQueue: queue.slice(batch.length) });
+    console.warn("[ServiceWorker] Flush vacío omitido");
+    return;
+  }
+  payload.events = liveEvents;
+
+  const ingestUrl = `${backendUrl}${API_ENDPOINTS.POST_INGEST}`;
   const bodyJson = JSON.stringify(payload);
   console.log("[ServiceWorker] Ingest body:", bodyJson.substring(0, 2000));
 
+  const noteIngestProblem = async (message: string, fatal: boolean) => {
+    console.warn("[ServiceWorker] Ingest:", message);
+    if (!fatal) return;
+    if (!ingestFailureShouldStick(lastLinkOkAt, Date.now())) return;
+    await markLinkFail(message);
+  };
+
   try {
-    const response = await fetch(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, {
+    const response = await fetch(ingestUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -753,23 +782,29 @@ async function flushIngestQueue(): Promise<void> {
       },
       body: bodyJson,
     });
+    const responseBody = await response.text().catch(() => "");
+    const read = interpretIngestResponse({
+      url: ingestUrl,
+      status: response.status,
+      ok: response.ok,
+      contentType: response.headers.get("content-type"),
+      body: responseBody,
+    });
 
-    if (response.ok) {
-      // Remover eventos enviados de la cola
+    if (read.action === "ok") {
       const remaining = queue.slice(batch.length);
       await chrome.storage.local.set({ eventQueue: remaining });
       await markLinkOk({ lastFlush: Date.now() });
-      console.log(`[ServiceWorker] Ingest: ${batch.length} eventos sincronizados, ${remaining.length} restantes`);
-    } else {
-      const errText = await response.text().catch(() => "");
-      console.warn(`[ServiceWorker] Ingest error ${response.status}:`, errText.substring(0, 500));
-      // 504/5xx no pisa un poll sano: solo cuenta si se sostiene. El poll exitoso lo perdona.
-      await markLinkFail(
-        describeTransportError(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, `HTTP ${response.status}`),
-      );
+      console.log(`[ServiceWorker] Ingest: ${liveEvents.length} eventos sincronizados, ${remaining.length} restantes`);
+      return;
     }
+    if (read.action === "ignore") {
+      await noteIngestProblem(read.message, false);
+      return;
+    }
+    await noteIngestProblem(read.message, true);
   } catch (err: any) {
-    await markLinkFail(describeTransportError(`${backendUrl}${API_ENDPOINTS.POST_INGEST}`, err));
+    await noteIngestProblem(describeTransportError(ingestUrl, err), true);
   }
 }
 
@@ -1053,6 +1088,26 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
     if (eventHasHeavyMedia(event)) {
       console.log("[MAPLE MULTIMEDIA] Guardando en PC / offload selectivo...");
       stored = await offloadHeavyMediaFromEvent(event);
+    }
+
+    if (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT") {
+      const text = String(flat.text || flat.body || "").slice(0, 60);
+      const fromMeFlag = coerceFromMe(flat.fromMe);
+      const direction =
+        flat.direction === "in" || flat.direction === "out"
+          ? flat.direction
+          : fromMeFlag === true
+            ? "out"
+            : "in";
+      chrome.storage.local.set({
+        lastDomEvent: {
+          type: event.type,
+          text,
+          direction,
+          chatId: flat.chatId,
+          at: Date.now(),
+        },
+      }).catch(() => {});
     }
 
     const result = await chrome.storage.local.get("eventQueue");

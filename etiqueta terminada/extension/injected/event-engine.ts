@@ -9,7 +9,9 @@ import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
 import { sanitizeMessageBody, isWhatsAppSystemText } from "../shared/message-text";
 import { unavailableMedia } from "../shared/backend-response";
-import { canonicalWaId, sanitizePhoneForIngest } from "../shared/wa-identity";
+import { canonicalWaId, digitsOnly, sanitizePhoneForIngest } from "../shared/wa-identity";
+import { coerceFromMe, isSkippableWaType, peerChatJid } from "../shared/live-message";
+import { startLiveMessageSync } from "./live-sync";
 import {
   applyIdentityToMessage,
   fetchProfilePictureUrl,
@@ -45,6 +47,7 @@ export async function initEventEngine(): Promise<void> {
     registerPresenceChange(WPP);
     registerLabelUpdate(WPP);
     registerStreamInfo(WPP);
+    startLiveMessageSync((msg) => processNewMessage(msg));
 
     listenersInitialized = true;
     console.log("[EventEngine] Todos los listeners registrados");
@@ -351,7 +354,7 @@ function buildMessageFast(msg: any): any {
     text: cleanBody,
     type: msg.type,
     timestamp: msg.t,
-    fromMe: msg.id?.fromMe || false,
+    fromMe: coerceFromMe(msg.id?.fromMe, msg.fromMe, msg.isSentByMe) === true,
     author,
     media,
     ack: msg.ack,
@@ -363,25 +366,27 @@ function buildMessageFast(msg: any): any {
   };
 }
 
+const emittedMessageIds = new Set<string>();
+
 async function processNewMessage(msg: any): Promise<void> {
-  // Tipos de protocolo / notificación: no son chat de cliente
+  // Tipos de protocolo / notificación: no son chat de cliente.
+  // ciphertext se reintenta cuando el store cambia el type (live-sync).
   const t = String(msg?.type || "").toLowerCase();
-  if (
-    [
-      "notification",
-      "notification_template",
-      "e2e_notification",
-      "gp2",
-      "ciphertext",
-      "protocol",
-      "call_log",
-      "revoked",
-    ].includes(t)
-  ) {
-    return;
-  }
+  if (isSkippableWaType(t)) return;
+
+  const messageKey = String(msg?.id?._serialized || (typeof msg?.id === "string" ? msg.id : "") || "");
+  if (messageKey && emittedMessageIds.has(messageKey)) return;
+  if (messageKey) emittedMessageIds.add(messageKey);
 
   const fast = buildMessageFast(msg);
+  const fromMe = coerceFromMe(msg?.id?.fromMe, msg?.fromMe, msg?.isSentByMe, fast.fromMe) === true;
+  fast.fromMe = fromMe;
+  const me = getMyPhoneNumber();
+  const remote = String(msg?.id?.remote?._serialized || fast.chatId || "");
+  const peer = peerChatJid({ remote, from: fast.from, to: fast.to, meDigits: me });
+  if (peer) fast.chatId = peer;
+  if (remote.endsWith("@lid")) fast.lid = canonicalWaId(remote);
+
   if (isWhatsAppSystemText(fast.text || fast.body)) {
     console.warn("[EventEngine] skip system banner text");
     return;
@@ -390,17 +395,25 @@ async function processNewMessage(msg: any): Promise<void> {
   // Resolver @lid → celular y foto ANTES de encolar el ingest.
   // Si WA no responde, se emite el @lid con phone vacío (nunca dígitos crudos).
   const identified = await applyIdentityToMessage(msg, fast).catch(() => undefined);
-  const normalized = identified || fast;
+  let normalized = identified || fast;
+  const meDigits = digitsOnly(me);
+  if (meDigits && digitsOnly(normalized.chatId) === meDigits && peer && digitsOnly(peer) !== meDigits) {
+    normalized = {
+      ...normalized,
+      chatId: peer,
+      contact: {
+        ...(normalized.contact || {}),
+        waId: canonicalWaId(peer) || peer,
+        phone: undefined,
+      },
+    };
+  }
+  if (remote.endsWith("@lid")) normalized = { ...normalized, lid: canonicalWaId(remote) };
 
-  // Nunca automatizar chat consigo mismo
-  const me = getMyPhoneNumber();
-  const chatDigits = String(normalized.chatId || "").replace(/\D/g, "");
-  if (me && chatDigits && me === chatDigits) {
-    // Solo registrar saliente si quieres historial; no emitir NEW_MESSAGE
-    if (!normalized.fromMe) {
-      console.warn("[EventEngine] skip self-chat inbound", normalized.chatId);
-      return;
-    }
+  // Nunca automatizar chat consigo mismo. Un LID de cliente no es ese caso.
+  if (meDigits && digitsOnly(normalized.chatId) === meDigits) {
+    console.warn("[EventEngine] skip self-chat", normalized.chatId);
+    return;
   }
 
   const eventType = normalized.fromMe ? "MESSAGE_SENT" : "NEW_MESSAGE";
