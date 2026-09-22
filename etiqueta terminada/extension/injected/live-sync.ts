@@ -8,10 +8,13 @@ import { shouldIngestLiveMessage } from "../shared/live-message";
 const CATCHUP_MS = 20 * 60_000;
 const POLL_MS = 2_000;
 
-export function startLiveMessageSync(onMessage: (msg: any) => Promise<void> | void): () => void {
+export function startLiveMessageSync(
+  onMessage: (msg: any) => Promise<boolean | void> | boolean | void,
+): () => void {
   const catchupSinceMs = Date.now() - CATCHUP_MS;
   let stopped = false;
   const seen = new Set<string>();
+  const pending = new Set<string>();
   const queue: any[] = [];
   let pumping = false;
 
@@ -24,6 +27,7 @@ export function startLiveMessageSync(onMessage: (msg: any) => Promise<void> | vo
     if (!id || seen.has(id)) return;
     const remote = String(msg?.id?.remote?._serialized || msg?.from?._serialized || "");
     if (remote.endsWith("@g.us") || remote.includes("status@broadcast")) return;
+    if (pending.has(id)) return;
     if (
       !shouldIngestLiveMessage({
         messageId: id,
@@ -36,13 +40,15 @@ export function startLiveMessageSync(onMessage: (msg: any) => Promise<void> | vo
     ) {
       return;
     }
-    seen.add(id);
-    if (seen.size > 2000) {
-      const drop = seen.values().next().value;
-      if (drop) seen.delete(drop);
-    }
+    pending.add(id);
     queue.push(msg);
-    if (queue.length > 40) queue.splice(0, queue.length - 40);
+    if (queue.length > 40) {
+      const dropped = queue.splice(0, queue.length - 40);
+      for (const old of dropped) {
+        const oldId = messageId(old);
+        if (oldId) pending.delete(oldId);
+      }
+    }
     void pump();
   };
 
@@ -52,10 +58,21 @@ export function startLiveMessageSync(onMessage: (msg: any) => Promise<void> | vo
     try {
       while (queue.length && !stopped) {
         const msg = queue.shift();
+        const id = messageId(msg);
         try {
-          await onMessage(msg);
+          // false = el cuerpo aún no está (p. ej. solo emojis). El siguiente poll reintenta.
+          const accepted = await onMessage(msg);
+          if (accepted !== false && id) {
+            seen.add(id);
+            if (seen.size > 2000) {
+              const drop = seen.values().next().value;
+              if (drop) seen.delete(drop);
+            }
+          }
         } catch (err) {
           console.warn("[LiveSync] no se pudo emitir", err);
+        } finally {
+          if (id) pending.delete(id);
         }
       }
     } finally {

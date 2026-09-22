@@ -67,14 +67,18 @@ export class ContentBridge {
           body.payload && typeof body.payload === "object"
             ? (body.payload as Record<string, unknown>)
             : body;
-        noteDetectedPeer([
-          inner.chatId,
-          inner.lid,
-          inner.from,
-          inner.to,
-          (inner.contact as { phone?: string; waId?: string } | undefined)?.phone,
-          (inner.contact as { waId?: string } | undefined)?.waId,
-        ]);
+        noteDetectedPeer(
+          [
+            inner.chatId,
+            inner.lid,
+            inner.from,
+            inner.to,
+            (inner.contact as { phone?: string; waId?: string } | undefined)?.phone,
+            (inner.contact as { waId?: string } | undefined)?.waId,
+          ],
+          Date.now(),
+          String(inner.text || inner.body || ""),
+        );
       }
 
       // Emitir localmente en el content script (para debug / UI)

@@ -1,10 +1,19 @@
 import { useState, useEffect } from "react";
 
+interface IngestDebug {
+  at?: number;
+  status?: number;
+  ok?: boolean;
+  body?: string;
+  text?: string;
+}
+
 interface DebugState {
   wppLoaded: boolean;
   engineLoaded: boolean;
   lastEvent: any;
   lastError: string;
+  lastIngest: IngestDebug | null;
   wsStatus: string;
   eventsCount: number;
 }
@@ -15,6 +24,7 @@ export default function DebugPanel() {
     engineLoaded: false,
     lastEvent: null,
     lastError: "",
+    lastIngest: null,
     wsStatus: "desconectado",
     eventsCount: 0,
   });
@@ -23,13 +33,14 @@ export default function DebugPanel() {
   useEffect(() => {
     const check = () => {
       chrome.storage.local.get([
-        "wsStatus", "lastError", "lastDomEvent", "lastPoll",
+        "wsStatus", "lastError", "lastDomEvent", "lastPoll", "lastIngest",
       ]).then((stored) => {
         setState((prev) => ({
           ...prev,
           wsStatus: stored.wsStatus || "desconectado",
           lastError: stored.lastError || "",
           lastEvent: stored.lastDomEvent || prev.lastEvent,
+          lastIngest: stored.lastIngest || prev.lastIngest,
         }));
       });
 
@@ -106,7 +117,18 @@ export default function DebugPanel() {
         ) : (
           <div className="text-slate-500 italic">Ningún mensaje detectado aún</div>
         )}
+        <div className={`font-mono text-[10px] break-all ${state.lastIngest && state.lastIngest.ok === false ? "text-red-300" : "text-slate-500"}`}>
+          Ingest: {state.lastIngest
+            ? `HTTP ${state.lastIngest.status ?? 0} ${state.lastIngest.ok ? "OK" : "FAIL"} ${state.lastIngest.body || ""}`
+            : "—"}
+        </div>
       </div>
+
+      {state.lastIngest && state.lastIngest.ok === false && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded p-2 text-red-400">
+          Ingest HTTP {state.lastIngest.status ?? 0}: {state.lastIngest.body || "sin cuerpo"}
+        </div>
+      )}
 
       {state.lastError && state.wsStatus !== "connected" && (
         <div className="bg-red-500/10 border border-red-500/20 rounded p-2 text-red-400">

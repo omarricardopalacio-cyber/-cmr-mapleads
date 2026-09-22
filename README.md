@@ -60,7 +60,7 @@ npm run build
 5. Si la tarjeta dice **Reinicia para actualizar**, cerrar Chrome por completo y volver a abrirlo
 6. Recargar `https://web.whatsapp.com` para que el content script nuevo quede inyectado
 
-El detector lee la **lista** de chats, no solo la conversación abierta. Un inbound nuevo debe verse en el popup (Debug → Último mensaje) y en el CRM a los pocos segundos.
+El detector lee la **lista** de chats, no solo la conversación abierta. Un inbound nuevo (también si es solo emojis) debe verse en el popup (Debug → Último mensaje) junto con `Ingest: HTTP 200 OK` y, a los pocos segundos, en el CRM. Si el POST falla, Debug muestra `FAIL` y el recorte de la respuesta aunque el badge siga en CONECTADO.
 
 ## Configuración
 

@@ -9,6 +9,16 @@ import { buildIngestContact, httpProfileUrl, sameProfilePicture } from "../share
 import { ingestFailureShouldStick, linkIsUp, presentConnection, shouldMarkLinkDown } from "../shared/link-status";
 import { describeTransportError, interpretCommandsResponse, interpretIngestResponse, looksLikeHtml, unavailableMedia } from "../shared/backend-response";
 import { coerceFromMe } from "../shared/live-message";
+import { hasVisibleMessageText } from "../shared/message-text";
+import {
+  chatEventIsPostable,
+  clipIngestString,
+  clipJid,
+  ingestBodySnippet,
+  isLiveChatEvent,
+  shouldSkipDuplicateIngest,
+  usableChatId,
+} from "../shared/ingest-debug";
 import { buildCommandIngestEvents, isCommandUuid } from "../shared/command-ack";
 import type { BackendCommand, WAEvent, IngestPayload, SessionInfo } from "../shared/types";
 import {
@@ -36,6 +46,8 @@ let lastEngineOkAt = 0;
 let lastSessionOkAt = 0;
 let lastBridgeOkAt = 0;
 let lastContentHealAt = 0;
+let ingestRejectHead = "";
+let ingestRejectStreak = 0;
 
 function rememberOwnAvatars(values: unknown[]): void {
   let changed = false;
@@ -610,13 +622,87 @@ async function sendHeartbeat(): Promise<void> {
 // Ingest — Enviar eventos al backend
 // ============================================================
 
-async function flushIngestQueue(): Promise<void> {
-  if (!backendUrl || !sessionToken) return;
+async function recordIngestAttempt(opts: {
+  status: number;
+  ok: boolean;
+  body: string;
+  messages: Array<{ text: string; direction?: string; chatId?: string; type?: string }>;
+  attempted: boolean;
+}): Promise<void> {
+  const snippet = ingestBodySnippet(opts.body);
+  const last =
+    [...opts.messages].reverse().find((message) => hasVisibleMessageText(message.text)) ||
+    opts.messages[opts.messages.length - 1];
+  const patch: Record<string, unknown> = {
+    lastIngest: {
+      at: Date.now(),
+      status: opts.status,
+      ok: opts.ok,
+      body: snippet,
+      text: (last?.text || "").slice(0, 60),
+    },
+  };
+  // Último mensaje del Debug solo si ese texto iba en el POST.
+  if (opts.attempted && last) {
+    patch.lastDomEvent = {
+      type: last.type || "NEW_MESSAGE",
+      text: (last.text || "").slice(0, 60),
+      direction: last.direction || "in",
+      chatId: last.chatId,
+      at: Date.now(),
+    };
+  }
+  await chrome.storage.local.set(patch);
+}
 
+async function flushIngestQueue(): Promise<void> {
   // Leer eventos de chrome.storage.local (buffer temporal del bridge)
   const stored = await chrome.storage.local.get("eventQueue");
-  const queue: any[] = stored.eventQueue || [];
+  const rawQueue: any[] = stored.eventQueue || [];
+  const queue: any[] = [];
+  let droppedEmpty = 0;
+  for (const ev of rawQueue) {
+    const flat = eventPayloadRecord(ev as WAEvent);
+    const text = flat.text ?? flat.body;
+    if (!chatEventIsPostable({ type: (ev as WAEvent).type, text, media: flat.media })) {
+      droppedEmpty += 1;
+      continue;
+    }
+    if (isLiveChatEvent((ev as WAEvent).type) && !usableChatId(flat.chatId, flat.lid, flat.from, flat.to, flat.waId)) {
+      droppedEmpty += 1;
+      const snippet = String(text || "").slice(0, 60);
+      await recordIngestAttempt({
+        status: 0,
+        ok: false,
+        body: `sin chatId/LID; no se envió a ingest: ${snippet}`,
+        messages: [{ text: snippet, direction: String(flat.direction || "in") }],
+        attempted: false,
+      });
+      continue;
+    }
+    queue.push(ev);
+  }
+  if (droppedEmpty) {
+    console.log("[ServiceWorker] cola: eventos sin texto ni chatId fuera", droppedEmpty);
+    await chrome.storage.local.set({ eventQueue: queue });
+  }
   if (queue.length === 0) return;
+
+  if (!backendUrl || !sessionToken) {
+    const pending = queue.find((ev) => isLiveChatEvent((ev as WAEvent).type));
+    if (pending) {
+      const flat = eventPayloadRecord(pending as WAEvent);
+      const snippet = String(flat.text || flat.body || "").slice(0, 60);
+      await recordIngestAttempt({
+        status: 0,
+        ok: false,
+        body: `Sin Backend URL o token; no se envió a ingest: ${snippet}`,
+        messages: [{ text: snippet, direction: String(flat.direction || "in"), chatId: String(flat.chatId || "") }],
+        attempted: false,
+      });
+    }
+    return;
+  }
 
   let batch = queue.slice(0, CONSTANTS.BATCH_MAX_SIZE) as WAEvent[];
   const heavyIdx = batch.findIndex((ev) => eventHasHeavyMedia(ev));
@@ -713,20 +799,33 @@ async function flushIngestQueue(): Promise<void> {
         ownProfilePictureUrls: ownProfilePictureUrls,
         keepLidKey: e.type === "CONTACT_INFO" || inferredType === "CONTACT_INFO",
       });
-      const chatId = identity.chatId;
       const phone = identity.phone;
       const contact = identity.contact;
+      // Si el resolver deja el JID vacío, se conserva el chatId/LID original.
+      const chatId = clipJid(
+        usableChatId(identity.chatId, flat.chatId, flat.lid, counterpartJid),
+        128,
+      );
+
+      const fittedContact = contact?.waId
+        ? {
+            waId: clipJid(String(contact.waId), 64) || String(contact.waId).slice(0, 64),
+            phone: clipIngestString(contact.phone, 32),
+            displayName: clipIngestString(contact.displayName, 255),
+            profilePictureUrl: clipIngestString(contact.profilePictureUrl, 2000),
+          }
+        : undefined;
 
       return {
         id: `${e.id}`,
         type: inferredType as any,
         chatId,
-        waMessageId: (flat.messageId ?? flat.waMessageId) as string | undefined,
+        waMessageId: clipIngestString((flat.messageId ?? flat.waMessageId) as string | undefined, 128),
         direction,
-        lid: typeof flat.lid === "string" ? flat.lid : undefined,
-        text: (flat.text ?? flat.body) as string | undefined,
+        lid: clipJid(typeof flat.lid === "string" ? flat.lid : undefined, 128),
+        text: clipIngestString((flat.text ?? flat.body) as string | undefined, 20000),
         media: slimMediaForIngest(flat.media as Record<string, unknown> | undefined),
-        contact: contact?.waId ? contact : undefined,
+        contact: fittedContact?.waId ? fittedContact : undefined,
         sentAt: flat.sentAt ?? flat.timestamp,
         commandId: isCommandUuid(flat.commandId) ? flat.commandId.trim() : undefined,
         mediaRecovery: flat.mediaRecovery as boolean | undefined,
@@ -762,6 +861,15 @@ async function flushIngestQueue(): Promise<void> {
   }
   payload.events = liveEvents;
 
+  const postedMessages = (liveEvents as unknown as Array<Record<string, unknown>>)
+    .filter((event) => event.type === "message-in" || event.type === "message-out")
+    .map((event) => ({
+      text: String(event.text || ""),
+      direction: typeof event.direction === "string" ? event.direction : undefined,
+      chatId: typeof event.chatId === "string" ? event.chatId : undefined,
+      type: event.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE",
+    }));
+
   const ingestUrl = `${backendUrl}${API_ENDPOINTS.POST_INGEST}`;
   const bodyJson = JSON.stringify(payload);
   console.log("[ServiceWorker] Ingest body:", bodyJson.substring(0, 2000));
@@ -791,21 +899,75 @@ async function flushIngestQueue(): Promise<void> {
       body: responseBody,
     });
 
+    const debugBody = responseBody || (read.action === "ok" ? '{"ok":true}' : read.message);
+    if (postedMessages.length || read.action !== "ok") {
+      await recordIngestAttempt({
+        status: response.status,
+        ok: read.action === "ok",
+        body: debugBody,
+        messages: postedMessages,
+        attempted: true,
+      });
+    }
+
     if (read.action === "ok") {
       const remaining = queue.slice(batch.length);
       await chrome.storage.local.set({ eventQueue: remaining });
+      await markMessagesPosted(batch);
+      ingestRejectHead = "";
+      ingestRejectStreak = 0;
       await markLinkOk({ lastFlush: Date.now() });
       console.log(`[ServiceWorker] Ingest: ${liveEvents.length} eventos sincronizados, ${remaining.length} restantes`);
       return;
     }
     if (read.action === "ignore") {
       await noteIngestProblem(read.message, false);
+      const head = String((batch[0] as WAEvent | undefined)?.id || "");
+      if (response.status === 400 && head) {
+        if (head === ingestRejectHead) ingestRejectStreak += 1;
+        else {
+          ingestRejectHead = head;
+          ingestRejectStreak = 1;
+        }
+        if (ingestRejectStreak >= 3) {
+          await chrome.storage.local.set({ eventQueue: queue.slice(1) });
+          ingestRejectHead = "";
+          ingestRejectStreak = 0;
+          console.warn("[ServiceWorker] evento rechazado 3 veces, se saca de la cola", head);
+        }
+      }
       return;
     }
     await noteIngestProblem(read.message, true);
   } catch (err: any) {
-    await noteIngestProblem(describeTransportError(ingestUrl, err), true);
+    const message = describeTransportError(ingestUrl, err);
+    if (postedMessages.length) {
+      await recordIngestAttempt({
+        status: 0,
+        ok: false,
+        body: message,
+        messages: postedMessages,
+        attempted: true,
+      });
+    }
+    await noteIngestProblem(message, true);
   }
+}
+
+async function markMessagesPosted(events: WAEvent[]): Promise<void> {
+  const patch: Record<string, unknown> = {};
+  const now = Date.now();
+  for (const ev of events) {
+    const flat = eventPayloadRecord(ev);
+    const id = String(flat.messageId || flat.waMessageId || "").trim();
+    if (!id) continue;
+    patch[`seenMsg:${id}`] = {
+      at: now,
+      text: String(flat.text || flat.body || "").slice(0, 80),
+      posted: true,
+    };
+  }
+  if (Object.keys(patch).length) await chrome.storage.local.set(patch);
 }
 
 // ============================================================
@@ -825,8 +987,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, error: "events_only_from_content" });
           break;
         }
-        await handleWAEvent(message.payload as WAEvent, sender);
-        sendResponse({ ok: true });
+        const result = await handleWAEvent(message.payload as WAEvent, sender);
+        sendResponse({ ok: true, ...result });
         break;
 
       case "WA_REQUEST":
@@ -1065,49 +1227,55 @@ async function offloadHeavyMediaFromEvent(event: WAEvent): Promise<WAEvent> {
   return { ...event, payload: { ...p, media: localOnlyMedia } };
 }
 
-async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSender): Promise<void> {
+async function handleWAEvent(
+  event: WAEvent,
+  _sender: chrome.runtime.MessageSender,
+): Promise<{ queued: boolean; reason?: string }> {
   // Guardar en cola local (chrome.storage.local)
   try {
     const flat = eventPayloadRecord(event);
     const waMessageId = String(flat.messageId || flat.waMessageId || "").trim();
     const isMediaRecovery = flat.mediaRecovery === true;
+    const eventText = String(flat.text || flat.body || "");
+    const isChat = event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT";
+
+    if (isChat && !chatEventIsPostable({ type: event.type, text: eventText, media: flat.media })) {
+      console.log("[ServiceWorker] no se encola shell vacío", waMessageId || event.type);
+      return { queued: false, reason: "empty" };
+    }
+
+    if (isChat && !usableChatId(flat.chatId, flat.lid, flat.from, flat.to, flat.waId)) {
+      const snippet = eventText.slice(0, 60);
+      await recordIngestAttempt({
+        status: 0,
+        ok: false,
+        body: `sin chatId/LID; no se envió a ingest: ${snippet}`,
+        messages: [{ text: snippet, direction: String(flat.direction || "in"), chatId: String(flat.chatId || "") }],
+        attempted: false,
+      });
+      console.warn("[ServiceWorker] mensaje sin chatId", snippet);
+      return { queued: false, reason: "no-chat" };
+    }
+
     // Dedupe DOM+WPP del mismo waMessageId (salvo mediaRecovery real).
-    if (waMessageId && !isMediaRecovery && (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT")) {
+    // Un visto sin texto no bloquea el mismo id cuando el cuerpo ya trae emojis.
+    if (waMessageId && !isMediaRecovery && isChat) {
       const seenKey = `seenMsg:${waMessageId}`;
       const seenStore = await chrome.storage.local.get(seenKey);
-      const prev = Number(seenStore[seenKey] || 0);
       const now = Date.now();
-      if (prev && now - prev < 90_000) {
+      if (shouldSkipDuplicateIngest({ previous: seenStore[seenKey], nextText: eventText, now })) {
         console.log("[ServiceWorker] skip evento duplicado (DOM/WPP)", waMessageId, event.type);
-        return;
+        return { queued: false, reason: "duplicate" };
       }
-      await chrome.storage.local.set({ [seenKey]: now });
+      await chrome.storage.local.set({
+        [seenKey]: { at: now, text: eventText.slice(0, 80), posted: false },
+      });
     }
 
     let stored = event;
     if (eventHasHeavyMedia(event)) {
       console.log("[MAPLE MULTIMEDIA] Guardando en PC / offload selectivo...");
       stored = await offloadHeavyMediaFromEvent(event);
-    }
-
-    if (event.type === "NEW_MESSAGE" || event.type === "MESSAGE_SENT") {
-      const text = String(flat.text || flat.body || "").slice(0, 60);
-      const fromMeFlag = coerceFromMe(flat.fromMe);
-      const direction =
-        flat.direction === "in" || flat.direction === "out"
-          ? flat.direction
-          : fromMeFlag === true
-            ? "out"
-            : "in";
-      chrome.storage.local.set({
-        lastDomEvent: {
-          type: event.type,
-          text,
-          direction,
-          chatId: flat.chatId,
-          at: Date.now(),
-        },
-      }).catch(() => {});
     }
 
     const result = await chrome.storage.local.get("eventQueue");
@@ -1127,6 +1295,15 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
     }
   } catch (err) {
     console.error("[ServiceWorker] Error guardando evento:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    await recordIngestAttempt({
+      status: 0,
+      ok: false,
+      body: `No se encoló: ${message}`,
+      messages: [],
+      attempted: false,
+    }).catch(() => {});
+    return { queued: false, reason: "error" };
   }
 
   // Si es SESSION_READY, registrar sesión activa
@@ -1151,6 +1328,7 @@ async function handleWAEvent(event: WAEvent, _sender: chrome.runtime.MessageSend
     activeSessions.set(session.sessionId, session);
     await saveSession(session);
   }
+  return { queued: true };
 }
 
 async function handleRequest(message: any): Promise<any> {

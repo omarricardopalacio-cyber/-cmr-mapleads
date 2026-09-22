@@ -55,7 +55,7 @@ En `chrome://extensions` → modo desarrollador → Cargar descomprimida → ele
 1. `chrome://extensions` → en MAPLE WA Engine pulsar **Recargar** (o Quitar y volver a **Cargar descomprimida** apuntando a `etiqueta terminada/extension/dist`).
 2. Si Chrome muestra **Reinicia para actualizar**, cerrar Chrome por completo y abrirlo de nuevo. Hasta ese reinicio el content script viejo sigue en WhatsApp y el detector no ve mensajes nuevos.
 3. Recargar la pestaña `https://web.whatsapp.com` (F5). El script de contenido solo se inyecta al cargar la página.
-4. Abrir el popup → Debug. Tras un mensaje nuevo (aunque el chat no esté abierto: basta con que cambie la lista) debe aparecer el texto en **Último mensaje** y, en unos segundos, el hilo del CRM.
+4. Abrir el popup → Debug. Tras un mensaje nuevo (aunque el chat no esté abierto: basta con que cambie la lista) debe aparecer el texto en **Último mensaje** y, en la misma caja, `Ingest: HTTP 200 OK` más un recorte del JSON. Si el POST falla, la línea queda en `FAIL` aunque el badge siga en CONECTADO. Un inbound de solo emojis también tiene que salir en el CRM.
 
 No hace falta una carpeta `extension/dist` en la raíz del repo: el build deja la extensión descomprimida en `etiqueta terminada/extension/dist`.
 
