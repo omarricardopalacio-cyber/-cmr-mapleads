@@ -7,6 +7,7 @@ import { eventBus } from "./event-bus";
 import { postFromContent, postFromInjected, sendToBackground, broadcastToTabs } from "./postmessage";
 import type { BridgeMessage, WAEvent, WAEventType } from "../shared/types";
 import { CONSTANTS } from "../shared/contracts";
+import { commandWaitMs } from "../shared/command-ack";
 
 // ============================================================
 // Content Script Bridge (coordina injected ↔ background)
@@ -141,11 +142,7 @@ export class ContentBridge {
   // Enviar comando al injected script y esperar respuesta
   sendToInjected(msg: BridgeMessage): Promise<any> {
     return new Promise((resolve, reject) => {
-      const cmd = String(msg.event || "").toUpperCase();
-      const waitMs =
-        cmd === "GET_CHAT_LIST" || cmd === "GET_CHAT_MESSAGES" || cmd === "GET_CONTACT_LIST"
-          ? 120000
-          : 15000;
+      const waitMs = commandWaitMs(msg.event);
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(msg.id!);
         reject(new Error("[ContentBridge] Timeout esperando respuesta del injected script"));

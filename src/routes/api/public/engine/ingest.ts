@@ -950,6 +950,49 @@ function hasRenderableMessageContent(
   return false
 }
 
+/**
+ * Cierra engine_commands (acked_at) sin exigir contacto ni burbuja.
+ * Antes este update vivía después de `if (!waId) continue` y de
+ * `hasRenderableMessageContent`, así que un ACK de envío (sin texto propio)
+ * volvía 200 y dejaba status=delivered con acked_at null.
+ */
+async function ackEngineCommand(sessionId: string, e: NormalizedEvent): Promise<void> {
+  if (!e.commandId) return
+  const ackStatus = e.ackStatus ?? 'ok'
+  const isFailed = ackStatus === 'failed' || ackStatus === 'error'
+  const rawPayload = (e.raw as Record<string, any> | undefined) ?? {}
+  const ackRecord: Record<string, any> = { status: ackStatus }
+  if (rawPayload.error) ackRecord.error = String(rawPayload.error)
+  if (rawPayload.result?.error) ackRecord.error = String(rawPayload.result.error)
+  if (rawPayload.result?.messageId) ackRecord.messageId = rawPayload.result.messageId
+  await supabaseAdmin
+    .from('engine_commands')
+    .update({
+      status: isFailed ? 'failed' : 'acked',
+      ack: ackRecord,
+      acked_at: new Date().toISOString(),
+    })
+    .eq('id', e.commandId)
+    .eq('session_id', sessionId)
+
+  const { data: br } = await supabaseAdmin
+    .from('broadcast_recipients')
+    .select('id, broadcast_id')
+    .eq('command_id', e.commandId)
+    .maybeSingle()
+  if (!br) return
+  const newStatus = isFailed ? 'failed' : 'sent'
+  await supabaseAdmin
+    .from('broadcast_recipients')
+    .update({ status: newStatus, sent_at: isFailed ? null : new Date().toISOString() })
+    .eq('id', br.id)
+  if (isFailed) {
+    await supabaseAdmin.rpc('increment_broadcast_failed', { p_broadcast_id: br.broadcast_id })
+  } else {
+    await supabaseAdmin.rpc('increment_broadcast_sent', { p_broadcast_id: br.broadcast_id })
+  }
+}
+
 async function maybeAiReply(
   orgId: string,
   sessionId: string,
@@ -1401,6 +1444,11 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
 
         for (const e of normalized) {
           try {
+            if (e.type === 'ack' && e.commandId) {
+              await ackEngineCommand(session.id, e)
+              continue
+            }
+
             if ((e.type === 'message-in' || e.type === 'message-out') && (e.waMessageId || e.chatId || e.text)) {
               const dedupKey = buildInboundDedupKey({
                 sessionId: session.id,
@@ -2771,38 +2819,6 @@ export const Route = createFileRoute('/api/public/engine/ingest')({
                 focusedProductId,
                 skipAiThisInbound,
               })
-            } else if (e.type === 'ack' && e.commandId) {
-              const ackStatus = e.ackStatus ?? 'ok';
-              const isFailed = ackStatus === 'failed' || ackStatus === 'error';
-              const rawPayload = (e.raw as any) ?? {};
-              const ackRecord: Record<string, any> = { status: ackStatus };
-              if (rawPayload.error) ackRecord.error = String(rawPayload.error);
-              if (rawPayload.result?.error) ackRecord.error = String(rawPayload.result.error);
-              if (rawPayload.result?.messageId) ackRecord.messageId = rawPayload.result.messageId;
-              await supabaseAdmin
-                .from('engine_commands')
-                .update({ status: isFailed ? 'failed' : 'acked', ack: ackRecord, acked_at: new Date().toISOString() })
-                .eq('id', e.commandId)
-                .eq('session_id', session.id);
-
-              // Sync broadcast_recipients if this command belongs to a broadcast
-              const { data: br } = await supabaseAdmin
-                .from('broadcast_recipients')
-                .select('id, broadcast_id')
-                .eq('command_id', e.commandId)
-                .maybeSingle();
-              if (br) {
-                const newStatus = isFailed ? 'failed' : 'sent';
-                await supabaseAdmin
-                  .from('broadcast_recipients')
-                  .update({ status: newStatus, sent_at: isFailed ? null : new Date().toISOString() })
-                  .eq('id', br.id);
-                if (isFailed) {
-                  await supabaseAdmin.rpc('increment_broadcast_failed', { p_broadcast_id: br.broadcast_id });
-                } else {
-                  await supabaseAdmin.rpc('increment_broadcast_sent', { p_broadcast_id: br.broadcast_id });
-                }
-              }
             }
           } catch (eventErr: any) {
             console.error('[ingest] Non-fatal error processing event in loop:', eventErr.message || eventErr, e);
