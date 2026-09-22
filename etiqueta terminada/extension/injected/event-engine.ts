@@ -8,6 +8,7 @@ import { getMessageById } from "./message-detector";
 import { postFromInjected } from "../bridge/postmessage";
 import type { WAEventType } from "../shared/types";
 import { sanitizeMessageBody, isWhatsAppSystemText } from "../shared/message-text";
+import { chatEventIsPostable } from "../shared/ingest-debug";
 import { unavailableMedia } from "../shared/backend-response";
 import { canonicalWaId, digitsOnly, sanitizePhoneForIngest } from "../shared/wa-identity";
 import { coerceFromMe, isSkippableWaType, peerChatJid } from "../shared/live-message";
@@ -368,17 +369,22 @@ function buildMessageFast(msg: any): any {
 
 const emittedMessageIds = new Set<string>();
 
-async function processNewMessage(msg: any): Promise<void> {
+async function processNewMessage(msg: any): Promise<boolean> {
   // Tipos de protocolo / notificación: no son chat de cliente.
   // ciphertext se reintenta cuando el store cambia el type (live-sync).
   const t = String(msg?.type || "").toLowerCase();
-  if (isSkippableWaType(t)) return;
+  if (isSkippableWaType(t)) return true;
 
   const messageKey = String(msg?.id?._serialized || (typeof msg?.id === "string" ? msg.id : "") || "");
-  if (messageKey && emittedMessageIds.has(messageKey)) return;
-  if (messageKey) emittedMessageIds.add(messageKey);
+  if (messageKey && emittedMessageIds.has(messageKey)) return true;
 
   const fast = buildMessageFast(msg);
+  // No emitir un shell vacío: marcaría el id y el CRM descartaría el lote
+  // antes de que el cuerpo (solo emojis) exista. Un sticker sí sale sin texto.
+  const mediaHint = fast.media || (fast.type && fast.type !== "chat" ? { type: fast.type } : undefined);
+  if (!chatEventIsPostable({ type: "NEW_MESSAGE", text: fast.text || fast.body, media: mediaHint })) {
+    return false;
+  }
   const fromMe = coerceFromMe(msg?.id?.fromMe, msg?.fromMe, msg?.isSentByMe, fast.fromMe) === true;
   fast.fromMe = fromMe;
   const me = getMyPhoneNumber();
@@ -389,7 +395,8 @@ async function processNewMessage(msg: any): Promise<void> {
 
   if (isWhatsAppSystemText(fast.text || fast.body)) {
     console.warn("[EventEngine] skip system banner text");
-    return;
+    if (messageKey) emittedMessageIds.add(messageKey);
+    return true;
   }
 
   // Resolver @lid → celular y foto ANTES de encolar el ingest.
@@ -413,15 +420,18 @@ async function processNewMessage(msg: any): Promise<void> {
   // Nunca automatizar chat consigo mismo. Un LID de cliente no es ese caso.
   if (meDigits && digitsOnly(normalized.chatId) === meDigits) {
     console.warn("[EventEngine] skip self-chat", normalized.chatId);
-    return;
+    if (messageKey) emittedMessageIds.add(messageKey);
+    return true;
   }
 
+  if (messageKey) emittedMessageIds.add(messageKey);
   const eventType = normalized.fromMe ? "MESSAGE_SENT" : "NEW_MESSAGE";
   emit(eventType, normalized);
   const recovered = await enrichMessageInBackground(msg, normalized, eventType);
   if (!recovered && normalized.media?.missing_media) {
     scheduleMediaRetry(msg, normalized, eventType);
   }
+  return true;
 }
 
 async function enrichMessageInBackground(msg: any, base: any, eventType: WAEventType = "NEW_MESSAGE"): Promise<boolean> {

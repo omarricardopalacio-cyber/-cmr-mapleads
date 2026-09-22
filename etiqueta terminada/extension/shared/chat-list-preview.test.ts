@@ -40,6 +40,21 @@ test("unread LID row from the chat list is an inbound with the visible phone", (
   assert.ok(listPreviewMessageId(row!).length <= 120);
 });
 
+test("emoji-only preview is kept as inbound text", () => {
+  const row = snapshotFromRowParts({
+    titles: ["+57 310 4611415", "😆 🤣"],
+    lines: ["+57 310 4611415", "😆 🤣", "6:13 p. m.", "1"],
+    htmlSnippet: 'data-id="28458470141990@lid"',
+    unreadLabel: "1 mensaje no leído",
+    hasOutgoingTick: false,
+    now,
+  });
+  assert.equal(row?.text, "😆 🤣");
+  assert.equal(row?.direction, "in");
+  assert.equal(row?.chatId, "573104611415@c.us");
+  assert.ok(row?.sentAt);
+});
+
 test("a check mark without unread is outgoing", () => {
   const row = snapshotFromRowParts({
     titles: ["+57 310 4611415", "Si sra"],

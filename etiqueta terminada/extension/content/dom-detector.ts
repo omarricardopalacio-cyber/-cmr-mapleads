@@ -5,8 +5,8 @@
 // ============================================================
 
 import { sendToBackground } from "../bridge/postmessage";
-import { noteDetectedPeer, wasRecentlyDetected } from "./recent-detect";
-import { isBase64Thumbnail, isWhatsAppSystemText } from "../shared/message-text";
+import { noteDetectedPeer, recentPeerText } from "./recent-detect";
+import { hasVisibleMessageText, isBase64Thumbnail, isWhatsAppSystemText, visibleTextFromParts } from "../shared/message-text";
 import { canonicalWaId, looksLikeLidDigits, sanitizePhoneForIngest } from "../shared/wa-identity";
 import {
   listPreviewMessageId,
@@ -17,6 +17,7 @@ import {
 } from "../shared/chat-list-preview";
 
 const SEEN = new Map<string, number>();
+const inflight = new Set<string>();
 const TTL_MS = 120_000;
 let observer: MutationObserver | null = null;
 let active = false;
@@ -247,12 +248,64 @@ function extractText(node: HTMLElement): string {
     'span[dir="ltr"]',
     'span[dir="rtl"]',
   ];
+  let inner = "";
   for (const s of selectors) {
     const el = node.querySelector(s) as HTMLElement | null;
-    if (el && el.innerText?.trim()) return el.innerText.trim();
+    if (el && el.innerText?.trim()) {
+      inner = el.innerText.trim();
+      break;
+    }
   }
-  // Fallback: texto directo del nodo
-  return node.innerText?.trim() || "";
+  if (!inner) inner = node.innerText?.trim() || "";
+
+  // Los emojis de WhatsApp Web son <img alt> / data-plain-text. innerText queda vacío.
+  const alts: string[] = [];
+  const plain: string[] = [];
+  node.querySelectorAll("[data-plain-text], img[alt]").forEach((el) => {
+    const plainText = el.getAttribute("data-plain-text");
+    const alt = el.getAttribute("alt");
+    if (plainText) plain.push(plainText);
+    if (alt) alts.push(alt);
+  });
+  return visibleTextFromParts({ innerText: inner, alts, plain });
+}
+
+async function publishChatEvent(
+  seenId: string,
+  evtType: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!seenId || SEEN.has(seenId) || inflight.has(seenId)) return;
+  inflight.add(seenId);
+  try {
+    const res = await sendToBackground("WA_EVENT", {
+      event: evtType,
+      payload: {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        type: evtType,
+        payload,
+        timestamp: Date.now(),
+      },
+    });
+    const reason = String(res?.reason || "");
+    // El Debug no se pinta aquí: solo el service worker, cuando el POST sale.
+    if (res?.queued !== false || reason === "duplicate") {
+      SEEN.set(seenId, Date.now());
+    }
+  } catch (err) {
+    const text = String(payload.text || "").slice(0, 60);
+    chrome.storage.local.set({
+      lastIngest: {
+        at: Date.now(),
+        status: 0,
+        ok: false,
+        body: `No se pudo entregar al background: ${err instanceof Error ? err.message : String(err)}`.slice(0, 180),
+        text,
+      },
+    }).catch(() => {});
+  } finally {
+    inflight.delete(seenId);
+  }
 }
 
 function extractTimestamp(node: HTMLElement): string | null {
@@ -382,7 +435,8 @@ async function emitFromNode(node: HTMLElement) {
 
   try {
     const parsed = parseMessageNode(node);
-    if (!parsed || (!parsed.text && !parsed.media.image && !parsed.media.audio && !parsed.media.video && !parsed.media.document)) {
+    const hasBubbleMedia = !!(parsed?.media?.image || parsed?.media?.audio || parsed?.media?.video || parsed?.media?.document);
+    if (!parsed || (!hasVisibleMessageText(parsed.text) && !hasBubbleMedia)) {
       return;
     }
 
@@ -417,9 +471,7 @@ async function emitFromNode(node: HTMLElement) {
       }
     }
 
-    SEEN.set(id, Date.now());
     gc();
-    noteDetectedPeer([parsed.chatId, parsed.phone, parsed.contact?.waId]);
 
     const evtType = parsed.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
     const payload: any = {
@@ -447,26 +499,10 @@ async function emitFromNode(node: HTMLElement) {
       parsed.text?.slice(0, 40),
     );
 
-    sendToBackground("WA_EVENT", {
-      event: evtType,
-      payload: {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        type: evtType,
-        payload,
-        timestamp: Date.now(),
-      },
-    }).catch(() => {});
-
-    chrome.storage.local.set({
-      lastDomEvent: {
-        type: evtType,
-        text: parsed.text?.slice(0, 60),
-        direction: parsed.direction,
-        chatId: parsed.chatId,
-        at: Date.now(),
-      },
-    }).catch(() => {});
-
+    await publishChatEvent(id, evtType, payload);
+    if (SEEN.has(id)) {
+      noteDetectedPeer([parsed.chatId, parsed.phone, parsed.contact?.waId], Date.now(), parsed.text || "");
+    }
   } catch (e) {
     console.warn("[DOMDetector] parse fail", e);
   }
@@ -635,14 +671,19 @@ function readListRow(row: HTMLElement): ListRowSnapshot | null {
 
 function emitListRow(row: ListRowSnapshot): void {
   const id = listPreviewMessageId(row);
-  if (SEEN.has(id)) return;
-  if (isWhatsAppSystemText(row.text)) return;
+  if (SEEN.has(id) || inflight.has(id)) return;
+  if (isWhatsAppSystemText(row.text) || !hasVisibleMessageText(row.text)) {
+    SEEN.set(id, Date.now());
+    return;
+  }
   const me = String((window as any).__MAPLE_ME_PHONE__ || "").replace(/\D/g, "");
-  if (me && row.phone === me) return;
+  if (me && row.phone === me) {
+    SEEN.set(id, Date.now());
+    return;
+  }
 
-  SEEN.set(id, Date.now());
   gc();
-  noteDetectedPeer([row.chatId, row.phone, row.lid]);
+  noteDetectedPeer([row.chatId, row.phone, row.lid], Date.now(), row.text);
 
   const evtType = row.direction === "out" ? "MESSAGE_SENT" : "NEW_MESSAGE";
   const payload: Record<string, unknown> = {
@@ -664,35 +705,22 @@ function emitListRow(row: ListRowSnapshot): void {
   };
 
   console.log("[DOMDetector] Lista:", evtType, row.chatId, row.text.slice(0, 40));
-  sendToBackground("WA_EVENT", {
-    event: evtType,
-    payload: {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      type: evtType,
-      payload,
-      timestamp: Date.now(),
-    },
-  }).catch(() => {});
-
-  chrome.storage.local.set({
-    lastDomEvent: {
-      type: evtType,
-      text: row.text.slice(0, 60),
-      direction: row.direction,
-      chatId: row.chatId,
-      at: Date.now(),
-    },
-  }).catch(() => {});
+  void publishChatEvent(id, evtType, payload);
 }
 
 function scheduleListRow(row: ListRowSnapshot): void {
   const id = listPreviewMessageId(row);
   if (listPending.has(id) || SEEN.has(id)) return;
   listPending.add(id);
-  // Darle 4s a WPP. Si el store ya emitió este peer, no duplicar desde la lista.
+  // Darle 4s a WPP. Solo se omite si ese mismo texto (emojis incluidos) ya salió.
+  // Un "holaaaa" reciente no puede tapar el 😆 que llegó después.
   setTimeout(() => {
     listPending.delete(id);
-    if ([row.phone, row.lid, row.chatId].some((id) => wasRecentlyDetected(id))) return;
+    const preview = row.text.trim().slice(0, 80);
+    const alreadyPosted = [row.phone, row.lid, row.chatId].some(
+      (peer) => recentPeerText(peer).trim() === preview,
+    );
+    if (alreadyPosted) return;
     emitListRow(row);
   }, 4000);
 }

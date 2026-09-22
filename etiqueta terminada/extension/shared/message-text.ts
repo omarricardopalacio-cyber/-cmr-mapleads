@@ -4,8 +4,43 @@ export function isBase64Thumbnail(text: string | null | undefined): boolean {
   if (!text || text.length < 100) return false;
   const trimmed = text.trim();
   if (trimmed.startsWith("/9j/") || trimmed.startsWith("data:image")) return true;
-  if (!trimmed.includes(" ") && trimmed.length > 150) return true;
+  // Solo alfabeto base64. Un cuerpo de emojis (aunque sea largo y sin espacios)
+  // no es un thumbnail JPEG.
+  const compact = trimmed.replace(/\s+/g, "");
+  if (compact.length > 150 && /^[A-Za-z0-9+/=]+$/.test(compact)) return true;
   return false;
+}
+
+/** Texto que el CRM puede guardar. Un cuerpo de solo emojis cuenta. */
+export function hasVisibleMessageText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (isBase64Thumbnail(trimmed)) return false;
+  if (isWhatsAppSystemText(trimmed)) return false;
+  return true;
+}
+
+/**
+ * WhatsApp pinta los emojis como `<img alt>` y deja `innerText` vacío.
+ * Si el texto visible no trae esos alt, se anexan.
+ */
+export function visibleTextFromParts(parts: {
+  innerText?: string | null;
+  alts?: Array<string | null | undefined>;
+  plain?: Array<string | null | undefined>;
+}): string {
+  const inner = String(parts.innerText || "").trim();
+  const extras = [...(parts.plain || []), ...(parts.alts || [])]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (hasVisibleMessageText(inner)) {
+    const missing = extras.filter((extra) => !inner.includes(extra));
+    return missing.length ? `${inner} ${missing.join(" ")}`.trim() : inner;
+  }
+  const fromExtras = extras.join(" ").trim();
+  if (hasVisibleMessageText(fromExtras)) return fromExtras;
+  return "";
 }
 
 export function isWhatsAppSystemText(text: string | null | undefined): boolean {

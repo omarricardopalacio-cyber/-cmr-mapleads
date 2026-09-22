@@ -6,6 +6,8 @@ Acceder desde el popup de la extensión (click en el icono de la barra de Chrome
 
 **Último mensaje** sale vacío si el detector solo miraba el chat abierto y WhatsApp está en la lista (panel de llamadas a la derecha). Desde 1.0.16 la lista izquierda también cuenta: un no-leído de la última media hora, o un cambio de preview reciente, se ingiere sin abrir el chat.
 
+Desde 1.0.17 esa línea solo se escribe cuando el texto ya va en el POST a `/crm/api/public/engine/ingest`. Debajo aparece `Ingest: HTTP <status> OK|FAIL` y un recorte del cuerpo. Un fallo de ingest se muestra aunque la insignia siga en CONECTADO. Un mensaje de solo emojis no se descarta.
+
 Si Chrome dice **Reinicia para actualizar**, hay que cerrar Chrome, volver a cargar `etiqueta terminada/extension/dist` y refrescar `web.whatsapp.com`. El content script viejo no ve el DOM nuevo.
 
 Un error rojo de ingest no se queda pegado mientras el poll de comandos responde JSON (OK BACKEND). Un `400 Invalid payload` por un lote vacío no se trata como «el CRM no devolvió JSON».
